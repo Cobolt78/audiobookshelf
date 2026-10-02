@@ -849,13 +849,15 @@ module.exports = {
   async getDiscoverLibraryItems(libraryId, user, include, limit) {
     const userPermissionBookWhere = this.getUserPermissionBookWhereQuery(user)
 
-    // Step 1: Get the first book of every series that hasnt been started yet
+    // Step 1: Get the next unread book of every series
     const seriesNotStarted = await Database.seriesModel.findAll({
       where: [
         {
           libraryId
         },
-        Sequelize.where(Sequelize.literal(`(SELECT count(*) FROM bookSeries bs LEFT OUTER JOIN mediaProgresses mp ON mp.mediaItemId = bs.bookId WHERE bs.seriesId = series.id AND mp.userId = :userId AND (mp.isFinished = 1 OR mp.currentTime > 0))`), 0)
+        Sequelize.where(Sequelize.literal(`(SELECT count(*) FROM bookSeries bs WHERE bs.seriesId = series.id AND (SELECT count(*) FROM mediaProgresses mp WHERE mp.mediaItemId = bs.bookId AND mp.userId = :userId AND (mp.isFinished = 1 OR mp.currentTime > 0)) = 0)`), {
+          [Sequelize.Op.gt]: 0
+        })
       ],
       replacements: {
         userId: user.id,
@@ -867,6 +869,9 @@ module.exports = {
         attributes: ['bookId', 'sequence'],
         separate: true,
         required: true,
+        where: [
+          Sequelize.where(Sequelize.literal(`(SELECT count(*) FROM mediaProgresses mp WHERE mp.mediaItemId = bookSeries.bookId AND mp.userId = :userId AND (mp.isFinished = 1 OR mp.currentTime > 0))`), 0)
+        ],
         include: {
           model: Database.bookModel,
           where: userPermissionBookWhere.bookWhere
