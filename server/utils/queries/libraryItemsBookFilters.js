@@ -876,12 +876,9 @@ module.exports = {
           model: Database.bookModel,
           where: userPermissionBookWhere.bookWhere
         },
-        order: [[Sequelize.literal('CAST(sequence AS FLOAT) ASC NULLS LAST')]],
-        limit: 1
+        order: [[Sequelize.literal('CAST(sequence AS FLOAT) ASC NULLS LAST')]]
       },
-      subQuery: false,
-      limit,
-      order: Database.sequelize.random()
+      subQuery: false
     })
 
     const booksFromSeriesToInclude = seriesNotStarted.map((se) => se.bookSeries?.[0]?.bookId).filter((bid) => bid)
