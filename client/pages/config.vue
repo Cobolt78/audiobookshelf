@@ -51,6 +51,7 @@ export default {
         else if (pageName === 'libraries') return this.$strings.HeaderLibraries
         else if (pageName === 'notifications') return this.$strings.HeaderNotifications
         else if (pageName === 'sessions') return this.$strings.HeaderListeningSessions
+        else if (pageName === 'bandwidth') return 'Bandwidth Stats'
         else if (pageName === 'stats') return this.$strings.HeaderYourStats
         else if (pageName === 'users') return this.$strings.HeaderUsers
         else if (pageName === 'api-keys') return this.$strings.HeaderApiKeys

@@ -33,6 +33,10 @@
           {{ $strings.LabelTimeListenedToday }}:&nbsp;
           <span class="font-mono text-base">{{ $elapsedPrettyExtended(timeListenedToday) }}</span>
         </p>
+        <p v-if="userBandwidth" class="text-sm text-gray-300">
+          Data Transferred:&nbsp;
+          <span class="font-mono text-base">{{ $bytesPretty(userBandwidth) }}</span>
+        </p>
 
         <div v-if="latestSession" class="mt-4">
           <h1 class="text-lg mb-2 text-white/90 px-2 sm:px-0">{{ $strings.HeaderLastListeningSession }}</h1>
@@ -98,7 +102,8 @@ export default {
   data() {
     return {
       listeningSessions: {},
-      listeningStats: {}
+      listeningStats: {},
+      userBandwidth: 0
     }
   },
   computed: {
@@ -155,6 +160,10 @@ export default {
         console.error('Failed to load listening sesions', err)
         return []
       })
+      this.userBandwidth = await this.$axios
+        .$get(`/api/stats/bandwidth?userId=${this.user.id}`)
+        .then((data) => data?.summary?.allTime?.total || 0)
+        .catch(() => 0)
       console.log('Loaded user listening data', this.listeningSessions, this.listeningStats)
     }
   },

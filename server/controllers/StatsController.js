@@ -58,6 +58,55 @@ class StatsController {
   }
 
   /**
+   * GET: /api/stats/bandwidth
+   *
+   * @param {RequestWithUser} req
+   * @param {Response} res
+   */
+  async getBandwidthStats(req, res) {
+    const bandwidthManager = this.server?.bandwidthManager || global.Server?.bandwidthManager
+    if (!bandwidthManager) {
+      Logger.error('[StatsController] BandwidthManager is not initialized')
+      return res.status(500).json({ error: 'BandwidthManager not initialized' })
+    }
+
+    try {
+      const stats = await bandwidthManager.getStats({
+        range: req.query.range,
+        userId: req.query.userId,
+        startDate: req.query.startDate,
+        endDate: req.query.endDate
+      })
+      res.json(stats)
+    } catch (err) {
+      Logger.error('[StatsController] Failed to retrieve bandwidth stats:', err)
+      res.status(500).json({ error: 'Failed to retrieve bandwidth stats' })
+    }
+  }
+
+  /**
+   * DELETE: /api/stats/bandwidth
+   *
+   * @param {RequestWithUser} req
+   * @param {Response} res
+   */
+  async clearBandwidthStats(req, res) {
+    const bandwidthManager = this.server?.bandwidthManager || global.Server?.bandwidthManager
+    if (!bandwidthManager) {
+      Logger.error('[StatsController] BandwidthManager is not initialized')
+      return res.status(500).json({ error: 'BandwidthManager not initialized' })
+    }
+
+    try {
+      await bandwidthManager.clearStats()
+      res.json({ success: true })
+    } catch (err) {
+      Logger.error('[StatsController] Failed to clear bandwidth stats:', err)
+      res.status(500).json({ error: 'Failed to clear bandwidth stats' })
+    }
+  }
+
+  /**
    *
    * @param {RequestWithUser} req
    * @param {Response} res

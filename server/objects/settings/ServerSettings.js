@@ -25,7 +25,8 @@ const PATCHABLE_SETTINGS_KEYS = new Set([
   'timeFormat',
   'language',
   'chromecastEnabled',
-  'sortingIgnorePrefix'
+  'sortingIgnorePrefix',
+  'enableBandwidthTracking'
 ])
 
 class ServerSettings {
@@ -79,6 +80,7 @@ class ServerSettings {
     this.timeFormat = 'HH:mm'
     this.language = 'en-us'
     this.allowedOrigins = []
+    this.enableBandwidthTracking = true
 
     this.logLevel = Logger.logLevel
 
@@ -147,6 +149,7 @@ class ServerSettings {
     this.timeFormat = settings.timeFormat || 'HH:mm'
     this.language = settings.language || 'en-us'
     this.allowedOrigins = settings.allowedOrigins || []
+    this.enableBandwidthTracking = settings.enableBandwidthTracking !== undefined ? !!settings.enableBandwidthTracking : true
     this.logLevel = settings.logLevel || Logger.logLevel
     this.version = settings.version || null
     this.buildNumber = settings.buildNumber || 0 // Added v2.4.5
@@ -259,6 +262,7 @@ class ServerSettings {
       timeFormat: this.timeFormat,
       language: this.language,
       allowedOrigins: this.allowedOrigins,
+      enableBandwidthTracking: this.enableBandwidthTracking,
       logLevel: this.logLevel,
       version: this.version,
       buildNumber: this.buildNumber,

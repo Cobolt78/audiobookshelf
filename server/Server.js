@@ -39,6 +39,7 @@ const CronManager = require('./managers/CronManager')
 const ApiCacheManager = require('./managers/ApiCacheManager')
 const BinaryManager = require('./managers/BinaryManager')
 const ShareManager = require('./managers/ShareManager')
+const BandwidthManager = require('./managers/BandwidthManager')
 const LibraryScanner = require('./scanner/LibraryScanner')
 
 //Import the main Passport and Express-Session library
@@ -69,6 +70,7 @@ class Server {
     global.RouterBasePath = ROUTER_BASE_PATH
     global.XAccel = process.env.USE_X_ACCEL
     global.AllowCors = process.env.ALLOW_CORS === '1'
+    global.Server = this
 
     if (process.env.EXP_PROXY_SUPPORT === '1') {
       // https://github.com/advplyr/audiobookshelf/pull/3754
@@ -121,6 +123,7 @@ class Server {
     this.cronManager = new CronManager(this.podcastManager, this.playbackSessionManager)
     this.apiCacheManager = new ApiCacheManager()
     this.binaryManager = new BinaryManager()
+    this.bandwidthManager = new BandwidthManager(this)
 
     // Routers
     this.apiRouter = new ApiRouter(this)
@@ -191,6 +194,7 @@ class Server {
     const libraries = await Database.libraryModel.getAllWithFolders()
     await this.cronManager.init(libraries)
     this.apiCacheManager.init()
+    this.bandwidthManager.init()
 
     if (Database.serverSettings.scannerDisableWatcher) {
       Logger.info(`[Server] Watcher is disabled`)
@@ -242,6 +246,9 @@ class Server {
     await this.init()
 
     const app = express()
+
+    // Track outgoing bandwidth per request / user
+    app.use(this.bandwidthManager.middleware.bind(this.bandwidthManager))
 
     app.use((req, res, next) => {
       if (!global.ServerSettings.allowIframe) {
@@ -541,6 +548,9 @@ class Server {
    */
   async stop() {
     Logger.info('=== Stopping Server ===')
+    if (this.bandwidthManager) {
+      await this.bandwidthManager.stop()
+    }
     Watcher.close()
     Logger.info('[Server] Watcher Closed')
     await SocketAuthority.close()

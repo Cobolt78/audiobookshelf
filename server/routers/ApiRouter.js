@@ -331,6 +331,8 @@ class ApiRouter {
     //
     this.router.get('/stats/year/:year', StatsController.middleware.bind(this), StatsController.getAdminStatsForYear.bind(this))
     this.router.get('/stats/server', StatsController.middleware.bind(this), StatsController.getServerStats.bind(this))
+    this.router.get('/stats/bandwidth', StatsController.middleware.bind(this), StatsController.getBandwidthStats.bind(this))
+    this.router.delete('/stats/bandwidth', StatsController.middleware.bind(this), StatsController.clearBandwidthStats.bind(this))
 
     //
     // API Key Routes

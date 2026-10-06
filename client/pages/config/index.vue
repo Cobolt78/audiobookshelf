@@ -42,6 +42,16 @@
             </div>
           </div>
 
+          <div role="article" aria-label="Track Bandwidth & Data Usage" class="flex items-center py-2">
+            <ui-toggle-switch label="Track Bandwidth & Data Usage" v-model="newServerSettings.enableBandwidthTracking" :disabled="updatingServerSettings" @input="(val) => updateSettingsKey('enableBandwidthTracking', val)" />
+            <ui-tooltip aria-hidden="true" text="Track megabytes and gigabytes transferred to users for audio streaming, downloads, and media assets.">
+              <p class="pl-4">
+                <span id="settings-enable-bandwidth-tracking">Track Bandwidth & Data Usage</span>
+                <span class="material-symbols icon-text">info</span>
+              </p>
+            </ui-tooltip>
+          </div>
+
           <div class="pt-4">
             <h2 class="font-semibold">{{ $strings.HeaderSettingsScanner }}</h2>
           </div>

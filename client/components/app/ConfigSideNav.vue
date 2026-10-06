@@ -81,6 +81,11 @@ export default {
           path: '/config/sessions'
         },
         {
+          id: 'config-bandwidth',
+          title: 'Bandwidth Stats',
+          path: '/config/bandwidth'
+        },
+        {
           id: 'config-backups',
           title: this.$strings.HeaderBackups,
           path: '/config/backups'
