@@ -1,5 +1,1454 @@
+diff --git a/client/components/app/ConfigSideNav.vue b/client/components/app/ConfigSideNav.vue
+index 32e7e694..aee46878 100644
+--- a/client/components/app/ConfigSideNav.vue
++++ b/client/components/app/ConfigSideNav.vue
+@@ -80,6 +80,11 @@ export default {
+           title: this.$strings.HeaderListeningSessions,
+           path: '/config/sessions'
+         },
++        {
++          id: 'config-bandwidth',
++          title: 'Bandwidth Stats',
++          path: '/config/bandwidth'
++        },
+         {
+           id: 'config-backups',
+           title: this.$strings.HeaderBackups,
+diff --git a/client/pages/config.vue b/client/pages/config.vue
+index c4fe2446..f42bc13d 100644
+--- a/client/pages/config.vue
++++ b/client/pages/config.vue
+@@ -51,6 +51,7 @@ export default {
+         else if (pageName === 'libraries') return this.$strings.HeaderLibraries
+         else if (pageName === 'notifications') return this.$strings.HeaderNotifications
+         else if (pageName === 'sessions') return this.$strings.HeaderListeningSessions
++        else if (pageName === 'bandwidth') return 'Bandwidth Stats'
+         else if (pageName === 'stats') return this.$strings.HeaderYourStats
+         else if (pageName === 'users') return this.$strings.HeaderUsers
+         else if (pageName === 'api-keys') return this.$strings.HeaderApiKeys
+diff --git a/client/pages/config/bandwidth.vue b/client/pages/config/bandwidth.vue
+new file mode 100644
+index 00000000..f08f8ea4
+--- /dev/null
++++ b/client/pages/config/bandwidth.vue
+@@ -0,0 +1,355 @@
++<template>
++  <div class="w-full">
++    <!-- Notice if tracking is disabled -->
++    <div v-if="!isTrackingEnabled" class="bg-warning/20 border border-warning/50 rounded-md p-4 mb-6 flex items-center justify-between">
++      <div class="flex items-center">
++        <span class="material-symbols text-warning text-3xl mr-3">warning</span>
++        <div>
++          <p class="font-semibold text-warning">Bandwidth Tracking is Currently Disabled</p>
++          <p class="text-xs text-gray-300">Data usage is not actively being recorded. You can enable it in Server Settings.</p>
++        </div>
++      </div>
++      <ui-btn to="/config" color="bg-warning text-black" class="text-xs font-semibold">Go to Settings</ui-btn>
++    </div>
++
++    <app-settings-content header-text="Bandwidth & Data Usage">
++      <!-- KPI Summary Cards -->
++      <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 mb-6">
++        <div class="bg-primary/20 border border-white/5 rounded-lg p-3 flex flex-col justify-between">
++          <p class="text-xs uppercase font-semibold text-gray-400 mb-1">Today</p>
++          <p class="text-2xl font-bold font-mono text-emerald-400">{{ $bytesPretty(summary.today.total) }}</p>
++          <div class="text-[11px] text-gray-400 mt-2 space-y-0.5">
++            <p class="truncate"><span class="text-emerald-300 font-medium">Stream:</span> {{ $bytesPretty(summary.today.stream) }}</p>
++            <p class="truncate"><span class="text-purple-300 font-medium">Download:</span> {{ $bytesPretty(summary.today.download) }}</p>
++          </div>
++        </div>
++
++        <div class="bg-primary/20 border border-white/5 rounded-lg p-3 flex flex-col justify-between">
++          <p class="text-xs uppercase font-semibold text-gray-400 mb-1">Last 7 Days</p>
++          <p class="text-2xl font-bold font-mono text-emerald-400">{{ $bytesPretty(summary.last7Days.total) }}</p>
++          <div class="text-[11px] text-gray-400 mt-2 space-y-0.5">
++            <p class="truncate"><span class="text-emerald-300 font-medium">Stream:</span> {{ $bytesPretty(summary.last7Days.stream) }}</p>
++            <p class="truncate"><span class="text-purple-300 font-medium">Download:</span> {{ $bytesPretty(summary.last7Days.download) }}</p>
++          </div>
++        </div>
++
++        <div class="bg-primary/20 border border-white/5 rounded-lg p-3 flex flex-col justify-between">
++          <p class="text-xs uppercase font-semibold text-gray-400 mb-1">This Month</p>
++          <p class="text-2xl font-bold font-mono text-emerald-400">{{ $bytesPretty(summary.thisMonth.total) }}</p>
++          <div class="text-[11px] text-gray-400 mt-2 space-y-0.5">
++            <p class="truncate"><span class="text-emerald-300 font-medium">Stream:</span> {{ $bytesPretty(summary.thisMonth.stream) }}</p>
++            <p class="truncate"><span class="text-purple-300 font-medium">Download:</span> {{ $bytesPretty(summary.thisMonth.download) }}</p>
++          </div>
++        </div>
++
++        <div class="bg-primary/20 border border-white/5 rounded-lg p-3 flex flex-col justify-between">
++          <p class="text-xs uppercase font-semibold text-gray-400 mb-1">This Year</p>
++          <p class="text-2xl font-bold font-mono text-emerald-400">{{ $bytesPretty(summary.thisYear.total) }}</p>
++          <div class="text-[11px] text-gray-400 mt-2 space-y-0.5">
++            <p class="truncate"><span class="text-emerald-300 font-medium">Stream:</span> {{ $bytesPretty(summary.thisYear.stream) }}</p>
++            <p class="truncate"><span class="text-purple-300 font-medium">Download:</span> {{ $bytesPretty(summary.thisYear.download) }}</p>
++          </div>
++        </div>
++
++        <div class="bg-primary/20 border border-white/5 rounded-lg p-3 flex flex-col justify-between col-span-2 sm:col-span-1">
++          <p class="text-xs uppercase font-semibold text-gray-400 mb-1">All Time Total</p>
++          <p class="text-2xl font-bold font-mono text-cyan-400">{{ $bytesPretty(summary.allTime.total) }}</p>
++          <div class="text-[11px] text-gray-400 mt-2 space-y-0.5">
++            <p class="truncate"><span class="text-emerald-300 font-medium">Stream:</span> {{ $bytesPretty(summary.allTime.stream) }}</p>
++            <p class="truncate"><span class="text-purple-300 font-medium">Download:</span> {{ $bytesPretty(summary.allTime.download) }}</p>
++          </div>
++        </div>
++      </div>
++
++      <!-- Filters & Toolbar -->
++      <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-white/10 pb-4 mb-6">
++        <!-- Range Buttons -->
++        <div class="inline-flex rounded-md shadow-sm bg-black/40 p-1 border border-white/10">
++          <button v-for="r in rangeOptions" :key="r.value" type="button" @click="selectRange(r.value)" class="px-3 py-1 text-xs font-medium rounded transition-colors" :class="selectedRange === r.value ? 'bg-primary text-white shadow' : 'text-gray-400 hover:text-white'">
++            {{ r.label }}
++          </button>
++        </div>
++
++        <div class="flex items-center gap-2">
++          <!-- User Filter Dropdown -->
++          <div class="w-48">
++            <ui-dropdown v-model="selectedUserId" small :items="userDropdownItems" label="Filter User" @input="loadStats" />
++          </div>
++
++          <!-- Refresh Button -->
++          <ui-btn color="bg-primary" small :loading="loading" @click="loadStats">
++            <span class="material-symbols text-sm mr-1">refresh</span>
++            Refresh
++          </ui-btn>
++
++          <!-- Clear Stats Button -->
++          <ui-btn color="bg-error" small @click="showConfirmClear = true">
++            <span class="material-symbols text-sm mr-1">delete</span>
++            Clear
++          </ui-btn>
++        </div>
++      </div>
++
++      <!-- Timeline Chart Section -->
++      <div class="mb-8">
++        <div class="flex items-center justify-between mb-3">
++          <h2 class="text-lg font-semibold flex items-center">
++            <span class="material-symbols mr-2 text-primary">show_chart</span>
++            Daily Transfer Timeline
++            <span v-if="filteredTotalBytes" class="ml-2 text-xs font-mono font-normal text-gray-400"> (Range Total: {{ $bytesPretty(filteredTotalBytes) }}) </span>
++          </h2>
++          <!-- Legend -->
++          <div class="flex items-center gap-4 text-xs">
++            <div class="flex items-center"><span class="w-3 h-3 rounded-sm bg-emerald-500 mr-1.5" /> Streaming</div>
++            <div class="flex items-center"><span class="w-3 h-3 rounded-sm bg-purple-500 mr-1.5" /> Downloads</div>
++            <div class="flex items-center"><span class="w-3 h-3 rounded-sm bg-blue-500 mr-1.5" /> Other / API</div>
++          </div>
++        </div>
++
++        <div v-if="loading" class="h-64 flex items-center justify-center bg-black/20 rounded-lg border border-white/5">
++          <ui-loading-indicator />
++        </div>
++
++        <div v-else-if="!dailyChartData.length" class="h-64 flex flex-col items-center justify-center bg-black/20 rounded-lg border border-white/5 text-gray-400">
++          <span class="material-symbols text-4xl mb-2 text-gray-500">query_stats</span>
++          <p class="text-sm">No transfer records found for this period</p>
++        </div>
++
++        <!-- Responsive Bar Chart -->
++        <div v-else class="bg-black/30 rounded-lg border border-white/5 p-4 overflow-x-auto">
++          <div class="relative h-64 flex items-end pt-8 pb-6 min-w-[500px]">
++            <!-- Grid Lines -->
++            <div class="absolute inset-x-0 top-8 bottom-6 flex flex-col justify-between pointer-events-none opacity-20">
++              <div class="border-b border-white" />
++              <div class="border-b border-white" />
++              <div class="border-b border-white" />
++              <div class="border-b border-white" />
++            </div>
++
++            <!-- Top Y-Axis Label -->
++            <div class="absolute top-2 left-2 text-[10px] font-mono text-gray-400 bg-black/60 px-1 rounded pointer-events-none">Max: {{ $bytesPretty(chartMaxBytes) }}</div>
++
++            <!-- Chart Bars -->
++            <div class="w-full h-full flex items-end justify-between gap-1 z-10 px-2">
++              <div v-for="item in dailyChartData" :key="item.date" class="flex-1 h-full flex flex-col justify-end items-center group relative cursor-pointer min-w-[12px]">
++                <!-- Tooltip on Hover -->
++                <div class="absolute bottom-full mb-2 hidden group-hover:flex flex-col bg-gray-900 border border-white/20 text-white rounded p-2 text-xs shadow-xl pointer-events-none z-50 whitespace-nowrap">
++                  <p class="font-bold text-gray-200 border-b border-white/10 pb-1 mb-1">{{ item.date }}</p>
++                  <p class="text-emerald-400">Stream: {{ $bytesPretty(item.bytesStream) }}</p>
++                  <p class="text-purple-400">Download: {{ $bytesPretty(item.bytesDownload) }}</p>
++                  <p class="text-blue-400">Other: {{ $bytesPretty(item.bytesOther) }}</p>
++                  <p class="font-bold border-t border-white/10 pt-1 mt-1">Total: {{ $bytesPretty(item.bytesTotal) }}</p>
++                  <p class="text-[10px] text-gray-400">Requests: {{ item.requests }}</p>
++                </div>
++
++                <!-- Stacked Bar -->
++                <div class="w-full max-w-[28px] rounded-t flex flex-col-reverse overflow-hidden transition-all duration-150 group-hover:brightness-125" :style="{ height: `${Math.max(2, (item.bytesTotal / chartMaxBytes) * 100)}%` }">
++                  <div class="w-full bg-emerald-500" :style="{ height: `${(item.bytesStream / (item.bytesTotal || 1)) * 100}%` }" />
++                  <div class="w-full bg-purple-500" :style="{ height: `${(item.bytesDownload / (item.bytesTotal || 1)) * 100}%` }" />
++                  <div class="w-full bg-blue-500" :style="{ height: `${(item.bytesOther / (item.bytesTotal || 1)) * 100}%` }" />
++                </div>
++
++                <!-- X Axis Date Label -->
++                <p class="text-[10px] text-gray-400 mt-2 truncate w-full text-center">
++                  {{ formatShortDate(item.date) }}
++                </p>
++              </div>
++            </div>
++          </div>
++        </div>
++      </div>
++
++      <!-- User Breakdown Table -->
++      <div>
++        <div class="flex items-center justify-between mb-3">
++          <h2 class="text-lg font-semibold flex items-center">
++            <span class="material-symbols mr-2 text-primary">group</span>
++            Data Usage Breakdown by User
++          </h2>
++          <p class="text-xs text-gray-400">{{ userBreakdown.length }} Users</p>
++        </div>
++
++        <div class="bg-black/20 rounded-lg border border-white/5 overflow-hidden">
++          <table class="w-full text-left text-sm">
++            <thead class="bg-white/5 text-xs uppercase text-gray-400 font-semibold border-b border-white/10">
++              <tr>
++                <th class="py-3 px-4">User</th>
++                <th class="py-3 px-4 text-right">Streaming</th>
++                <th class="py-3 px-4 text-right">Downloads</th>
++                <th class="py-3 px-4 text-right">Other</th>
++                <th class="py-3 px-4 text-right">Total Transferred</th>
++                <th class="py-3 px-4 w-40">% of Total</th>
++              </tr>
++            </thead>
++            <tbody class="divide-y divide-white/5">
++              <tr v-if="!userBreakdown.length">
++                <td colspan="6" class="text-center py-8 text-gray-400 text-sm">No user data recorded for this time frame.</td>
++              </tr>
++              <tr v-for="user in userBreakdown" :key="user.userId" class="hover:bg-white/5 transition-colors">
++                <td class="py-3 px-4">
++                  <div class="flex items-center">
++                    <span class="material-symbols text-xl mr-2" :class="user.userId === 'anonymous' ? 'text-gray-400' : 'text-primary'">
++                      {{ user.userId === 'anonymous' ? 'public' : 'person' }}
++                    </span>
++                    <div>
++                      <p class="font-medium text-white">{{ user.username }}</p>
++                      <p v-if="user.userId !== 'anonymous'" class="text-[10px] text-gray-500 font-mono">{{ user.userId }}</p>
++                    </div>
++                  </div>
++                </td>
++                <td class="py-3 px-4 text-right font-mono text-emerald-400">{{ $bytesPretty(user.bytesStream) }}</td>
++                <td class="py-3 px-4 text-right font-mono text-purple-400">{{ $bytesPretty(user.bytesDownload) }}</td>
++                <td class="py-3 px-4 text-right font-mono text-blue-400">{{ $bytesPretty(user.bytesOther) }}</td>
++                <td class="py-3 px-4 text-right font-mono font-bold text-white">{{ $bytesPretty(user.bytesTotal) }}</td>
++                <td class="py-3 px-4">
++                  <div class="flex items-center gap-2">
++                    <div class="grow bg-white/10 rounded-full h-2 overflow-hidden">
++                      <div class="bg-primary h-full rounded-full transition-all duration-300" :style="{ width: `${user.percentOfTotal}%` }" />
++                    </div>
++                    <span class="text-xs font-mono w-10 text-right text-gray-300">{{ user.percentOfTotal }}%</span>
++                  </div>
++                </td>
++              </tr>
++            </tbody>
++          </table>
++        </div>
++      </div>
++    </app-settings-content>
++
++    <!-- Confirm Clear Stats Modal -->
++    <prompt-dialog v-model="showConfirmClear" :width="500">
++      <div class="px-6 py-6 rounded-lg bg-bg shadow-xl border border-white/10">
++        <h2 class="text-lg font-semibold text-error mb-2 flex items-center">
++          <span class="material-symbols mr-2">delete_forever</span>
++          Clear All Bandwidth Records?
++        </h2>
++        <p class="text-sm text-gray-300 mb-6">This will permanently erase all accumulated bandwidth and data transfer statistics across all users. This action cannot be undone.</p>
++        <div class="flex justify-end gap-3">
++          <ui-btn color="bg-primary" @click="showConfirmClear = false">Cancel</ui-btn>
++          <ui-btn color="bg-error" :loading="clearing" @click="clearStats">Yes, Clear Stats</ui-btn>
++        </div>
++      </div>
++    </prompt-dialog>
++  </div>
++</template>
++
++<script>
++export default {
++  asyncData({ store, redirect }) {
++    if (!store.getters['user/getIsAdminOrUp']) {
++      redirect('/')
++    }
++  },
++  data() {
++    return {
++      loading: false,
++      clearing: false,
++      showConfirmClear: false,
++      selectedRange: 'last7Days',
++      selectedUserId: '',
++      rangeOptions: [
++        { label: 'Today', value: 'today' },
++        { label: 'Last 7 Days', value: 'last7Days' },
++        { label: 'Last 30 Days', value: 'last30Days' },
++        { label: 'This Year', value: 'thisYear' },
++        { label: 'All Time', value: 'all' }
++      ],
++      summary: {
++        today: { total: 0, stream: 0, download: 0, other: 0, requests: 0 },
++        last7Days: { total: 0, stream: 0, download: 0, other: 0, requests: 0 },
++        thisMonth: { total: 0, stream: 0, download: 0, other: 0, requests: 0 },
++        thisYear: { total: 0, stream: 0, download: 0, other: 0, requests: 0 },
++        allTime: { total: 0, stream: 0, download: 0, other: 0, requests: 0 }
++      },
++      dailyChartData: [],
++      userBreakdown: [],
++      filteredTotalBytes: 0,
++      allUsers: []
++    }
++  },
++  computed: {
++    serverSettings() {
++      return this.$store.state.serverSettings || {}
++    },
++    isTrackingEnabled() {
++      return !!this.serverSettings.enableBandwidthTracking
++    },
++    userDropdownItems() {
++      const items = [{ text: 'All Users', value: '' }]
++      if (this.allUsers?.length) {
++        this.allUsers.forEach((u) => {
++          items.push({ text: u.username, value: u.id })
++        })
++      }
++      items.push({ text: 'Anonymous / Public', value: 'anonymous' })
++      return items
++    },
++    chartMaxBytes() {
++      if (!this.dailyChartData.length) return 1
++      const max = Math.max(...this.dailyChartData.map((d) => d.bytesTotal))
++      return max > 0 ? max : 1
++    }
++  },
++  methods: {
++    selectRange(range) {
++      this.selectedRange = range
++      this.loadStats()
++    },
++    formatShortDate(dateStr) {
++      if (!dateStr) return ''
++      const parts = dateStr.split('-')
++      if (parts.length === 3) {
++        return `${parts[1]}/${parts[2]}`
++      }
++      return dateStr
++    },
++    async loadStats() {
++      this.loading = true
++      try {
++        let url = `/api/stats/bandwidth?range=${this.selectedRange}`
++        if (this.selectedUserId) {
++          url += `&userId=${this.selectedUserId}`
++        }
++        const data = await this.$axios.$get(url)
++        if (data) {
++          this.summary = data.summary || this.summary
++          this.dailyChartData = data.daily || []
++          this.userBreakdown = data.userBreakdown || []
++          this.filteredTotalBytes = data.rangeTotalBytes || 0
++        }
++      } catch (err) {
++        console.error('Failed to load bandwidth stats:', err)
++        this.$toast.error('Failed to load bandwidth stats')
++      } finally {
++        this.loading = false
++      }
++    },
++    async loadUsers() {
++      try {
++        const users = await this.$axios.$get('/api/users')
++        this.allUsers = users?.users || users || []
++      } catch (err) {
++        console.error('Failed to load users for filter:', err)
++      }
++    },
++    async clearStats() {
++      this.clearing = true
++      try {
++        await this.$axios.$delete('/api/stats/bandwidth')
++        this.$toast.success('Bandwidth statistics cleared')
++        this.showConfirmClear = false
++        await this.loadStats()
++      } catch (err) {
++        console.error('Failed to clear bandwidth stats:', err)
++        this.$toast.error('Failed to clear bandwidth stats')
++      } finally {
++        this.clearing = false
++      }
++    }
++  },
++  mounted() {
++    this.loadUsers()
++    this.loadStats()
++  }
++}
++</script>
+diff --git a/client/pages/config/index.vue b/client/pages/config/index.vue
+index 7fb84d46..d8627a50 100644
+--- a/client/pages/config/index.vue
++++ b/client/pages/config/index.vue
+@@ -42,6 +42,16 @@
+             </div>
+           </div>
+ 
++          <div role="article" aria-label="Track Bandwidth & Data Usage" class="flex items-center py-2">
++            <ui-toggle-switch label="Track Bandwidth & Data Usage" v-model="newServerSettings.enableBandwidthTracking" :disabled="updatingServerSettings" @input="(val) => updateSettingsKey('enableBandwidthTracking', val)" />
++            <ui-tooltip aria-hidden="true" text="Track megabytes and gigabytes transferred to users for audio streaming, downloads, and media assets.">
++              <p class="pl-4">
++                <span id="settings-enable-bandwidth-tracking">Track Bandwidth & Data Usage</span>
++                <span class="material-symbols icon-text">info</span>
++              </p>
++            </ui-tooltip>
++          </div>
++
+           <div class="pt-4">
+             <h2 class="font-semibold">{{ $strings.HeaderSettingsScanner }}</h2>
+           </div>
+diff --git a/client/pages/config/users/_id/index.vue b/client/pages/config/users/_id/index.vue
+index 34a0fc86..bde60640 100644
+--- a/client/pages/config/users/_id/index.vue
++++ b/client/pages/config/users/_id/index.vue
+@@ -33,6 +33,10 @@
+           {{ $strings.LabelTimeListenedToday }}:&nbsp;
+           <span class="font-mono text-base">{{ $elapsedPrettyExtended(timeListenedToday) }}</span>
+         </p>
++        <p v-if="userBandwidth" class="text-sm text-gray-300">
++          Data Transferred:&nbsp;
++          <span class="font-mono text-base">{{ $bytesPretty(userBandwidth) }}</span>
++        </p>
+ 
+         <div v-if="latestSession" class="mt-4">
+           <h1 class="text-lg mb-2 text-white/90 px-2 sm:px-0">{{ $strings.HeaderLastListeningSession }}</h1>
+@@ -98,7 +102,8 @@ export default {
+   data() {
+     return {
+       listeningSessions: {},
+-      listeningStats: {}
++      listeningStats: {},
++      userBandwidth: 0
+     }
+   },
+   computed: {
+@@ -155,6 +160,10 @@ export default {
+         console.error('Failed to load listening sesions', err)
+         return []
+       })
++      this.userBandwidth = await this.$axios
++        .$get(`/api/stats/bandwidth?userId=${this.user.id}`)
++        .then((data) => data?.summary?.allTime?.total || 0)
++        .catch(() => 0)
+       console.log('Loaded user listening data', this.listeningSessions, this.listeningStats)
+     }
+   },
+diff --git a/custom_changes.patch b/custom_changes.patch
+new file mode 100644
+index 00000000..1c8ebb26
+--- /dev/null
++++ b/custom_changes.patch
+@@ -0,0 +1,288 @@
++diff --git a/client/components/app/ConfigSideNav.vue b/client/components/app/ConfigSideNav.vue
++index 32e7e694..aee46878 100644
++--- a/client/components/app/ConfigSideNav.vue
+++++ b/client/components/app/ConfigSideNav.vue
++@@ -80,6 +80,11 @@ export default {
++           title: this.$strings.HeaderListeningSessions,
++           path: '/config/sessions'
++         },
+++        {
+++          id: 'config-bandwidth',
+++          title: 'Bandwidth Stats',
+++          path: '/config/bandwidth'
+++        },
++         {
++           id: 'config-backups',
++           title: this.$strings.HeaderBackups,
++diff --git a/client/pages/config.vue b/client/pages/config.vue
++index c4fe2446..f42bc13d 100644
++--- a/client/pages/config.vue
+++++ b/client/pages/config.vue
++@@ -51,6 +51,7 @@ export default {
++         else if (pageName === 'libraries') return this.$strings.HeaderLibraries
++         else if (pageName === 'notifications') return this.$strings.HeaderNotifications
++         else if (pageName === 'sessions') return this.$strings.HeaderListeningSessions
+++        else if (pageName === 'bandwidth') return 'Bandwidth Stats'
++         else if (pageName === 'stats') return this.$strings.HeaderYourStats
++         else if (pageName === 'users') return this.$strings.HeaderUsers
++         else if (pageName === 'api-keys') return this.$strings.HeaderApiKeys
++diff --git a/client/pages/config/bandwidth.vue b/client/pages/config/bandwidth.vue
++new file mode 100644
++index 00000000..f08f8ea4
++--- /dev/null
+++++ b/client/pages/config/bandwidth.vue
++@@ -0,0 +1,355 @@
+++<template>
+++  <div class="w-full">
+++    <!-- Notice if tracking is disabled -->
+++    <div v-if="!isTrackingEnabled" class="bg-warning/20 border border-warning/50 rounded-md p-4 mb-6 flex items-center justify-between">
+++      <div class="flex items-center">
+++        <span class="material-symbols text-warning text-3xl mr-3">warning</span>
+++        <div>
+++          <p class="font-semibold text-warning">Bandwidth Tracking is Currently Disabled</p>
+++          <p class="text-xs text-gray-300">Data usage is not actively being recorded. You can enable it in Server Settings.</p>
+++        </div>
+++      </div>
+++      <ui-btn to="/config" color="bg-warning text-black" class="text-xs font-semibold">Go to Settings</ui-btn>
+++    </div>
+++
+++    <app-settings-content header-text="Bandwidth & Data Usage">
+++      <!-- KPI Summary Cards -->
+++      <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 mb-6">
+++        <div class="bg-primary/20 border border-white/5 rounded-lg p-3 flex flex-col justify-between">
+++          <p class="text-xs uppercase font-semibold text-gray-400 mb-1">Today</p>
+++          <p class="text-2xl font-bold font-mono text-emerald-400">{{ $bytesPretty(summary.today.total) }}</p>
+++          <div class="text-[11px] text-gray-400 mt-2 space-y-0.5">
+++            <p class="truncate"><span class="text-emerald-300 font-medium">Stream:</span> {{ $bytesPretty(summary.today.stream) }}</p>
+++            <p class="truncate"><span class="text-purple-300 font-medium">Download:</span> {{ $bytesPretty(summary.today.download) }}</p>
+++          </div>
+++        </div>
+++
+++        <div class="bg-primary/20 border border-white/5 rounded-lg p-3 flex flex-col justify-between">
+++          <p class="text-xs uppercase font-semibold text-gray-400 mb-1">Last 7 Days</p>
+++          <p class="text-2xl font-bold font-mono text-emerald-400">{{ $bytesPretty(summary.last7Days.total) }}</p>
+++          <div class="text-[11px] text-gray-400 mt-2 space-y-0.5">
+++            <p class="truncate"><span class="text-emerald-300 font-medium">Stream:</span> {{ $bytesPretty(summary.last7Days.stream) }}</p>
+++            <p class="truncate"><span class="text-purple-300 font-medium">Download:</span> {{ $bytesPretty(summary.last7Days.download) }}</p>
+++          </div>
+++        </div>
+++
+++        <div class="bg-primary/20 border border-white/5 rounded-lg p-3 flex flex-col justify-between">
+++          <p class="text-xs uppercase font-semibold text-gray-400 mb-1">This Month</p>
+++          <p class="text-2xl font-bold font-mono text-emerald-400">{{ $bytesPretty(summary.thisMonth.total) }}</p>
+++          <div class="text-[11px] text-gray-400 mt-2 space-y-0.5">
+++            <p class="truncate"><span class="text-emerald-300 font-medium">Stream:</span> {{ $bytesPretty(summary.thisMonth.stream) }}</p>
+++            <p class="truncate"><span class="text-purple-300 font-medium">Download:</span> {{ $bytesPretty(summary.thisMonth.download) }}</p>
+++          </div>
+++        </div>
+++
+++        <div class="bg-primary/20 border border-white/5 rounded-lg p-3 flex flex-col justify-between">
+++          <p class="text-xs uppercase font-semibold text-gray-400 mb-1">This Year</p>
+++          <p class="text-2xl font-bold font-mono text-emerald-400">{{ $bytesPretty(summary.thisYear.total) }}</p>
+++          <div class="text-[11px] text-gray-400 mt-2 space-y-0.5">
+++            <p class="truncate"><span class="text-emerald-300 font-medium">Stream:</span> {{ $bytesPretty(summary.thisYear.stream) }}</p>
+++            <p class="truncate"><span class="text-purple-300 font-medium">Download:</span> {{ $bytesPretty(summary.thisYear.download) }}</p>
+++          </div>
+++        </div>
+++
+++        <div class="bg-primary/20 border border-white/5 rounded-lg p-3 flex flex-col justify-between col-span-2 sm:col-span-1">
+++          <p class="text-xs uppercase font-semibold text-gray-400 mb-1">All Time Total</p>
+++          <p class="text-2xl font-bold font-mono text-cyan-400">{{ $bytesPretty(summary.allTime.total) }}</p>
+++          <div class="text-[11px] text-gray-400 mt-2 space-y-0.5">
+++            <p class="truncate"><span class="text-emerald-300 font-medium">Stream:</span> {{ $bytesPretty(summary.allTime.stream) }}</p>
+++            <p class="truncate"><span class="text-purple-300 font-medium">Download:</span> {{ $bytesPretty(summary.allTime.download) }}</p>
+++          </div>
+++        </div>
+++      </div>
+++
+++      <!-- Filters & Toolbar -->
+++      <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-white/10 pb-4 mb-6">
+++        <!-- Range Buttons -->
+++        <div class="inline-flex rounded-md shadow-sm bg-black/40 p-1 border border-white/10">
+++          <button v-for="r in rangeOptions" :key="r.value" type="button" @click="selectRange(r.value)" class="px-3 py-1 text-xs font-medium rounded transition-colors" :class="selectedRange === r.value ? 'bg-primary text-white shadow' : 'text-gray-400 hover:text-white'">
+++            {{ r.label }}
+++          </button>
+++        </div>
+++
+++        <div class="flex items-center gap-2">
+++          <!-- User Filter Dropdown -->
+++          <div class="w-48">
+++            <ui-dropdown v-model="selectedUserId" small :items="userDropdownItems" label="Filter User" @input="loadStats" />
+++          </div>
+++
+++          <!-- Refresh Button -->
+++          <ui-btn color="bg-primary" small :loading="loading" @click="loadStats">
+++            <span class="material-symbols text-sm mr-1">refresh</span>
+++            Refresh
+++          </ui-btn>
+++
+++          <!-- Clear Stats Button -->
+++          <ui-btn color="bg-error" small @click="showConfirmClear = true">
+++            <span class="material-symbols text-sm mr-1">delete</span>
+++            Clear
+++          </ui-btn>
+++        </div>
+++      </div>
+++
+++      <!-- Timeline Chart Section -->
+++      <div class="mb-8">
+++        <div class="flex items-center justify-between mb-3">
+++          <h2 class="text-lg font-semibold flex items-center">
+++            <span class="material-symbols mr-2 text-primary">show_chart</span>
+++            Daily Transfer Timeline
+++            <span v-if="filteredTotalBytes" class="ml-2 text-xs font-mono font-normal text-gray-400"> (Range Total: {{ $bytesPretty(filteredTotalBytes) }}) </span>
+++          </h2>
+++          <!-- Legend -->
+++          <div class="flex items-center gap-4 text-xs">
+++            <div class="flex items-center"><span class="w-3 h-3 rounded-sm bg-emerald-500 mr-1.5" /> Streaming</div>
+++            <div class="flex items-center"><span class="w-3 h-3 rounded-sm bg-purple-500 mr-1.5" /> Downloads</div>
+++            <div class="flex items-center"><span class="w-3 h-3 rounded-sm bg-blue-500 mr-1.5" /> Other / API</div>
+++          </div>
+++        </div>
+++
+++        <div v-if="loading" class="h-64 flex items-center justify-center bg-black/20 rounded-lg border border-white/5">
+++          <ui-loading-indicator />
+++        </div>
+++
+++        <div v-else-if="!dailyChartData.length" class="h-64 flex flex-col items-center justify-center bg-black/20 rounded-lg border border-white/5 text-gray-400">
+++          <span class="material-symbols text-4xl mb-2 text-gray-500">query_stats</span>
+++          <p class="text-sm">No transfer records found for this period</p>
+++        </div>
+++
+++        <!-- Responsive Bar Chart -->
+++        <div v-else class="bg-black/30 rounded-lg border border-white/5 p-4 overflow-x-auto">
+++          <div class="relative h-64 flex items-end pt-8 pb-6 min-w-[500px]">
+++            <!-- Grid Lines -->
+++            <div class="absolute inset-x-0 top-8 bottom-6 flex flex-col justify-between pointer-events-none opacity-20">
+++              <div class="border-b border-white" />
+++              <div class="border-b border-white" />
+++              <div class="border-b border-white" />
+++              <div class="border-b border-white" />
+++            </div>
+++
+++            <!-- Top Y-Axis Label -->
+++            <div class="absolute top-2 left-2 text-[10px] font-mono text-gray-400 bg-black/60 px-1 rounded pointer-events-none">Max: {{ $bytesPretty(chartMaxBytes) }}</div>
+++
+++            <!-- Chart Bars -->
+++            <div class="w-full h-full flex items-end justify-between gap-1 z-10 px-2">
+++              <div v-for="item in dailyChartData" :key="item.date" class="flex-1 h-full flex flex-col justify-end items-center group relative cursor-pointer min-w-[12px]">
+++                <!-- Tooltip on Hover -->
+++                <div class="absolute bottom-full mb-2 hidden group-hover:flex flex-col bg-gray-900 border border-white/20 text-white rounded p-2 text-xs shadow-xl pointer-events-none z-50 whitespace-nowrap">
+++                  <p class="font-bold text-gray-200 border-b border-white/10 pb-1 mb-1">{{ item.date }}</p>
+++                  <p class="text-emerald-400">Stream: {{ $bytesPretty(item.bytesStream) }}</p>
+++                  <p class="text-purple-400">Download: {{ $bytesPretty(item.bytesDownload) }}</p>
+++                  <p class="text-blue-400">Other: {{ $bytesPretty(item.bytesOther) }}</p>
+++                  <p class="font-bold border-t border-white/10 pt-1 mt-1">Total: {{ $bytesPretty(item.bytesTotal) }}</p>
+++                  <p class="text-[10px] text-gray-400">Requests: {{ item.requests }}</p>
+++                </div>
+++
+++                <!-- Stacked Bar -->
+++                <div class="w-full max-w-[28px] rounded-t flex flex-col-reverse overflow-hidden transition-all duration-150 group-hover:brightness-125" :style="{ height: `${Math.max(2, (item.bytesTotal / chartMaxBytes) * 100)}%` }">
+++                  <div class="w-full bg-emerald-500" :style="{ height: `${(item.bytesStream / (item.bytesTotal || 1)) * 100}%` }" />
+++                  <div class="w-full bg-purple-500" :style="{ height: `${(item.bytesDownload / (item.bytesTotal || 1)) * 100}%` }" />
+++                  <div class="w-full bg-blue-500" :style="{ height: `${(item.bytesOther / (item.bytesTotal || 1)) * 100}%` }" />
+++                </div>
+++
+++                <!-- X Axis Date Label -->
+++                <p class="text-[10px] text-gray-400 mt-2 truncate w-full text-center">
+++                  {{ formatShortDate(item.date) }}
+++                </p>
+++              </div>
+++            </div>
+++          </div>
+++        </div>
+++      </div>
+++
+++      <!-- User Breakdown Table -->
+++      <div>
+++        <div class="flex items-center justify-between mb-3">
+++          <h2 class="text-lg font-semibold flex items-center">
+++            <span class="material-symbols mr-2 text-primary">group</span>
+++            Data Usage Breakdown by User
+++          </h2>
+++          <p class="text-xs text-gray-400">{{ userBreakdown.length }} Users</p>
+++        </div>
+++
+++        <div class="bg-black/20 rounded-lg border border-white/5 overflow-hidden">
+++          <table class="w-full text-left text-sm">
+++            <thead class="bg-white/5 text-xs uppercase text-gray-400 font-semibold border-b border-white/10">
+++              <tr>
+++                <th class="py-3 px-4">User</th>
+++                <th class="py-3 px-4 text-right">Streaming</th>
+++                <th class="py-3 px-4 text-right">Downloads</th>
+++                <th class="py-3 px-4 text-right">Other</th>
+++                <th class="py-3 px-4 text-right">Total Transferred</th>
+++                <th class="py-3 px-4 w-40">% of Total</th>
+++              </tr>
+++            </thead>
+++            <tbody class="divide-y divide-white/5">
+++              <tr v-if="!userBreakdown.length">
+++                <td colspan="6" class="text-center py-8 text-gray-400 text-sm">No user data recorded for this time frame.</td>
+++              </tr>
+++              <tr v-for="user in userBreakdown" :key="user.userId" class="hover:bg-white/5 transition-colors">
+++                <td class="py-3 px-4">
+++                  <div class="flex items-center">
+++                    <span class="material-symbols text-xl mr-2" :class="user.userId === 'anonymous' ? 'text-gray-400' : 'text-primary'">
+++                      {{ user.userId === 'anonymous' ? 'public' : 'person' }}
+++                    </span>
+++                    <div>
+++                      <p class="font-medium text-white">{{ user.username }}</p>
+++                      <p v-if="user.userId !== 'anonymous'" class="text-[10px] text-gray-500 font-mono">{{ user.userId }}</p>
+++                    </div>
+++                  </div>
+++                </td>
+++                <td class="py-3 px-4 text-right font-mono text-emerald-400">{{ $bytesPretty(user.bytesStream) }}</td>
+++                <td class="py-3 px-4 text-right font-mono text-purple-400">{{ $bytesPretty(user.bytesDownload) }}</td>
+++                <td class="py-3 px-4 text-right font-mono text-blue-400">{{ $bytesPretty(user.bytesOther) }}</td>
+++                <td class="py-3 px-4 text-right font-mono font-bold text-white">{{ $bytesPretty(user.bytesTotal) }}</td>
+++                <td class="py-3 px-4">
+++                  <div class="flex items-center gap-2">
+++                    <div class="grow bg-white/10 rounded-full h-2 overflow-hidden">
+++                      <div class="bg-primary h-full rounded-full transition-all duration-300" :style="{ width: `${user.percentOfTotal}%` }" />
+++                    </div>
+++                    <span class="text-xs font-mono w-10 text-right text-gray-300">{{ user.percentOfTotal }}%</span>
+++                  </div>
+++                </td>
+++              </tr>
+++            </tbody>
+++          </table>
+++        </div>
+++      </div>
+++    </app-settings-content>
+++
+++    <!-- Confirm Clear Stats Modal -->
+++    <prompt-dialog v-model="showConfirmClear" :width="500">
+++      <div class="px-6 py-6 rounded-lg bg-bg shadow-xl border border-white/10">
+++        <h2 class="text-lg font-semibold text-error mb-2 flex items-center">
+++          <span class="material-symbols mr-2">delete_forever</span>
+++          Clear All Bandwidth Records?
+++        </h2>
+++        <p class="text-sm text-gray-300 mb-6">This will permanently erase all accumulated bandwidth and data transfer statistics across all users. This action cannot be undone.</p>
+++        <div class="flex justify-end gap-3">
+++          <ui-btn color="bg-primary" @click="showConfirmClear = false">Cancel</ui-btn>
+++          <ui-btn color="bg-error" :loading="clearing" @click="clearStats">Yes, Clear Stats</ui-btn>
+++        </div>
+++      </div>
+++    </prompt-dialog>
+++  </div>
+++</template>
+++
+++<script>
+++export default {
+++  asyncData({ store, redirect }) {
+++    if (!store.getters['user/getIsAdminOrUp']) {
+++      redirect('/')
+++    }
+++  },
+++  data() {
+++    return {
+++      loading: false,
+++      clearing: false,
+++      showConfirmClear: false,
+++      selectedRange: 'last7Days',
+++      selectedUserId: '',
+++      rangeOptions: [
+++        { label: 'Today', value: 'today' },
+++        { label: 'Last 7 Days', value: 'last7Days' },
+++        { label: 'Last 30 Days', value: 'last30Days' },
+++      
+\ No newline at end of file
+diff --git a/server/Database.js b/server/Database.js
+index 65c8d539..d371a145 100644
+--- a/server/Database.js
++++ b/server/Database.js
+@@ -157,6 +157,11 @@ class Database {
+     return this.models.device
+   }
+ 
++  /** @type {typeof import('./models/BandwidthStat')} */
++  get bandwidthStatModel() {
++    return this.models.bandwidthStat
++  }
++
+   /**
+    * Check if db file exists
+    * @returns {boolean}
+@@ -340,6 +345,7 @@ class Database {
+     require('./models/Setting').init(this.sequelize)
+     require('./models/CustomMetadataProvider').init(this.sequelize)
+     require('./models/MediaItemShare').init(this.sequelize)
++    require('./models/BandwidthStat').init(this.sequelize)
+ 
+     return this.sequelize.sync({ force, alter: false })
+   }
+diff --git a/server/Server.js b/server/Server.js
+index 5fac001d..37822d2e 100644
+--- a/server/Server.js
++++ b/server/Server.js
+@@ -39,6 +39,7 @@ const CronManager = require('./managers/CronManager')
+ const ApiCacheManager = require('./managers/ApiCacheManager')
+ const BinaryManager = require('./managers/BinaryManager')
+ const ShareManager = require('./managers/ShareManager')
++const BandwidthManager = require('./managers/BandwidthManager')
+ const LibraryScanner = require('./scanner/LibraryScanner')
+ 
+ //Import the main Passport and Express-Session library
+@@ -69,6 +70,7 @@ class Server {
+     global.RouterBasePath = ROUTER_BASE_PATH
+     global.XAccel = process.env.USE_X_ACCEL
+     global.AllowCors = process.env.ALLOW_CORS === '1'
++    global.Server = this
+ 
+     if (process.env.EXP_PROXY_SUPPORT === '1') {
+       // https://github.com/advplyr/audiobookshelf/pull/3754
+@@ -121,6 +123,7 @@ class Server {
+     this.cronManager = new CronManager(this.podcastManager, this.playbackSessionManager)
+     this.apiCacheManager = new ApiCacheManager()
+     this.binaryManager = new BinaryManager()
++    this.bandwidthManager = new BandwidthManager(this)
+ 
+     // Routers
+     this.apiRouter = new ApiRouter(this)
+@@ -191,6 +194,7 @@ class Server {
+     const libraries = await Database.libraryModel.getAllWithFolders()
+     await this.cronManager.init(libraries)
+     this.apiCacheManager.init()
++    this.bandwidthManager.init()
+ 
+     if (Database.serverSettings.scannerDisableWatcher) {
+       Logger.info(`[Server] Watcher is disabled`)
+@@ -243,6 +247,9 @@ class Server {
+ 
+     const app = express()
+ 
++    // Track outgoing bandwidth per request / user
++    app.use(this.bandwidthManager.middleware.bind(this.bandwidthManager))
++
+     app.use((req, res, next) => {
+       if (!global.ServerSettings.allowIframe) {
+         // Prevent clickjacking by disallowing iframes
+@@ -541,6 +548,9 @@ class Server {
+    */
+   async stop() {
+     Logger.info('=== Stopping Server ===')
++    if (this.bandwidthManager) {
++      await this.bandwidthManager.stop()
++    }
+     Watcher.close()
+     Logger.info('[Server] Watcher Closed')
+     await SocketAuthority.close()
+diff --git a/server/controllers/StatsController.js b/server/controllers/StatsController.js
+index 32ed1973..47ad9ce5 100644
+--- a/server/controllers/StatsController.js
++++ b/server/controllers/StatsController.js
+@@ -57,6 +57,55 @@ class StatsController {
+     res.json(stats)
+   }
+ 
++  /**
++   * GET: /api/stats/bandwidth
++   *
++   * @param {RequestWithUser} req
++   * @param {Response} res
++   */
++  async getBandwidthStats(req, res) {
++    const bandwidthManager = this.server?.bandwidthManager || global.Server?.bandwidthManager
++    if (!bandwidthManager) {
++      Logger.error('[StatsController] BandwidthManager is not initialized')
++      return res.status(500).json({ error: 'BandwidthManager not initialized' })
++    }
++
++    try {
++      const stats = await bandwidthManager.getStats({
++        range: req.query.range,
++        userId: req.query.userId,
++        startDate: req.query.startDate,
++        endDate: req.query.endDate
++      })
++      res.json(stats)
++    } catch (err) {
++      Logger.error('[StatsController] Failed to retrieve bandwidth stats:', err)
++      res.status(500).json({ error: 'Failed to retrieve bandwidth stats' })
++    }
++  }
++
++  /**
++   * DELETE: /api/stats/bandwidth
++   *
++   * @param {RequestWithUser} req
++   * @param {Response} res
++   */
++  async clearBandwidthStats(req, res) {
++    const bandwidthManager = this.server?.bandwidthManager || global.Server?.bandwidthManager
++    if (!bandwidthManager) {
++      Logger.error('[StatsController] BandwidthManager is not initialized')
++      return res.status(500).json({ error: 'BandwidthManager not initialized' })
++    }
++
++    try {
++      await bandwidthManager.clearStats()
++      res.json({ success: true })
++    } catch (err) {
++      Logger.error('[StatsController] Failed to clear bandwidth stats:', err)
++      res.status(500).json({ error: 'Failed to clear bandwidth stats' })
++    }
++  }
++
+   /**
+    *
+    * @param {RequestWithUser} req
+diff --git a/server/managers/BandwidthManager.js b/server/managers/BandwidthManager.js
+new file mode 100644
+index 00000000..0239baf3
+--- /dev/null
++++ b/server/managers/BandwidthManager.js
+@@ -0,0 +1,417 @@
++const Database = require('../Database')
++const Logger = require('../Logger')
++const dateAndTime = require('../libs/dateAndTime')
++
++class BandwidthManager {
++  /**
++   * @param {import('../Server')} server
++   */
++  constructor(server) {
++    this.server = server
++    /** @type {Map<string, { userId: string, date: string, bytesStream: number, bytesDownload: number, bytesOther: number, bytesTotal: number, requests: number }>} */
++    this.buffer = new Map()
++    this.flushInterval = null
++  }
++
++  init() {
++    Logger.info('[BandwidthManager] Initialized')
++    // Flush buffered stats to database every 60 seconds
++    this.flushInterval = setInterval(() => {
++      this.flush().catch((err) => Logger.error('[BandwidthManager] Error in periodic flush:', err))
++    }, 60000)
++    if (this.flushInterval.unref) {
++      this.flushInterval.unref()
++    }
++  }
++
++  async stop() {
++    if (this.flushInterval) {
++      clearInterval(this.flushInterval)
++      this.flushInterval = null
++    }
++    await this.flush()
++  }
++
++  /**
++   * Record data transfer into in-memory buffer
++   *
++   * @param {string|null} userId
++   * @param {'stream'|'download'|'other'} category
++   * @param {number} bytes
++   */
++  record(userId, category, bytes) {
++    if (!global.ServerSettings?.enableBandwidthTracking) return
++    if (!bytes || bytes <= 0 || isNaN(bytes)) return
++
++    const date = dateAndTime.format(new Date(), 'YYYY-MM-DD')
++    const uid = userId || 'anonymous'
++    const key = `${uid}_${date}`
++
++    let entry = this.buffer.get(key)
++    if (!entry) {
++      entry = {
++        userId: uid,
++        date: date,
++        bytesStream: 0,
++        bytesDownload: 0,
++        bytesOther: 0,
++        bytesTotal: 0,
++        requests: 0
++      }
++      this.buffer.set(key, entry)
++    }
++
++    if (category === 'stream') {
++      entry.bytesStream += bytes
++    } else if (category === 'download') {
++      entry.bytesDownload += bytes
++    } else {
++      entry.bytesOther += bytes
++    }
++    entry.bytesTotal += bytes
++    entry.requests += 1
++  }
++
++  /**
++   * Determine traffic category based on request URL and query
++   *
++   * @param {import('express').Request} req
++   * @returns {'stream'|'download'|'other'}
++   */
++  categorizeRequest(req) {
++    const url = req.originalUrl || req.url || ''
++    const path = req.path || ''
++
++    // Download: explicit downloads, ebooks, zip archives
++    if (
++      url.includes('/download') ||
++      url.includes('/ebook') ||
++      req.query?.download === '1' ||
++      req.query?.download === 'true'
++    ) {
++      return 'download'
++    }
++
++    // Audio streaming: HLS, direct play, active playback session audio track chunks
++    if (
++      path.startsWith('/hls') ||
++      path.includes('/play') ||
++      path.includes('/session') ||
++      (path.includes('/file/') && !url.includes('/download'))
++    ) {
++      return 'stream'
++    }
++
++    // General: covers, API JSON, static client assets, RSS feeds
++    return 'other'
++  }
++
++  /**
++   * Express middleware to capture outgoing bytes on response finish/close
++   *
++   * @param {import('express').Request} req
++   * @param {import('express').Response} res
++   * @param {import('express').NextFunction} next
++   */
++  middleware(req, res, next) {
++    if (!global.ServerSettings?.enableBandwidthTracking) {
++      return next()
++    }
++
++    const startBytes = req.socket ? req.socket.bytesWritten : 0
++    let recorded = false
++
++    const onResponseEnd = () => {
++      if (recorded) return
++      recorded = true
++
++      const endBytes = req.socket ? req.socket.bytesWritten : 0
++      let bytesSent = Math.max(0, endBytes - startBytes)
++
++      // Fallback if socket.bytesWritten was not incremented
++      if (bytesSent === 0) {
++        const cl = res.getHeader('content-length')
++        if (cl) {
++          bytesSent = parseInt(cl, 10) || 0
++        }
++      }
++
++      if (bytesSent <= 0) return
++
++      // Determine user attribution
++      let userId = req.user?.id || null
++
++      // For HLS streams, lookup userId via active stream / session
++      if (!userId && req.path?.startsWith('/hls/')) {
++        const parts = req.path.split('/')
++        const streamId = parts[2]
++        if (streamId && this.server?.playbackSessionManager) {
++          const session = this.server.playbackSessionManager.getSession(streamId)
++          if (session?.userId) {
++            userId = session.userId
++          }
++        }
++      }
++
++      const category = this.categorizeRequest(req)
++      this.record(userId, category, bytesSent)
++    }
++
++    res.on('finish', onResponseEnd)
++    res.on('close', onResponseEnd)
++
++    next()
++  }
++
++  /**
++   * Flush in-memory buffer into SQLite database using an atomic UPSERT transaction
++   */
++  async flush() {
++    if (this.buffer.size === 0) return
++    if (!Database.sequelize) return
++
++    const currentBuffer = this.buffer
++    this.buffer = new Map()
++
++    const entries = Array.from(currentBuffer.values())
++    if (!entries.length) return
++
++    try {
++      await Database.sequelize.transaction(async (t) => {
++        for (const entry of entries) {
++          await Database.sequelize.query(
++            `INSERT INTO bandwidthStats (userId, date, bytesStream, bytesDownload, bytesOther, bytesTotal, requests, createdAt, updatedAt)
++             VALUES (:userId, :date, :bytesStream, :bytesDownload, :bytesOther, :bytesTotal, :requests, datetime('now'), datetime('now'))
++             ON CONFLICT(userId, date) DO UPDATE SET
++               bytesStream = bytesStream + excluded.bytesStream,
++               bytesDownload = bytesDownload + excluded.bytesDownload,
++               bytesOther = bytesOther + excluded.bytesOther,
++               bytesTotal = bytesTotal + excluded.bytesTotal,
++               requests = requests + excluded.requests,
++               updatedAt = datetime('now');`,
++            {
++              replacements: entry,
++              transaction: t
++            }
++          )
++        }
++      })
++    } catch (err) {
++      Logger.error('[BandwidthManager] Failed to flush bandwidth buffer to DB, restoring buffer:', err)
++      // Merge entries back into buffer so data is not lost
++      for (const entry of entries) {
++        const key = `${entry.userId}_${entry.date}`
++        const existing = this.buffer.get(key)
++        if (existing) {
++          existing.bytesStream += entry.bytesStream
++          existing.bytesDownload += entry.bytesDownload
++          existing.bytesOther += entry.bytesOther
++          existing.bytesTotal += entry.bytesTotal
++          existing.requests += entry.requests
++        } else {
++          this.buffer.set(key, entry)
++        }
++      }
++    }
++  }
++
++  /**
++   * Fetch aggregated bandwidth stats
++   *
++   * @param {Object} [options]
++   * @param {string} [options.range] 'day' | 'week' | 'month' | 'year' | 'all'
++   * @param {string} [options.userId]
++   * @param {string} [options.startDate]
++   * @param {string} [options.endDate]
++   */
++  async getStats(options = {}) {
++    // Flush current buffer first for live, up-to-the-second stats
++    await this.flush()
++
++    const now = new Date()
++    const todayStr = dateAndTime.format(now, 'YYYY-MM-DD')
++
++    // Helper to format date offset
++    const getPastDateStr = (daysAgo) => {
++      const d = new Date()
++      d.setDate(d.getDate() - daysAgo)
++      return dateAndTime.format(d, 'YYYY-MM-DD')
++    }
++
++    const sevenDaysAgoStr = getPastDateStr(6)
++    const thirtyDaysAgoStr = getPastDateStr(29)
++    const monthStartStr = `${todayStr.substring(0, 7)}-01`
++    const yearStartStr = `${todayStr.substring(0, 4)}-01-01`
++
++    // Determine query range for time series
++    let filterStart = null
++    let filterEnd = options.endDate || todayStr
++
++    if (options.startDate) {
++      filterStart = options.startDate
++    } else {
++      switch (options.range) {
++        case 'day':
++        case 'today':
++          filterStart = todayStr
++          break
++        case 'week':
++        case 'last7Days':
++          filterStart = sevenDaysAgoStr
++          break
++        case 'month':
++        case 'last30Days':
++          filterStart = thirtyDaysAgoStr
++          break
++        case 'thisMonth':
++          filterStart = monthStartStr
++          break
++        case 'year':
++        case 'thisYear':
++          filterStart = yearStartStr
++          break
++        case 'all':
++        default:
++          filterStart = null
++          break
++      }
++    }
++
++    // Load all stats from database
++    const allRecords = await Database.bandwidthStatModel.findAll({
++      order: [['date', 'ASC']]
++    })
++
++    // Compute Summary KPIs (across all users or specific user)
++    const summary = {
++      today: { total: 0, stream: 0, download: 0, other: 0, requests: 0 },
++      last7Days: { total: 0, stream: 0, download: 0, other: 0, requests: 0 },
++      thisMonth: { total: 0, stream: 0, download: 0, other: 0, requests: 0 },
++      thisYear: { total: 0, stream: 0, download: 0, other: 0, requests: 0 },
++      allTime: { total: 0, stream: 0, download: 0, other: 0, requests: 0 }
++    }
++
++    const addRecordToBucket = (bucket, rec) => {
++      bucket.total += Number(rec.bytesTotal || 0)
++      bucket.stream += Number(rec.bytesStream || 0)
++      bucket.download += Number(rec.bytesDownload || 0)
++      bucket.other += Number(rec.bytesOther || 0)
++      bucket.requests += Number(rec.requests || 0)
++    }
++
++    for (const rec of allRecords) {
++      if (options.userId && rec.userId !== options.userId) continue
++
++      addRecordToBucket(summary.allTime, rec)
++
++      if (rec.date === todayStr) {
++        addRecordToBucket(summary.today, rec)
++      }
++      if (rec.date >= sevenDaysAgoStr && rec.date <= todayStr) {
++        addRecordToBucket(summary.last7Days, rec)
++      }
++      if (rec.date >= monthStartStr && rec.date <= todayStr) {
++        addRecordToBucket(summary.thisMonth, rec)
++      }
++      if (rec.date >= yearStartStr && rec.date <= todayStr) {
++        addRecordToBucket(summary.thisYear, rec)
++      }
++    }
++
++    // Filter records for the selected timeline and user filter
++    const filteredRecords = allRecords.filter((rec) => {
++      if (options.userId && rec.userId !== options.userId) return false
++      if (filterStart && rec.date < filterStart) return false
++      if (filterEnd && rec.date > filterEnd) return false
++      return true
++    })
++
++    // Aggregate by date (daily timeline)
++    const dailyMap = new Map()
++    for (const rec of filteredRecords) {
++      let dailyEntry = dailyMap.get(rec.date)
++      if (!dailyEntry) {
++        dailyEntry = {
++          date: rec.date,
++          bytesStream: 0,
++          bytesDownload: 0,
++          bytesOther: 0,
++          bytesTotal: 0,
++          requests: 0
++        }
++        dailyMap.set(rec.date, dailyEntry)
++      }
++      dailyEntry.bytesStream += Number(rec.bytesStream || 0)
++      dailyEntry.bytesDownload += Number(rec.bytesDownload || 0)
++      dailyEntry.bytesOther += Number(rec.bytesOther || 0)
++      dailyEntry.bytesTotal += Number(rec.bytesTotal || 0)
++      dailyEntry.requests += Number(rec.requests || 0)
++    }
++
++    const daily = Array.from(dailyMap.values()).sort((a, b) => a.date.localeCompare(b.date))
++
++    // Aggregate by user (user breakdown for selected range)
++    const userMap = new Map()
++    let rangeTotalBytes = 0
++
++    // Fetch user map for usernames
++    const users = await Database.userModel.findAll()
++    const usernameMap = new Map()
++    for (const u of users) {
++      usernameMap.set(u.id, u.username)
++    }
++
++    for (const rec of filteredRecords) {
++      let userEntry = userMap.get(rec.userId)
++      if (!userEntry) {
++        userEntry = {
++          userId: rec.userId,
++          username: rec.userId === 'anonymous' ? 'Anonymous / Unauthenticated' : usernameMap.get(rec.userId) || 'Unknown User',
++          bytesStream: 0,
++          bytesDownload: 0,
++          bytesOther: 0,
++          bytesTotal: 0,
++          requests: 0,
++          percentOfTotal: 0
++        }
++        userMap.set(rec.userId, userEntry)
++      }
++      userEntry.bytesStream += Number(rec.bytesStream || 0)
++      userEntry.bytesDownload += Number(rec.bytesDownload || 0)
++      userEntry.bytesOther += Number(rec.bytesOther || 0)
++      userEntry.bytesTotal += Number(rec.bytesTotal || 0)
++      userEntry.requests += Number(rec.requests || 0)
++      rangeTotalBytes += Number(rec.bytesTotal || 0)
++    }
++
++    const userBreakdown = Array.from(userMap.values())
++      .map((u) => {
++        u.percentOfTotal = rangeTotalBytes > 0 ? Number(((u.bytesTotal / rangeTotalBytes) * 100).toFixed(1)) : 0
++        return u
++      })
++      .sort((a, b) => b.bytesTotal - a.bytesTotal)
++
++    return {
++      isEnabled: !!global.ServerSettings?.enableBandwidthTracking,
++      range: options.range || 'all',
++      startDate: filterStart,
++      endDate: filterEnd,
++      summary,
++      daily,
++      userBreakdown,
++      rangeTotalBytes
++    }
++  }
++
++  /**
++   * Clear all bandwidth statistics
++   */
++  async clearStats() {
++    this.buffer.clear()
++    await Database.bandwidthStatModel.destroy({ where: {}, truncate: true })
++    Logger.info('[BandwidthManager] All bandwidth statistics cleared by admin')
++    return true
++  }
++}
++
++module.exports = BandwidthManager
+diff --git a/server/models/BandwidthStat.js b/server/models/BandwidthStat.js
+new file mode 100644
+index 00000000..19f23fb4
+--- /dev/null
++++ b/server/models/BandwidthStat.js
+@@ -0,0 +1,88 @@
++const { DataTypes, Model } = require('sequelize')
++
++class BandwidthStat extends Model {
++  constructor(values, options) {
++    super(values, options)
++
++    /** @type {number} */
++    this.id
++    /** @type {string} */
++    this.userId
++    /** @type {string} */
++    this.date
++    /** @type {number} */
++    this.bytesStream
++    /** @type {number} */
++    this.bytesDownload
++    /** @type {number} */
++    this.bytesOther
++    /** @type {number} */
++    this.bytesTotal
++    /** @type {number} */
++    this.requests
++    /** @type {Date} */
++    this.createdAt
++    /** @type {Date} */
++    this.updatedAt
++  }
++
++  /**
++   * Initialize model
++   * @param {import('../Database').sequelize} sequelize
++   */
++  static init(sequelize) {
++    super.init(
++      {
++        id: {
++          type: DataTypes.INTEGER,
++          primaryKey: true,
++          autoIncrement: true
++        },
++        userId: {
++          type: DataTypes.STRING,
++          allowNull: false,
++          defaultValue: 'anonymous'
++        },
++        date: {
++          type: DataTypes.STRING,
++          allowNull: false
++        },
++        bytesStream: {
++          type: DataTypes.BIGINT,
++          defaultValue: 0
++        },
++        bytesDownload: {
++          type: DataTypes.BIGINT,
++          defaultValue: 0
++        },
++        bytesOther: {
++          type: DataTypes.BIGINT,
++          defaultValue: 0
++        },
++        bytesTotal: {
++          type: DataTypes.BIGINT,
++          defaultValue: 0
++        },
++        requests: {
++          type: DataTypes.INTEGER,
++          defaultValue: 0
++        }
++      },
++      {
++        sequelize,
++        modelName: 'bandwidthStat',
++        indexes: [
++          {
++            unique: true,
++            fields: ['userId', 'date']
++          },
++          {
++            fields: ['date']
++          }
++        ]
++      }
++    )
++  }
++}
++
++module.exports = BandwidthStat
+diff --git a/server/objects/settings/ServerSettings.js b/server/objects/settings/ServerSettings.js
+index 0454161e..bd0e42b5 100644
+--- a/server/objects/settings/ServerSettings.js
++++ b/server/objects/settings/ServerSettings.js
+@@ -25,7 +25,8 @@ const PATCHABLE_SETTINGS_KEYS = new Set([
+   'timeFormat',
+   'language',
+   'chromecastEnabled',
+-  'sortingIgnorePrefix'
++  'sortingIgnorePrefix',
++  'enableBandwidthTracking'
+ ])
+ 
+ class ServerSettings {
+@@ -79,6 +80,7 @@ class ServerSettings {
+     this.timeFormat = 'HH:mm'
+     this.language = 'en-us'
+     this.allowedOrigins = []
++    this.enableBandwidthTracking = true
+ 
+     this.logLevel = Logger.logLevel
+ 
+@@ -147,6 +149,7 @@ class ServerSettings {
+     this.timeFormat = settings.timeFormat || 'HH:mm'
+     this.language = settings.language || 'en-us'
+     this.allowedOrigins = settings.allowedOrigins || []
++    this.enableBandwidthTracking = settings.enableBandwidthTracking !== undefined ? !!settings.enableBandwidthTracking : true
+     this.logLevel = settings.logLevel || Logger.logLevel
+     this.version = settings.version || null
+     this.buildNumber = settings.buildNumber || 0 // Added v2.4.5
+@@ -259,6 +262,7 @@ class ServerSettings {
+       timeFormat: this.timeFormat,
+       language: this.language,
+       allowedOrigins: this.allowedOrigins,
++      enableBandwidthTracking: this.enableBandwidthTracking,
+       logLevel: this.logLevel,
+       version: this.version,
+       buildNumber: this.buildNumber,
+diff --git a/server/routers/ApiRouter.js b/server/routers/ApiRouter.js
+index 7c89126b..cea2b32e 100644
+--- a/server/routers/ApiRouter.js
++++ b/server/routers/ApiRouter.js
+@@ -331,6 +331,8 @@ class ApiRouter {
+     //
+     this.router.get('/stats/year/:year', StatsController.middleware.bind(this), StatsController.getAdminStatsForYear.bind(this))
+     this.router.get('/stats/server', StatsController.middleware.bind(this), StatsController.getServerStats.bind(this))
++    this.router.get('/stats/bandwidth', StatsController.middleware.bind(this), StatsController.getBandwidthStats.bind(this))
++    this.router.delete('/stats/bandwidth', StatsController.middleware.bind(this), StatsController.clearBandwidthStats.bind(this))
+ 
+     //
+     // API Key Routes
 diff --git a/server/utils/queries/libraryItemsBookFilters.js b/server/utils/queries/libraryItemsBookFilters.js
-index cac9a7d1..60416176 100644
+index cac9a7d1..efad5347 100644
 --- a/server/utils/queries/libraryItemsBookFilters.js
 +++ b/server/utils/queries/libraryItemsBookFilters.js
 @@ -849,13 +849,15 @@ module.exports = {
@@ -20,7 +1469,7 @@ index cac9a7d1..60416176 100644
        ],
        replacements: {
          userId: user.id,
-@@ -867,6 +869,9 @@ module.exports = {
+@@ -867,16 +869,16 @@ module.exports = {
          attributes: ['bookId', 'sequence'],
          separate: true,
          required: true,
@@ -30,3 +1479,15 @@ index cac9a7d1..60416176 100644
          include: {
            model: Database.bookModel,
            where: userPermissionBookWhere.bookWhere
+         },
+-        order: [[Sequelize.literal('CAST(sequence AS FLOAT) ASC NULLS LAST')]],
+-        limit: 1
++        order: [[Sequelize.literal('CAST(sequence AS FLOAT) ASC NULLS LAST')]]
+       },
+-      subQuery: false,
+-      limit,
+-      order: Database.sequelize.random()
++      subQuery: false
+     })
+ 
+     const booksFromSeriesToInclude = seriesNotStarted.map((se) => se.bookSeries?.[0]?.bookId).filter((bid) => bid)
