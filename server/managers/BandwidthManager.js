@@ -1,6 +1,31 @@
 const Database = require('../Database')
 const Logger = require('../Logger')
 const dateAndTime = require('../libs/dateAndTime')
+const requestIp = require('../libs/requestIp')
+
+/**
+ * Check if IP address belongs to a private / local network
+ * @param {string} ip
+ * @returns {boolean}
+ */
+function isLocalIp(ip) {
+  if (!ip) return false
+  if (ip.startsWith('::ffff:')) {
+    ip = ip.substring(7)
+  }
+  if (ip === '127.0.0.1' || ip === '::1' || ip === 'localhost') return true
+  // 10.0.0.0/8
+  if (/^10\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(ip)) return true
+  // 172.16.0.0/12 (172.16.0.0 - 172.31.255.255)
+  if (/^172\.(1[6-9]|2\d|3[0-1])\.\d{1,3}\.\d{1,3}$/.test(ip)) return true
+  // 192.168.0.0/16
+  if (/^192\.168\.\d{1,3}\.\d{1,3}$/.test(ip)) return true
+  // 169.254.0.0/16 (link-local)
+  if (/^169\.254\.\d{1,3}\.\d{1,3}$/.test(ip)) return true
+  // IPv6 local: fc00::/7, fe80::/10
+  if (/^(fc|fd|fe80)/i.test(ip)) return true
+  return false
+}
 
 class BandwidthManager {
   /**
@@ -8,19 +33,37 @@ class BandwidthManager {
    */
   constructor(server) {
     this.server = server
-    /** @type {Map<string, { userId: string, date: string, bytesStream: number, bytesDownload: number, bytesOther: number, bytesTotal: number, requests: number }>} */
+    /** @type {Map<string, { userId: string, date: string, bytesStream: number, bytesDownload: number, bytesOther: number, bytesTotal: number, bytesLocal: number, bytesInternet: number, requests: number }>} */
     this.buffer = new Map()
     this.flushInterval = null
   }
 
-  init() {
+  async init() {
     Logger.info('[BandwidthManager] Initialized')
+
+    // Ensure bytesLocal and bytesInternet columns exist in SQLite if table was created before
+    await this.ensureColumns()
+
     // Flush buffered stats to database every 60 seconds
     this.flushInterval = setInterval(() => {
       this.flush().catch((err) => Logger.error('[BandwidthManager] Error in periodic flush:', err))
     }, 60000)
     if (this.flushInterval.unref) {
       this.flushInterval.unref()
+    }
+  }
+
+  async ensureColumns() {
+    if (!Database.sequelize) return
+    try {
+      await Database.sequelize.query('ALTER TABLE bandwidthStats ADD COLUMN bytesLocal BIGINT DEFAULT 0;')
+    } catch {
+      // Column already exists
+    }
+    try {
+      await Database.sequelize.query('ALTER TABLE bandwidthStats ADD COLUMN bytesInternet BIGINT DEFAULT 0;')
+    } catch {
+      // Column already exists
     }
   }
 
@@ -38,8 +81,9 @@ class BandwidthManager {
    * @param {string|null} userId
    * @param {'stream'|'download'|'other'} category
    * @param {number} bytes
+   * @param {boolean} isLocal
    */
-  record(userId, category, bytes) {
+  record(userId, category, bytes, isLocal = false) {
     if (!global.ServerSettings?.enableBandwidthTracking) return
     if (!bytes || bytes <= 0 || isNaN(bytes)) return
 
@@ -56,6 +100,8 @@ class BandwidthManager {
         bytesDownload: 0,
         bytesOther: 0,
         bytesTotal: 0,
+        bytesLocal: 0,
+        bytesInternet: 0,
         requests: 0
       }
       this.buffer.set(key, entry)
@@ -68,6 +114,13 @@ class BandwidthManager {
     } else {
       entry.bytesOther += bytes
     }
+
+    if (isLocal) {
+      entry.bytesLocal += bytes
+    } else {
+      entry.bytesInternet += bytes
+    }
+
     entry.bytesTotal += bytes
     entry.requests += 1
   }
@@ -121,6 +174,10 @@ class BandwidthManager {
     const startBytes = req.socket ? req.socket.bytesWritten : 0
     let recorded = false
 
+    // Identify client IP and determine if local network or internet
+    const clientIp = requestIp.getClientIp(req)
+    const isLocal = isLocalIp(clientIp)
+
     const onResponseEnd = () => {
       if (recorded) return
       recorded = true
@@ -154,7 +211,7 @@ class BandwidthManager {
       }
 
       const category = this.categorizeRequest(req)
-      this.record(userId, category, bytesSent)
+      this.record(userId, category, bytesSent, isLocal)
     }
 
     res.on('finish', onResponseEnd)
@@ -180,13 +237,15 @@ class BandwidthManager {
       await Database.sequelize.transaction(async (t) => {
         for (const entry of entries) {
           await Database.sequelize.query(
-            `INSERT INTO bandwidthStats (userId, date, bytesStream, bytesDownload, bytesOther, bytesTotal, requests, createdAt, updatedAt)
-             VALUES (:userId, :date, :bytesStream, :bytesDownload, :bytesOther, :bytesTotal, :requests, datetime('now'), datetime('now'))
+            `INSERT INTO bandwidthStats (userId, date, bytesStream, bytesDownload, bytesOther, bytesTotal, bytesLocal, bytesInternet, requests, createdAt, updatedAt)
+             VALUES (:userId, :date, :bytesStream, :bytesDownload, :bytesOther, :bytesTotal, :bytesLocal, :bytesInternet, :requests, datetime('now'), datetime('now'))
              ON CONFLICT(userId, date) DO UPDATE SET
                bytesStream = bytesStream + excluded.bytesStream,
                bytesDownload = bytesDownload + excluded.bytesDownload,
                bytesOther = bytesOther + excluded.bytesOther,
                bytesTotal = bytesTotal + excluded.bytesTotal,
+               bytesLocal = bytesLocal + excluded.bytesLocal,
+               bytesInternet = bytesInternet + excluded.bytesInternet,
                requests = requests + excluded.requests,
                updatedAt = datetime('now');`,
             {
@@ -207,6 +266,8 @@ class BandwidthManager {
           existing.bytesDownload += entry.bytesDownload
           existing.bytesOther += entry.bytesOther
           existing.bytesTotal += entry.bytesTotal
+          existing.bytesLocal += entry.bytesLocal
+          existing.bytesInternet += entry.bytesInternet
           existing.requests += entry.requests
         } else {
           this.buffer.set(key, entry)
@@ -223,6 +284,7 @@ class BandwidthManager {
    * @param {string} [options.userId]
    * @param {string} [options.startDate]
    * @param {string} [options.endDate]
+   * @param {string} [options.trafficType] 'all' | 'internet' | 'local'
    */
   async getStats(options = {}) {
     // Flush current buffer first for live, up-to-the-second stats
@@ -284,11 +346,11 @@ class BandwidthManager {
 
     // Compute Summary KPIs (across all users or specific user)
     const summary = {
-      today: { total: 0, stream: 0, download: 0, other: 0, requests: 0 },
-      last7Days: { total: 0, stream: 0, download: 0, other: 0, requests: 0 },
-      thisMonth: { total: 0, stream: 0, download: 0, other: 0, requests: 0 },
-      thisYear: { total: 0, stream: 0, download: 0, other: 0, requests: 0 },
-      allTime: { total: 0, stream: 0, download: 0, other: 0, requests: 0 }
+      today: { total: 0, stream: 0, download: 0, other: 0, local: 0, internet: 0, requests: 0 },
+      last7Days: { total: 0, stream: 0, download: 0, other: 0, local: 0, internet: 0, requests: 0 },
+      thisMonth: { total: 0, stream: 0, download: 0, other: 0, local: 0, internet: 0, requests: 0 },
+      thisYear: { total: 0, stream: 0, download: 0, other: 0, local: 0, internet: 0, requests: 0 },
+      allTime: { total: 0, stream: 0, download: 0, other: 0, local: 0, internet: 0, requests: 0 }
     }
 
     const addRecordToBucket = (bucket, rec) => {
@@ -296,6 +358,8 @@ class BandwidthManager {
       bucket.stream += Number(rec.bytesStream || 0)
       bucket.download += Number(rec.bytesDownload || 0)
       bucket.other += Number(rec.bytesOther || 0)
+      bucket.local += Number(rec.bytesLocal || 0)
+      bucket.internet += Number(rec.bytesInternet || 0)
       bucket.requests += Number(rec.requests || 0)
     }
 
@@ -337,6 +401,8 @@ class BandwidthManager {
           bytesDownload: 0,
           bytesOther: 0,
           bytesTotal: 0,
+          bytesLocal: 0,
+          bytesInternet: 0,
           requests: 0
         }
         dailyMap.set(rec.date, dailyEntry)
@@ -345,6 +411,8 @@ class BandwidthManager {
       dailyEntry.bytesDownload += Number(rec.bytesDownload || 0)
       dailyEntry.bytesOther += Number(rec.bytesOther || 0)
       dailyEntry.bytesTotal += Number(rec.bytesTotal || 0)
+      dailyEntry.bytesLocal += Number(rec.bytesLocal || 0)
+      dailyEntry.bytesInternet += Number(rec.bytesInternet || 0)
       dailyEntry.requests += Number(rec.requests || 0)
     }
 
@@ -371,6 +439,8 @@ class BandwidthManager {
           bytesDownload: 0,
           bytesOther: 0,
           bytesTotal: 0,
+          bytesLocal: 0,
+          bytesInternet: 0,
           requests: 0,
           percentOfTotal: 0
         }
@@ -380,6 +450,8 @@ class BandwidthManager {
       userEntry.bytesDownload += Number(rec.bytesDownload || 0)
       userEntry.bytesOther += Number(rec.bytesOther || 0)
       userEntry.bytesTotal += Number(rec.bytesTotal || 0)
+      userEntry.bytesLocal += Number(rec.bytesLocal || 0)
+      userEntry.bytesInternet += Number(rec.bytesInternet || 0)
       userEntry.requests += Number(rec.requests || 0)
       rangeTotalBytes += Number(rec.bytesTotal || 0)
     }
@@ -394,6 +466,7 @@ class BandwidthManager {
     return {
       isEnabled: !!global.ServerSettings?.enableBandwidthTracking,
       range: options.range || 'all',
+      trafficType: options.trafficType || 'all',
       startDate: filterStart,
       endDate: filterEnd,
       summary,

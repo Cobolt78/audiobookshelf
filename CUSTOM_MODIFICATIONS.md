@@ -31,13 +31,16 @@ This document tracks all custom features, fixes, and architectural modifications
   3. **Attribution**: Identifies the authenticated user (`req.user.id`), attributes HLS stream segments to the active session user, and attributes unauthenticated/public traffic to `Anonymous / Public`.
   4. **Toggle Setting**: Added `enableBandwidthTracking` to Server Settings. Admins can toggle bandwidth tracking ON or OFF at any time in **Settings > General**.
   5. **Admin Dashboard (`/config/bandwidth`)**:
-     - **Summary KPI Cards**: Data transferred Today, Last 7 Days, This Month, This Year, and All-Time.
+     - **Summary KPI Cards**: Data transferred Today, Last 7 Days, This Month, This Year, and All-Time with Internet (WAN) vs Local (LAN) breakdown.
      - **Timeline Chart**: Interactive daily transfer bar chart with hover tooltips and category breakdown.
      - **Time Range Filters**: Today, Last 7 Days, Last 30 Days, This Year, All Time.
-     - **User Breakdown Table**: Complete breakdown showing each user's username, streaming bytes, download bytes, other bytes, total bytes, and percentage bar of total traffic.
+     - **Traffic Type Filters**: All Traffic, Internet Only (WAN), and Local Only (LAN).
+     - **User Breakdown Table**: Complete breakdown showing each user's username, Internet (WAN) bytes, Local (LAN) bytes, streaming bytes, download bytes, total bytes, and percentage bar of total traffic.
      - **User Filter**: Filter chart and stats by specific user or view all users combined.
      - **Clear Records**: Admin action to reset/clear historical bandwidth statistics.
-  6. **User Profile Integration (`/config/users/:id`)**: Displays the user's total data transferred alongside their total listening time.
+     - **UI Alignment & Stacking Fixes**: Resolved vertical offset of User Filter dropdown and fixed z-index stacking context to prevent chart bars from overlaying open dropdown menu options.
+  6. **Local Network vs Internet (LAN / WAN) Tracking**: Automatically detects private RFC 1918 subnets (`192.168.x.x`, `10.x.x.x`, `172.16.x.x`, loopback, IPv6 local) vs external remote WAN IPs (including Cloudflare and reverse proxy headers) to distinguish data leaving the home internet from local Wi-Fi traffic.
+  7. **User Profile Integration (`/config/users/:id`)**: Displays the user's total data transferred alongside their total listening time.
 
 ### Modified Files:
 * `server/models/BandwidthStat.js` (New Sequelize model for `bandwidthStats` table)

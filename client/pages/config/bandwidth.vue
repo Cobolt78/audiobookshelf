@@ -18,62 +18,103 @@
         <div class="bg-primary/20 border border-white/5 rounded-lg p-3 flex flex-col justify-between">
           <p class="text-xs uppercase font-semibold text-gray-400 mb-1">Today</p>
           <p class="text-2xl font-bold font-mono text-emerald-400">{{ $bytesPretty(summary.today.total) }}</p>
-          <div class="text-[11px] text-gray-400 mt-2 space-y-0.5">
-            <p class="truncate"><span class="text-emerald-300 font-medium">Stream:</span> {{ $bytesPretty(summary.today.stream) }}</p>
-            <p class="truncate"><span class="text-purple-300 font-medium">Download:</span> {{ $bytesPretty(summary.today.download) }}</p>
+          <div class="text-[11px] text-gray-300 mt-2 space-y-0.5 border-t border-white/5 pt-1.5">
+            <p class="truncate flex items-center justify-between">
+              <span class="text-sky-300 font-medium flex items-center"><span class="material-symbols text-[13px] mr-1">public</span>Internet:</span>
+              <span class="font-mono">{{ $bytesPretty(summary.today.internet) }}</span>
+            </p>
+            <p class="truncate flex items-center justify-between">
+              <span class="text-amber-300 font-medium flex items-center"><span class="material-symbols text-[13px] mr-1">home</span>Local:</span>
+              <span class="font-mono">{{ $bytesPretty(summary.today.local) }}</span>
+            </p>
           </div>
         </div>
 
         <div class="bg-primary/20 border border-white/5 rounded-lg p-3 flex flex-col justify-between">
           <p class="text-xs uppercase font-semibold text-gray-400 mb-1">Last 7 Days</p>
           <p class="text-2xl font-bold font-mono text-emerald-400">{{ $bytesPretty(summary.last7Days.total) }}</p>
-          <div class="text-[11px] text-gray-400 mt-2 space-y-0.5">
-            <p class="truncate"><span class="text-emerald-300 font-medium">Stream:</span> {{ $bytesPretty(summary.last7Days.stream) }}</p>
-            <p class="truncate"><span class="text-purple-300 font-medium">Download:</span> {{ $bytesPretty(summary.last7Days.download) }}</p>
+          <div class="text-[11px] text-gray-300 mt-2 space-y-0.5 border-t border-white/5 pt-1.5">
+            <p class="truncate flex items-center justify-between">
+              <span class="text-sky-300 font-medium flex items-center"><span class="material-symbols text-[13px] mr-1">public</span>Internet:</span>
+              <span class="font-mono">{{ $bytesPretty(summary.last7Days.internet) }}</span>
+            </p>
+            <p class="truncate flex items-center justify-between">
+              <span class="text-amber-300 font-medium flex items-center"><span class="material-symbols text-[13px] mr-1">home</span>Local:</span>
+              <span class="font-mono">{{ $bytesPretty(summary.last7Days.local) }}</span>
+            </p>
           </div>
         </div>
 
         <div class="bg-primary/20 border border-white/5 rounded-lg p-3 flex flex-col justify-between">
           <p class="text-xs uppercase font-semibold text-gray-400 mb-1">This Month</p>
           <p class="text-2xl font-bold font-mono text-emerald-400">{{ $bytesPretty(summary.thisMonth.total) }}</p>
-          <div class="text-[11px] text-gray-400 mt-2 space-y-0.5">
-            <p class="truncate"><span class="text-emerald-300 font-medium">Stream:</span> {{ $bytesPretty(summary.thisMonth.stream) }}</p>
-            <p class="truncate"><span class="text-purple-300 font-medium">Download:</span> {{ $bytesPretty(summary.thisMonth.download) }}</p>
+          <div class="text-[11px] text-gray-300 mt-2 space-y-0.5 border-t border-white/5 pt-1.5">
+            <p class="truncate flex items-center justify-between">
+              <span class="text-sky-300 font-medium flex items-center"><span class="material-symbols text-[13px] mr-1">public</span>Internet:</span>
+              <span class="font-mono">{{ $bytesPretty(summary.thisMonth.internet) }}</span>
+            </p>
+            <p class="truncate flex items-center justify-between">
+              <span class="text-amber-300 font-medium flex items-center"><span class="material-symbols text-[13px] mr-1">home</span>Local:</span>
+              <span class="font-mono">{{ $bytesPretty(summary.thisMonth.local) }}</span>
+            </p>
           </div>
         </div>
 
         <div class="bg-primary/20 border border-white/5 rounded-lg p-3 flex flex-col justify-between">
           <p class="text-xs uppercase font-semibold text-gray-400 mb-1">This Year</p>
           <p class="text-2xl font-bold font-mono text-emerald-400">{{ $bytesPretty(summary.thisYear.total) }}</p>
-          <div class="text-[11px] text-gray-400 mt-2 space-y-0.5">
-            <p class="truncate"><span class="text-emerald-300 font-medium">Stream:</span> {{ $bytesPretty(summary.thisYear.stream) }}</p>
-            <p class="truncate"><span class="text-purple-300 font-medium">Download:</span> {{ $bytesPretty(summary.thisYear.download) }}</p>
+          <div class="text-[11px] text-gray-300 mt-2 space-y-0.5 border-t border-white/5 pt-1.5">
+            <p class="truncate flex items-center justify-between">
+              <span class="text-sky-300 font-medium flex items-center"><span class="material-symbols text-[13px] mr-1">public</span>Internet:</span>
+              <span class="font-mono">{{ $bytesPretty(summary.thisYear.internet) }}</span>
+            </p>
+            <p class="truncate flex items-center justify-between">
+              <span class="text-amber-300 font-medium flex items-center"><span class="material-symbols text-[13px] mr-1">home</span>Local:</span>
+              <span class="font-mono">{{ $bytesPretty(summary.thisYear.local) }}</span>
+            </p>
           </div>
         </div>
 
         <div class="bg-primary/20 border border-white/5 rounded-lg p-3 flex flex-col justify-between col-span-2 sm:col-span-1">
           <p class="text-xs uppercase font-semibold text-gray-400 mb-1">All Time Total</p>
           <p class="text-2xl font-bold font-mono text-cyan-400">{{ $bytesPretty(summary.allTime.total) }}</p>
-          <div class="text-[11px] text-gray-400 mt-2 space-y-0.5">
-            <p class="truncate"><span class="text-emerald-300 font-medium">Stream:</span> {{ $bytesPretty(summary.allTime.stream) }}</p>
-            <p class="truncate"><span class="text-purple-300 font-medium">Download:</span> {{ $bytesPretty(summary.allTime.download) }}</p>
+          <div class="text-[11px] text-gray-300 mt-2 space-y-0.5 border-t border-white/5 pt-1.5">
+            <p class="truncate flex items-center justify-between">
+              <span class="text-sky-300 font-medium flex items-center"><span class="material-symbols text-[13px] mr-1">public</span>Internet:</span>
+              <span class="font-mono">{{ $bytesPretty(summary.allTime.internet) }}</span>
+            </p>
+            <p class="truncate flex items-center justify-between">
+              <span class="text-amber-300 font-medium flex items-center"><span class="material-symbols text-[13px] mr-1">home</span>Local:</span>
+              <span class="font-mono">{{ $bytesPretty(summary.allTime.local) }}</span>
+            </p>
           </div>
         </div>
       </div>
 
-      <!-- Filters & Toolbar -->
-      <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-white/10 pb-4 mb-6">
-        <!-- Range Buttons -->
-        <div class="inline-flex rounded-md shadow-sm bg-black/40 p-1 border border-white/10">
-          <button v-for="r in rangeOptions" :key="r.value" type="button" @click="selectRange(r.value)" class="px-3 py-1 text-xs font-medium rounded transition-colors" :class="selectedRange === r.value ? 'bg-primary text-white shadow' : 'text-gray-400 hover:text-white'">
-            {{ r.label }}
-          </button>
+      <!-- Filters & Toolbar (Stacking context relative z-30 prevents chart clipping) -->
+      <div class="relative z-30 flex flex-col md:flex-row md:items-center justify-between gap-3 border-b border-white/10 pb-4 mb-6">
+        <div class="flex flex-wrap items-center gap-2">
+          <!-- Range Buttons -->
+          <div class="inline-flex rounded-md shadow-sm bg-black/40 p-1 border border-white/10">
+            <button v-for="r in rangeOptions" :key="r.value" type="button" @click="selectRange(r.value)" class="px-3 py-1 text-xs font-medium rounded transition-colors" :class="selectedRange === r.value ? 'bg-primary text-white shadow' : 'text-gray-400 hover:text-white'">
+              {{ r.label }}
+            </button>
+          </div>
+
+          <!-- Traffic Type Filter (All / Internet WAN / Local LAN) -->
+          <div class="inline-flex rounded-md shadow-sm bg-black/40 p-1 border border-white/10">
+            <button v-for="t in trafficTypeOptions" :key="t.value" type="button" @click="selectTrafficType(t.value)" class="px-2.5 py-1 text-xs font-medium rounded transition-colors flex items-center gap-1" :class="selectedTrafficType === t.value ? 'bg-primary text-white shadow' : 'text-gray-400 hover:text-white'">
+              <span class="material-symbols text-[14px]">{{ t.icon }}</span>
+              <span>{{ t.label }}</span>
+            </button>
+          </div>
         </div>
 
-        <div class="flex items-center gap-2">
+        <!-- Controls: User Dropdown (no top label so button is vertically aligned) + Refresh + Clear -->
+        <div class="flex items-center gap-2 relative z-40">
           <!-- User Filter Dropdown -->
-          <div class="w-48">
-            <ui-dropdown v-model="selectedUserId" small :items="userDropdownItems" label="Filter User" @input="loadStats" />
+          <div class="w-48 relative">
+            <ui-dropdown v-model="selectedUserId" small :items="userDropdownItems" @input="loadStats" />
           </div>
 
           <!-- Refresh Button -->
@@ -92,7 +133,7 @@
 
       <!-- Timeline Chart Section -->
       <div class="mb-8">
-        <div class="flex items-center justify-between mb-3">
+        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-3">
           <h2 class="text-lg font-semibold flex items-center">
             <span class="material-symbols mr-2 text-primary">show_chart</span>
             Daily Transfer Timeline
@@ -138,12 +179,16 @@
                   <p class="text-emerald-400">Stream: {{ $bytesPretty(item.bytesStream) }}</p>
                   <p class="text-purple-400">Download: {{ $bytesPretty(item.bytesDownload) }}</p>
                   <p class="text-blue-400">Other: {{ $bytesPretty(item.bytesOther) }}</p>
-                  <p class="font-bold border-t border-white/10 pt-1 mt-1">Total: {{ $bytesPretty(item.bytesTotal) }}</p>
-                  <p class="text-[10px] text-gray-400">Requests: {{ item.requests }}</p>
+                  <div class="border-t border-white/10 pt-1 mt-1 space-y-0.5">
+                    <p class="text-sky-300">🌐 Internet (WAN): {{ $bytesPretty(item.bytesInternet) }}</p>
+                    <p class="text-amber-300">🏠 Local (LAN): {{ $bytesPretty(item.bytesLocal) }}</p>
+                    <p class="font-bold text-white pt-0.5">Total: {{ $bytesPretty(item.bytesTotal) }}</p>
+                  </div>
+                  <p class="text-[10px] text-gray-400 pt-0.5">Requests: {{ item.requests }}</p>
                 </div>
 
-                <!-- Stacked Bar -->
-                <div class="w-full max-w-[28px] rounded-t flex flex-col-reverse overflow-hidden transition-all duration-150 group-hover:brightness-125" :style="{ height: `${Math.max(2, (item.bytesTotal / chartMaxBytes) * 100)}%` }">
+                <!-- Stacked Bar (Adjusted by selected traffic type if filtered) -->
+                <div class="w-full max-w-[28px] rounded-t flex flex-col-reverse overflow-hidden transition-all duration-150 group-hover:brightness-125" :style="{ height: `${Math.max(2, (getBarHeightBytes(item) / chartMaxBytes) * 100)}%` }">
                   <div class="w-full bg-emerald-500" :style="{ height: `${(item.bytesStream / (item.bytesTotal || 1)) * 100}%` }" />
                   <div class="w-full bg-purple-500" :style="{ height: `${(item.bytesDownload / (item.bytesTotal || 1)) * 100}%` }" />
                   <div class="w-full bg-blue-500" :style="{ height: `${(item.bytesOther / (item.bytesTotal || 1)) * 100}%` }" />
@@ -174,16 +219,17 @@
             <thead class="bg-white/5 text-xs uppercase text-gray-400 font-semibold border-b border-white/10">
               <tr>
                 <th class="py-3 px-4">User</th>
-                <th class="py-3 px-4 text-right">Streaming</th>
-                <th class="py-3 px-4 text-right">Downloads</th>
-                <th class="py-3 px-4 text-right">Other</th>
-                <th class="py-3 px-4 text-right">Total Transferred</th>
-                <th class="py-3 px-4 w-40">% of Total</th>
+                <th class="py-3 px-4 text-right">Internet (WAN)</th>
+                <th class="py-3 px-4 text-right">Local (LAN)</th>
+                <th class="py-3 px-4 text-right hidden sm:table-cell">Streaming</th>
+                <th class="py-3 px-4 text-right hidden sm:table-cell">Downloads</th>
+                <th class="py-3 px-4 text-right font-bold text-white">Total</th>
+                <th class="py-3 px-4 w-36">% of Total</th>
               </tr>
             </thead>
             <tbody class="divide-y divide-white/5">
               <tr v-if="!userBreakdown.length">
-                <td colspan="6" class="text-center py-8 text-gray-400 text-sm">No user data recorded for this time frame.</td>
+                <td colspan="7" class="text-center py-8 text-gray-400 text-sm">No user data recorded for this time frame.</td>
               </tr>
               <tr v-for="user in userBreakdown" :key="user.userId" class="hover:bg-white/5 transition-colors">
                 <td class="py-3 px-4">
@@ -197,9 +243,10 @@
                     </div>
                   </div>
                 </td>
-                <td class="py-3 px-4 text-right font-mono text-emerald-400">{{ $bytesPretty(user.bytesStream) }}</td>
-                <td class="py-3 px-4 text-right font-mono text-purple-400">{{ $bytesPretty(user.bytesDownload) }}</td>
-                <td class="py-3 px-4 text-right font-mono text-blue-400">{{ $bytesPretty(user.bytesOther) }}</td>
+                <td class="py-3 px-4 text-right font-mono text-sky-400 font-medium">{{ $bytesPretty(user.bytesInternet) }}</td>
+                <td class="py-3 px-4 text-right font-mono text-amber-300 font-medium">{{ $bytesPretty(user.bytesLocal) }}</td>
+                <td class="py-3 px-4 text-right font-mono text-emerald-400 hidden sm:table-cell">{{ $bytesPretty(user.bytesStream) }}</td>
+                <td class="py-3 px-4 text-right font-mono text-purple-400 hidden sm:table-cell">{{ $bytesPretty(user.bytesDownload) }}</td>
                 <td class="py-3 px-4 text-right font-mono font-bold text-white">{{ $bytesPretty(user.bytesTotal) }}</td>
                 <td class="py-3 px-4">
                   <div class="flex items-center gap-2">
@@ -246,6 +293,7 @@ export default {
       clearing: false,
       showConfirmClear: false,
       selectedRange: 'last7Days',
+      selectedTrafficType: 'all',
       selectedUserId: '',
       rangeOptions: [
         { label: 'Today', value: 'today' },
@@ -254,12 +302,17 @@ export default {
         { label: 'This Year', value: 'thisYear' },
         { label: 'All Time', value: 'all' }
       ],
+      trafficTypeOptions: [
+        { label: 'All Traffic', value: 'all', icon: 'traffic' },
+        { label: 'Internet', value: 'internet', icon: 'public' },
+        { label: 'Local LAN', value: 'local', icon: 'home' }
+      ],
       summary: {
-        today: { total: 0, stream: 0, download: 0, other: 0, requests: 0 },
-        last7Days: { total: 0, stream: 0, download: 0, other: 0, requests: 0 },
-        thisMonth: { total: 0, stream: 0, download: 0, other: 0, requests: 0 },
-        thisYear: { total: 0, stream: 0, download: 0, other: 0, requests: 0 },
-        allTime: { total: 0, stream: 0, download: 0, other: 0, requests: 0 }
+        today: { total: 0, stream: 0, download: 0, other: 0, local: 0, internet: 0, requests: 0 },
+        last7Days: { total: 0, stream: 0, download: 0, other: 0, local: 0, internet: 0, requests: 0 },
+        thisMonth: { total: 0, stream: 0, download: 0, other: 0, local: 0, internet: 0, requests: 0 },
+        thisYear: { total: 0, stream: 0, download: 0, other: 0, local: 0, internet: 0, requests: 0 },
+        allTime: { total: 0, stream: 0, download: 0, other: 0, local: 0, internet: 0, requests: 0 }
       },
       dailyChartData: [],
       userBreakdown: [],
@@ -286,7 +339,7 @@ export default {
     },
     chartMaxBytes() {
       if (!this.dailyChartData.length) return 1
-      const max = Math.max(...this.dailyChartData.map((d) => d.bytesTotal))
+      const max = Math.max(...this.dailyChartData.map((d) => this.getBarHeightBytes(d)))
       return max > 0 ? max : 1
     }
   },
@@ -294,6 +347,18 @@ export default {
     selectRange(range) {
       this.selectedRange = range
       this.loadStats()
+    },
+    selectTrafficType(type) {
+      this.selectedTrafficType = type
+      this.loadStats()
+    },
+    getBarHeightBytes(item) {
+      if (this.selectedTrafficType === 'internet') {
+        return item.bytesInternet || 0
+      } else if (this.selectedTrafficType === 'local') {
+        return item.bytesLocal || 0
+      }
+      return item.bytesTotal || 0
     },
     formatShortDate(dateStr) {
       if (!dateStr) return ''
@@ -309,6 +374,9 @@ export default {
         let url = `/api/stats/bandwidth?range=${this.selectedRange}`
         if (this.selectedUserId) {
           url += `&userId=${this.selectedUserId}`
+        }
+        if (this.selectedTrafficType && this.selectedTrafficType !== 'all') {
+          url += `&trafficType=${this.selectedTrafficType}`
         }
         const data = await this.$axios.$get(url)
         if (data) {

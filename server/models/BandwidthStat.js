@@ -19,6 +19,10 @@ class BandwidthStat extends Model {
     /** @type {number} */
     this.bytesTotal
     /** @type {number} */
+    this.bytesLocal
+    /** @type {number} */
+    this.bytesInternet
+    /** @type {number} */
     this.requests
     /** @type {Date} */
     this.createdAt
@@ -60,6 +64,14 @@ class BandwidthStat extends Model {
           defaultValue: 0
         },
         bytesTotal: {
+          type: DataTypes.BIGINT,
+          defaultValue: 0
+        },
+        bytesLocal: {
+          type: DataTypes.BIGINT,
+          defaultValue: 0
+        },
+        bytesInternet: {
           type: DataTypes.BIGINT,
           defaultValue: 0
         },
