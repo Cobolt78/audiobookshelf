@@ -1,3 +1,4 @@
+const { Op } = require('sequelize')
 const Database = require('../Database')
 const Logger = require('../Logger')
 const dateAndTime = require('../libs/dateAndTime')
@@ -35,6 +36,10 @@ class BandwidthManager {
     this.server = server
     /** @type {Map<string, { userId: string, date: string, bytesStream: number, bytesDownload: number, bytesOther: number, bytesTotal: number, bytesLocal: number, bytesInternet: number, requests: number }>} */
     this.buffer = new Map()
+    /** @type {Map<string, { userId: string, date: string, libraryItemId: string, itemName: string, category: string, bytesLocal: number, bytesInternet: number, bytesTotal: number, requests: number }>} */
+    this.itemBuffer = new Map()
+    /** @type {Map<string, string>} */
+    this.itemTitleCache = new Map()
     this.flushInterval = null
   }
 
@@ -43,6 +48,15 @@ class BandwidthManager {
 
     // Ensure bytesLocal and bytesInternet columns exist in SQLite if table was created before
     await this.ensureColumns()
+
+    // Ensure bandwidthItemStats table exists
+    if (Database.bandwidthItemStatModel) {
+      try {
+        await Database.bandwidthItemStatModel.sync()
+      } catch (err) {
+        Logger.error('[BandwidthManager] Error syncing bandwidthItemStats table:', err)
+      }
+    }
 
     // Flush buffered stats to database every 60 seconds
     this.flushInterval = setInterval(() => {
@@ -76,14 +90,106 @@ class BandwidthManager {
   }
 
   /**
+   * Extract libraryItemId, itemName, and associated userId from request
+   *
+   * @param {import('express').Request} req
+   * @returns {Promise<{ libraryItemId: string, itemName: string, userId?: string }>}
+   */
+  async extractItemInfo(req) {
+    if (!req) return { libraryItemId: 'general', itemName: 'General / Web App' }
+
+    // 1. Attached libraryItem from LibraryItemController middleware
+    if (req.libraryItem) {
+      const id = req.libraryItem.id
+      const title = req.libraryItem.media?.title || req.libraryItem.title || 'Unknown Title'
+      if (id && title) {
+        this.itemTitleCache.set(id, title)
+        return { libraryItemId: id, itemName: title }
+      }
+    }
+
+    const path = req.path || ''
+    const url = req.originalUrl || req.url || ''
+
+    // 2. Playback Session Track Streaming: /session/:id/track/:index or /public/session/:id/track/:index
+    const sessionMatch = path.match(/\/session\/([^/]+)\/track/)
+    if (sessionMatch) {
+      const sessionId = sessionMatch[1]
+      const session = this.server?.playbackSessionManager?.getSession(sessionId)
+      if (session) {
+        const id = session.libraryItemId || sessionId
+        const title = session.displayTitle || 'Audio Track'
+        this.itemTitleCache.set(id, title)
+        return { libraryItemId: id, itemName: title, userId: session.userId }
+      }
+    }
+
+    // 3. HLS Streaming: /hls/:stream/:file
+    if (path.startsWith('/hls/')) {
+      const parts = path.split('/')
+      const streamId = parts[2]
+      if (streamId) {
+        const session = this.server?.playbackSessionManager?.getSession(streamId)
+        if (session) {
+          const id = session.libraryItemId || streamId
+          const title = session.displayTitle || 'HLS Stream'
+          this.itemTitleCache.set(id, title)
+          return { libraryItemId: id, itemName: title, userId: session.userId }
+        }
+      }
+    }
+
+    // 4. Library Item Routes: /api/items/:id/...
+    const itemMatch = url.match(/\/api\/items\/([^/?#]+)/)
+    if (itemMatch) {
+      const itemId = itemMatch[1]
+      if (this.itemTitleCache.has(itemId)) {
+        return { libraryItemId: itemId, itemName: this.itemTitleCache.get(itemId) }
+      }
+      try {
+        if (Database.libraryItemModel) {
+          const item = await Database.libraryItemModel.findByPk(itemId, {
+            attributes: ['id', 'mediaType'],
+            include: [
+              { model: Database.bookModel, attributes: ['title'] },
+              { model: Database.podcastModel, attributes: ['title'] }
+            ]
+          })
+          if (item) {
+            const title = item.media?.title || item.book?.title || item.podcast?.title || 'Library Item'
+            this.itemTitleCache.set(itemId, title)
+            return { libraryItemId: itemId, itemName: title }
+          }
+        }
+      } catch (err) {
+        Logger.debug(`[BandwidthManager] Failed to resolve item title for ${itemId}: ${err.message}`)
+      }
+      return { libraryItemId: itemId, itemName: 'Item ' + itemId.substring(0, 8) }
+    }
+
+    // 5. Shared media links: /share/:slug or /public/share/:slug
+    if (path.includes('/share/')) {
+      return { libraryItemId: 'shared', itemName: 'Shared Media Link' }
+    }
+
+    // 6. Backups
+    if (path.includes('/backups/')) {
+      return { libraryItemId: 'backup', itemName: 'Server Backup' }
+    }
+
+    return { libraryItemId: 'general', itemName: 'General / Web App' }
+  }
+
+  /**
    * Record data transfer into in-memory buffer
    *
    * @param {string|null} userId
    * @param {'stream'|'download'|'other'} category
    * @param {number} bytes
    * @param {boolean} isLocal
+   * @param {{ libraryItemId?: string, itemName?: string }|null} [itemInfo]
    */
-  record(userId, category, bytes, isLocal = false) {
+  record(userId, category, bytes, isLocal = false, itemInfo = null) {
     if (!global.ServerSettings?.enableBandwidthTracking) return
     if (!bytes || bytes <= 0 || isNaN(bytes)) return
 
@@ -123,6 +229,39 @@ class BandwidthManager {
 
     entry.bytesTotal += bytes
     entry.requests += 1
+
+    // Also record per-item statistics
+    const libraryItemId = itemInfo?.libraryItemId || 'general'
+    const itemName = itemInfo?.itemName || (libraryItemId === 'general' ? 'General / Web App' : 'Item ' + libraryItemId.substring(0, 8))
+    const itemKey = `${uid}_${date}_${libraryItemId}_${category}`
+
+    let itemEntry = this.itemBuffer.get(itemKey)
+    if (!itemEntry) {
+      itemEntry = {
+        userId: uid,
+        date: date,
+        libraryItemId: libraryItemId,
+        itemName: itemName,
+        category: category,
+        bytesLocal: 0,
+        bytesInternet: 0,
+        bytesTotal: 0,
+        requests: 0
+      }
+      this.itemBuffer.set(itemKey, itemEntry)
+    }
+
+    if (itemName && itemEntry.itemName === 'General / Web App' && itemName !== 'General / Web App') {
+      itemEntry.itemName = itemName
+    }
+
+    if (isLocal) {
+      itemEntry.bytesLocal += bytes
+    } else {
+      itemEntry.bytesInternet += bytes
+    }
+    itemEntry.bytesTotal += bytes
+    itemEntry.requests += 1
   }
 
   /**
@@ -178,7 +317,7 @@ class BandwidthManager {
     const clientIp = requestIp.getClientIp(req)
     const isLocal = isLocalIp(clientIp)
 
-    const onResponseEnd = () => {
+    const onResponseEnd = async () => {
       if (recorded) return
       recorded = true
 
@@ -195,23 +334,16 @@ class BandwidthManager {
 
       if (bytesSent <= 0) return
 
+      const itemInfo = await this.extractItemInfo(req)
+
       // Determine user attribution
       let userId = req.user?.id || null
-
-      // For HLS streams, lookup userId via active stream / session
-      if (!userId && req.path?.startsWith('/hls/')) {
-        const parts = req.path.split('/')
-        const streamId = parts[2]
-        if (streamId && this.server?.playbackSessionManager) {
-          const session = this.server.playbackSessionManager.getSession(streamId)
-          if (session?.userId) {
-            userId = session.userId
-          }
-        }
+      if (!userId && itemInfo.userId) {
+        userId = itemInfo.userId
       }
 
       const category = this.categorizeRequest(req)
-      this.record(userId, category, bytesSent, isLocal)
+      this.record(userId, category, bytesSent, isLocal, itemInfo)
     }
 
     res.on('finish', onResponseEnd)
@@ -224,14 +356,16 @@ class BandwidthManager {
    * Flush in-memory buffer into SQLite database using an atomic UPSERT transaction
    */
   async flush() {
-    if (this.buffer.size === 0) return
+    if (this.buffer.size === 0 && this.itemBuffer.size === 0) return
     if (!Database.sequelize) return
 
     const currentBuffer = this.buffer
+    const currentItemBuffer = this.itemBuffer
     this.buffer = new Map()
+    this.itemBuffer = new Map()
 
     const entries = Array.from(currentBuffer.values())
-    if (!entries.length) return
+    const itemEntries = Array.from(currentItemBuffer.values())
 
     try {
       await Database.sequelize.transaction(async (t) => {
@@ -250,6 +384,24 @@ class BandwidthManager {
                updatedAt = datetime('now');`,
             {
               replacements: entry,
+              transaction: t
+            }
+          )
+        }
+
+        for (const itemEntry of itemEntries) {
+          await Database.sequelize.query(
+            `INSERT INTO bandwidthItemStats (userId, date, libraryItemId, itemName, category, bytesLocal, bytesInternet, bytesTotal, requests, createdAt, updatedAt)
+             VALUES (:userId, :date, :libraryItemId, :itemName, :category, :bytesLocal, :bytesInternet, :bytesTotal, :requests, datetime('now'), datetime('now'))
+             ON CONFLICT(userId, date, libraryItemId, category) DO UPDATE SET
+               bytesLocal = bytesLocal + excluded.bytesLocal,
+               bytesInternet = bytesInternet + excluded.bytesInternet,
+               bytesTotal = bytesTotal + excluded.bytesTotal,
+               requests = requests + excluded.requests,
+               itemName = COALESCE(excluded.itemName, bandwidthItemStats.itemName),
+               updatedAt = datetime('now');`,
+            {
+              replacements: itemEntry,
               transaction: t
             }
           )
@@ -273,6 +425,19 @@ class BandwidthManager {
           this.buffer.set(key, entry)
         }
       }
+
+      for (const itemEntry of itemEntries) {
+        const itemKey = `${itemEntry.userId}_${itemEntry.date}_${itemEntry.libraryItemId}_${itemEntry.category}`
+        const existingItem = this.itemBuffer.get(itemKey)
+        if (existingItem) {
+          existingItem.bytesLocal += itemEntry.bytesLocal
+          existingItem.bytesInternet += itemEntry.bytesInternet
+          existingItem.bytesTotal += itemEntry.bytesTotal
+          existingItem.requests += itemEntry.requests
+        } else {
+          this.itemBuffer.set(itemKey, itemEntry)
+        }
+      }
     }
   }
 
@@ -285,6 +450,7 @@ class BandwidthManager {
    * @param {string} [options.startDate]
    * @param {string} [options.endDate]
    * @param {string} [options.trafficType] 'all' | 'internet' | 'local'
+   * @param {string} [options.date]
    */
   async getStats(options = {}) {
     // Flush current buffer first for live, up-to-the-second stats
@@ -403,7 +569,8 @@ class BandwidthManager {
           bytesTotal: 0,
           bytesLocal: 0,
           bytesInternet: 0,
-          requests: 0
+          requests: 0,
+          isLegacy: false
         }
         dailyMap.set(rec.date, dailyEntry)
       }
@@ -414,6 +581,10 @@ class BandwidthManager {
       dailyEntry.bytesLocal += Number(rec.bytesLocal || 0)
       dailyEntry.bytesInternet += Number(rec.bytesInternet || 0)
       dailyEntry.requests += Number(rec.requests || 0)
+
+      if (dailyEntry.bytesTotal > 0 && dailyEntry.bytesLocal === 0 && dailyEntry.bytesInternet === 0) {
+        dailyEntry.isLegacy = true
+      }
     }
 
     const daily = Array.from(dailyMap.values()).sort((a, b) => a.date.localeCompare(b.date))
@@ -453,15 +624,115 @@ class BandwidthManager {
       userEntry.bytesLocal += Number(rec.bytesLocal || 0)
       userEntry.bytesInternet += Number(rec.bytesInternet || 0)
       userEntry.requests += Number(rec.requests || 0)
-      rangeTotalBytes += Number(rec.bytesTotal || 0)
+
+      if (options.trafficType === 'internet') {
+        rangeTotalBytes += Number(rec.bytesInternet || 0)
+      } else if (options.trafficType === 'local') {
+        rangeTotalBytes += Number(rec.bytesLocal || 0)
+      } else {
+        rangeTotalBytes += Number(rec.bytesTotal || 0)
+      }
     }
 
     const userBreakdown = Array.from(userMap.values())
       .map((u) => {
-        u.percentOfTotal = rangeTotalBytes > 0 ? Number(((u.bytesTotal / rangeTotalBytes) * 100).toFixed(1)) : 0
+        let userTrafficBytes = u.bytesTotal
+        if (options.trafficType === 'internet') userTrafficBytes = u.bytesInternet
+        else if (options.trafficType === 'local') userTrafficBytes = u.bytesLocal
+
+        u.percentOfTotal = rangeTotalBytes > 0 ? Number(((userTrafficBytes / rangeTotalBytes) * 100).toFixed(1)) : 0
         return u
       })
-      .sort((a, b) => b.bytesTotal - a.bytesTotal)
+      .sort((a, b) => {
+        if (options.trafficType === 'internet') return b.bytesInternet - a.bytesInternet
+        if (options.trafficType === 'local') return b.bytesLocal - a.bytesLocal
+        return b.bytesTotal - a.bytesTotal
+      })
+
+    // Query Item Breakdown
+    let itemBreakdown = []
+    if (Database.bandwidthItemStatModel) {
+      const itemWhere = {}
+      if (options.userId) {
+        itemWhere.userId = options.userId
+      }
+      // If a specific single date is queried (e.g. clicking a date bar on the chart)
+      if (options.date) {
+        itemWhere.date = options.date
+      } else if (filterStart && filterEnd) {
+        if (filterStart === filterEnd) {
+          itemWhere.date = filterStart
+        } else {
+          itemWhere.date = { [Op.between]: [filterStart, filterEnd] }
+        }
+      } else if (filterStart) {
+        itemWhere.date = { [Op.gte]: filterStart }
+      } else if (filterEnd) {
+        itemWhere.date = { [Op.lte]: filterEnd }
+      }
+
+      const itemRecords = await Database.bandwidthItemStatModel.findAll({
+        where: itemWhere
+      })
+
+      const aggregatedItems = new Map()
+      let itemTotalBytes = 0
+
+      for (const rec of itemRecords) {
+        let it = aggregatedItems.get(rec.libraryItemId)
+        if (!it) {
+          it = {
+            libraryItemId: rec.libraryItemId,
+            itemName: rec.itemName || (rec.libraryItemId === 'general' ? 'General / Web App' : 'Unknown Item'),
+            category: rec.category,
+            bytesLocal: 0,
+            bytesInternet: 0,
+            bytesTotal: 0,
+            bytesStream: 0,
+            bytesDownload: 0,
+            bytesOther: 0,
+            requests: 0,
+            percentOfTotal: 0
+          }
+          aggregatedItems.set(rec.libraryItemId, it)
+        }
+        it.bytesLocal += Number(rec.bytesLocal || 0)
+        it.bytesInternet += Number(rec.bytesInternet || 0)
+        it.bytesTotal += Number(rec.bytesTotal || 0)
+        it.requests += Number(rec.requests || 0)
+
+        if (rec.category === 'stream') it.bytesStream += Number(rec.bytesTotal || 0)
+        else if (rec.category === 'download') it.bytesDownload += Number(rec.bytesTotal || 0)
+        else it.bytesOther += Number(rec.bytesTotal || 0)
+
+        if (rec.itemName && (!it.itemName || it.itemName.startsWith('Item '))) {
+          it.itemName = rec.itemName
+        }
+
+        if (options.trafficType === 'internet') {
+          itemTotalBytes += Number(rec.bytesInternet || 0)
+        } else if (options.trafficType === 'local') {
+          itemTotalBytes += Number(rec.bytesLocal || 0)
+        } else {
+          itemTotalBytes += Number(rec.bytesTotal || 0)
+        }
+      }
+
+      itemBreakdown = Array.from(aggregatedItems.values())
+        .map((it) => {
+          let itTrafficBytes = it.bytesTotal
+          if (options.trafficType === 'internet') itTrafficBytes = it.bytesInternet
+          else if (options.trafficType === 'local') itTrafficBytes = it.bytesLocal
+
+          it.percentOfTotal = itemTotalBytes > 0 ? Number(((itTrafficBytes / itemTotalBytes) * 100).toFixed(1)) : 0
+          return it
+        })
+        .sort((a, b) => {
+          if (options.trafficType === 'internet') return b.bytesInternet - a.bytesInternet
+          if (options.trafficType === 'local') return b.bytesLocal - a.bytesLocal
+          return b.bytesTotal - a.bytesTotal
+        })
+    }
 
     return {
       isEnabled: !!global.ServerSettings?.enableBandwidthTracking,
@@ -469,9 +740,11 @@ class BandwidthManager {
       trafficType: options.trafficType || 'all',
       startDate: filterStart,
       endDate: filterEnd,
+      selectedDate: options.date || null,
       summary,
       daily,
       userBreakdown,
+      itemBreakdown,
       rangeTotalBytes
     }
   }
@@ -481,7 +754,11 @@ class BandwidthManager {
    */
   async clearStats() {
     this.buffer.clear()
+    this.itemBuffer.clear()
     await Database.bandwidthStatModel.destroy({ where: {}, truncate: true })
+    if (Database.bandwidthItemStatModel) {
+      await Database.bandwidthItemStatModel.destroy({ where: {}, truncate: true })
+    }
     Logger.info('[BandwidthManager] All bandwidth statistics cleared by admin')
     return true
   }

@@ -91,8 +91,8 @@
         </div>
       </div>
 
-      <!-- Filters & Toolbar (Stacking context relative z-30 prevents chart clipping) -->
-      <div class="relative z-30 flex flex-col md:flex-row md:items-center justify-between gap-3 border-b border-white/10 pb-4 mb-6">
+      <!-- Filters & Toolbar (Stacking context relative z-50 prevents chart clipping) -->
+      <div class="relative z-50 flex flex-col md:flex-row md:items-center justify-between gap-3 border-b border-white/10 pb-4 mb-4">
         <div class="flex flex-wrap items-center gap-2">
           <!-- Range Buttons -->
           <div class="inline-flex rounded-md shadow-sm bg-black/40 p-1 border border-white/10">
@@ -110,8 +110,14 @@
           </div>
         </div>
 
-        <!-- Controls: User Dropdown (no top label so button is vertically aligned) + Refresh + Clear -->
-        <div class="flex items-center gap-2 relative z-40">
+        <!-- Controls: User Filter + Back Button + Refresh + Clear -->
+        <div class="flex items-center gap-2 relative z-50">
+          <!-- Back to All Users button (Prominent toolbar button when user is filtered) -->
+          <ui-btn v-if="selectedUserId" color="bg-primary/30 hover:bg-primary/50 text-sky-200 border border-primary/40" small @click="selectUser('')">
+            <span class="material-symbols text-sm mr-1">arrow_back</span>
+            All Users
+          </ui-btn>
+
           <!-- User Filter Dropdown -->
           <div class="w-48 relative">
             <ui-dropdown v-model="selectedUserId" small :items="userDropdownItems" @input="loadStats" />
@@ -131,13 +137,40 @@
         </div>
       </div>
 
+      <!-- Active Filter Banner (shows when user or date filter is applied) -->
+      <div v-if="selectedUserId || selectedDate" class="flex flex-wrap items-center gap-2 bg-white/5 border border-white/10 rounded-lg px-3 py-2 mb-6 text-xs">
+        <span class="text-gray-400 font-medium">Active Filters:</span>
+
+        <span v-if="selectedUserId" class="inline-flex items-center bg-primary/30 text-sky-200 border border-primary/40 px-2 py-0.5 rounded-full">
+          <span class="material-symbols text-xs mr-1">person</span>
+          User: <strong class="ml-1">{{ selectedUserName }}</strong>
+          <button type="button" @click="selectUser('')" class="ml-1.5 text-gray-300 hover:text-white font-bold" title="Clear user filter">✕</button>
+        </span>
+
+        <span v-if="selectedDate" class="inline-flex items-center bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 px-2 py-0.5 rounded-full">
+          <span class="material-symbols text-xs mr-1">calendar_today</span>
+          Date: <strong class="ml-1">{{ selectedDate }}</strong>
+          <button type="button" @click="clearDateFilter" class="ml-1.5 text-gray-300 hover:text-white font-bold" title="Clear date filter">✕</button>
+        </span>
+
+        <span class="text-gray-500 ml-auto flex items-center gap-1">
+          <span class="material-symbols text-xs">info</span>
+          Click any bar to filter by day, or click user name to filter by user
+        </span>
+      </div>
+
       <!-- Timeline Chart Section -->
       <div class="mb-8">
         <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-3">
           <h2 class="text-lg font-semibold flex items-center">
             <span class="material-symbols mr-2 text-primary">show_chart</span>
             Daily Transfer Timeline
-            <span v-if="filteredTotalBytes" class="ml-2 text-xs font-mono font-normal text-gray-400"> (Range Total: {{ $bytesPretty(filteredTotalBytes) }}) </span>
+            <span v-if="filteredTotalBytes" class="ml-2 text-xs font-mono font-normal text-gray-400">
+              ({{ selectedTrafficTypeLabel }} Total: {{ $bytesPretty(filteredTotalBytes) }})
+            </span>
+            <span v-if="selectedDate" class="ml-2 text-xs font-semibold text-emerald-400 bg-emerald-500/20 px-2 py-0.5 rounded">
+              Selected Day: {{ selectedDate }}
+            </span>
           </h2>
           <!-- Legend -->
           <div class="flex items-center gap-4 text-xs">
@@ -168,34 +201,92 @@
             </div>
 
             <!-- Top Y-Axis Label -->
-            <div class="absolute top-2 left-2 text-[10px] font-mono text-gray-400 bg-black/60 px-1 rounded pointer-events-none">Max: {{ $bytesPretty(chartMaxBytes) }}</div>
+            <div class="absolute top-2 left-2 text-[10px] font-mono text-gray-400 bg-black/60 px-1 rounded pointer-events-none">
+              Max: {{ $bytesPretty(chartMaxBytes) }} ({{ selectedTrafficTypeLabel }})
+            </div>
 
             <!-- Chart Bars -->
             <div class="w-full h-full flex items-end justify-between gap-1 z-10 px-2">
-              <div v-for="item in dailyChartData" :key="item.date" class="flex-1 h-full flex flex-col justify-end items-center group relative cursor-pointer min-w-[12px]">
+              <div
+                v-for="item in dailyChartData"
+                :key="item.date"
+                class="flex-1 h-full flex flex-col justify-end items-center group relative cursor-pointer min-w-[12px] p-0.5 rounded transition-transform hover:scale-105"
+                :class="{ 'bg-primary/20 ring-2 ring-primary ring-offset-2 ring-offset-black': selectedDate === item.date }"
+                @click="selectDate(item.date)"
+              >
                 <!-- Tooltip on Hover -->
-                <div class="absolute bottom-full mb-2 hidden group-hover:flex flex-col bg-gray-900 border border-white/20 text-white rounded p-2 text-xs shadow-xl pointer-events-none z-50 whitespace-nowrap">
-                  <p class="font-bold text-gray-200 border-b border-white/10 pb-1 mb-1">{{ item.date }}</p>
-                  <p class="text-emerald-400">Stream: {{ $bytesPretty(item.bytesStream) }}</p>
-                  <p class="text-purple-400">Download: {{ $bytesPretty(item.bytesDownload) }}</p>
-                  <p class="text-blue-400">Other: {{ $bytesPretty(item.bytesOther) }}</p>
-                  <div class="border-t border-white/10 pt-1 mt-1 space-y-0.5">
-                    <p class="text-sky-300">🌐 Internet (WAN): {{ $bytesPretty(item.bytesInternet) }}</p>
-                    <p class="text-amber-300">🏠 Local (LAN): {{ $bytesPretty(item.bytesLocal) }}</p>
-                    <p class="font-bold text-white pt-0.5">Total: {{ $bytesPretty(item.bytesTotal) }}</p>
+                <div class="absolute bottom-full mb-2 hidden group-hover:flex flex-col bg-gray-900 border border-white/20 text-white rounded p-2.5 text-xs shadow-2xl pointer-events-none z-50 whitespace-nowrap min-w-[190px]">
+                  <div class="flex items-center justify-between border-b border-white/10 pb-1 mb-1.5">
+                    <span class="font-bold text-gray-200">{{ item.date }}</span>
+                    <span v-if="selectedDate === item.date" class="text-[10px] text-emerald-400 font-semibold">(Selected)</span>
                   </div>
-                  <p class="text-[10px] text-gray-400 pt-0.5">Requests: {{ item.requests }}</p>
+
+                  <!-- Highlight Active Traffic Filter prominently -->
+                  <div v-if="selectedTrafficType === 'internet'" class="mb-1.5 pb-1.5 border-b border-white/10">
+                    <p class="text-sky-300 font-bold text-sm flex items-center">
+                      <span class="material-symbols text-sm mr-1">public</span>
+                      Internet (WAN): {{ $bytesPretty(item.bytesInternet) }}
+                    </p>
+                    <p v-if="item.isLegacy" class="text-amber-400 text-[10px] mt-0.5">
+                      ⚠️ Note: Recorded prior to LAN/WAN tracking
+                    </p>
+                  </div>
+                  <div v-else-if="selectedTrafficType === 'local'" class="mb-1.5 pb-1.5 border-b border-white/10">
+                    <p class="text-amber-300 font-bold text-sm flex items-center">
+                      <span class="material-symbols text-sm mr-1">home</span>
+                      Local (LAN): {{ $bytesPretty(item.bytesLocal) }}
+                    </p>
+                    <p v-if="item.isLegacy" class="text-amber-400 text-[10px] mt-0.5">
+                      ⚠️ Note: Recorded prior to LAN/WAN tracking
+                    </p>
+                  </div>
+                  <div v-else class="mb-1 pb-1 border-b border-white/10">
+                    <p class="text-white font-bold text-sm">
+                      Total Data: {{ $bytesPretty(item.bytesTotal) }}
+                    </p>
+                  </div>
+
+                  <!-- Category Breakdown -->
+                  <p class="text-emerald-400 flex justify-between"><span>Streaming:</span> <span class="font-mono">{{ $bytesPretty(item.bytesStream) }}</span></p>
+                  <p class="text-purple-400 flex justify-between"><span>Download:</span> <span class="font-mono">{{ $bytesPretty(item.bytesDownload) }}</span></p>
+                  <p class="text-blue-400 flex justify-between"><span>Other / API:</span> <span class="font-mono">{{ $bytesPretty(item.bytesOther) }}</span></p>
+
+                  <!-- Network breakdown -->
+                  <div class="border-t border-white/10 pt-1 mt-1 space-y-0.5 text-[11px]">
+                    <p class="text-sky-300 flex justify-between"><span>🌐 Internet:</span> <span class="font-mono">{{ $bytesPretty(item.bytesInternet) }}</span></p>
+                    <p class="text-amber-300 flex justify-between"><span>🏠 Local:</span> <span class="font-mono">{{ $bytesPretty(item.bytesLocal) }}</span></p>
+                    <p class="font-bold text-white flex justify-between pt-0.5"><span>All Traffic:</span> <span class="font-mono">{{ $bytesPretty(item.bytesTotal) }}</span></p>
+                  </div>
+
+                  <div class="border-t border-white/10 pt-1 mt-1 text-[10px] flex justify-between text-gray-400">
+                    <span>Requests: {{ item.requests }}</span>
+                    <span class="text-primary font-semibold">Click to filter</span>
+                  </div>
                 </div>
 
-                <!-- Stacked Bar (Adjusted by selected traffic type if filtered) -->
-                <div class="w-full max-w-[28px] rounded-t flex flex-col-reverse overflow-hidden transition-all duration-150 group-hover:brightness-125" :style="{ height: `${Math.max(2, (getBarHeightBytes(item) / chartMaxBytes) * 100)}%` }">
-                  <div class="w-full bg-emerald-500" :style="{ height: `${(item.bytesStream / (item.bytesTotal || 1)) * 100}%` }" />
-                  <div class="w-full bg-purple-500" :style="{ height: `${(item.bytesDownload / (item.bytesTotal || 1)) * 100}%` }" />
-                  <div class="w-full bg-blue-500" :style="{ height: `${(item.bytesOther / (item.bytesTotal || 1)) * 100}%` }" />
+                <!-- Stacked Bar (Height adjusted by selected traffic type) -->
+                <div
+                  class="w-full max-w-[28px] rounded-t flex flex-col-reverse overflow-hidden transition-all duration-150 group-hover:brightness-125"
+                  :style="{ height: `${Math.max(3, (getBarHeightBytes(item) / chartMaxBytes) * 100)}%` }"
+                >
+                  <template v-if="selectedTrafficType === 'internet'">
+                    <div class="w-full h-full bg-sky-500" />
+                  </template>
+                  <template v-else-if="selectedTrafficType === 'local'">
+                    <div class="w-full h-full bg-amber-500" />
+                  </template>
+                  <template v-else>
+                    <div class="w-full bg-emerald-500" :style="{ height: `${(item.bytesStream / (item.bytesTotal || 1)) * 100}%` }" />
+                    <div class="w-full bg-purple-500" :style="{ height: `${(item.bytesDownload / (item.bytesTotal || 1)) * 100}%` }" />
+                    <div class="w-full bg-blue-500" :style="{ height: `${(item.bytesOther / (item.bytesTotal || 1)) * 100}%` }" />
+                  </template>
                 </div>
 
                 <!-- X Axis Date Label -->
-                <p class="text-[10px] text-gray-400 mt-2 truncate w-full text-center">
+                <p
+                  class="text-[10px] mt-2 truncate w-full text-center transition-colors"
+                  :class="selectedDate === item.date ? 'text-primary font-bold' : 'text-gray-400'"
+                >
                   {{ formatShortDate(item.date) }}
                 </p>
               </div>
@@ -204,14 +295,118 @@
         </div>
       </div>
 
-      <!-- User Breakdown Table -->
-      <div>
+      <!-- Item / Book Activity Breakdown Table (Shown when a user is selected OR a date is clicked) -->
+      <div v-if="selectedUserId" class="mb-8">
+        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-3">
+          <div>
+            <h2 class="text-lg font-semibold flex items-center">
+              <span class="material-symbols mr-2 text-primary">auto_stories</span>
+              Book & Media Activity Breakdown for {{ selectedUserName }}
+              <span v-if="selectedDate" class="ml-2 text-xs font-semibold text-emerald-400 bg-emerald-500/20 px-2 py-0.5 rounded">
+                on {{ selectedDate }}
+              </span>
+            </h2>
+            <p class="text-xs text-gray-400">
+              Showing media streamed, downloaded, and transferred
+              {{ selectedDate ? 'on ' + selectedDate : 'across ' + selectedRangeLabel }}
+            </p>
+          </div>
+
+          <div class="flex items-center gap-2">
+            <ui-btn v-if="selectedDate" color="bg-white/10 hover:bg-white/20" small @click="clearDateFilter">
+              <span class="material-symbols text-sm mr-1">close</span>
+              Clear Date Filter
+            </ui-btn>
+            <ui-btn color="bg-primary" small @click="selectUser('')">
+              <span class="material-symbols text-sm mr-1">arrow_back</span>
+              Back to All Users
+            </ui-btn>
+          </div>
+        </div>
+
+        <div class="bg-black/20 rounded-lg border border-white/5 overflow-hidden">
+          <table class="w-full text-left text-sm">
+            <thead class="bg-white/5 text-xs uppercase text-gray-400 font-semibold border-b border-white/10">
+              <tr>
+                <th class="py-3 px-4">Book / Media Item</th>
+                <th class="py-3 px-4 text-center">Activity</th>
+                <th class="py-3 px-4 text-right">Internet (WAN)</th>
+                <th class="py-3 px-4 text-right">Local (LAN)</th>
+                <th class="py-3 px-4 text-right font-bold text-white">Total Data</th>
+                <th class="py-3 px-4 text-right hidden sm:table-cell">Requests</th>
+                <th class="py-3 px-4 w-32">% of Activity</th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-white/5">
+              <tr v-if="!itemBreakdown.length">
+                <td colspan="7" class="text-center py-8 text-gray-400 text-sm">
+                  <span class="material-symbols text-3xl mb-1 text-gray-500 block">hourglass_empty</span>
+                  No individual book activity recorded for this period yet.
+                  <p class="text-xs text-gray-500 mt-1">
+                    Book & item-level tracking automatically records activity as audiobooks and files are streamed or downloaded.
+                  </p>
+                </td>
+              </tr>
+              <tr v-for="item in itemBreakdown" :key="item.libraryItemId" class="hover:bg-white/5 transition-colors">
+                <td class="py-3 px-4">
+                  <div class="flex items-center">
+                    <span class="material-symbols text-xl mr-2.5" :class="getItemIconClass(item)">
+                      {{ getItemIcon(item) }}
+                    </span>
+                    <div>
+                      <p class="font-medium text-white">{{ item.itemName }}</p>
+                      <p v-if="item.libraryItemId !== 'general'" class="text-[10px] text-gray-500 font-mono">
+                        ID: {{ item.libraryItemId }}
+                      </p>
+                    </div>
+                  </div>
+                </td>
+                <td class="py-3 px-4 text-center">
+                  <span
+                    class="text-[10px] px-2 py-0.5 rounded-full font-semibold uppercase tracking-wider"
+                    :class="getCategoryBadgeClass(item.category)"
+                  >
+                    {{ item.category }}
+                  </span>
+                </td>
+                <td class="py-3 px-4 text-right font-mono text-sky-400 font-medium">{{ $bytesPretty(item.bytesInternet) }}</td>
+                <td class="py-3 px-4 text-right font-mono text-amber-300 font-medium">{{ $bytesPretty(item.bytesLocal) }}</td>
+                <td class="py-3 px-4 text-right font-mono font-bold text-white">{{ $bytesPretty(item.bytesTotal) }}</td>
+                <td class="py-3 px-4 text-right font-mono text-gray-300 hidden sm:table-cell">{{ item.requests }}</td>
+                <td class="py-3 px-4">
+                  <div class="flex items-center gap-2">
+                    <div class="grow bg-white/10 rounded-full h-2 overflow-hidden">
+                      <div class="bg-primary h-full rounded-full transition-all duration-300" :style="{ width: `${item.percentOfTotal}%` }" />
+                    </div>
+                    <span class="text-xs font-mono w-10 text-right text-gray-300">{{ item.percentOfTotal }}%</span>
+                  </div>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- User Breakdown Table (Shown on All Users view) -->
+      <div v-if="!selectedUserId">
         <div class="flex items-center justify-between mb-3">
-          <h2 class="text-lg font-semibold flex items-center">
-            <span class="material-symbols mr-2 text-primary">group</span>
-            Data Usage Breakdown by User
-          </h2>
-          <p class="text-xs text-gray-400">{{ userBreakdown.length }} Users</p>
+          <div>
+            <h2 class="text-lg font-semibold flex items-center">
+              <span class="material-symbols mr-2 text-primary">group</span>
+              Data Usage Breakdown by User
+              <span v-if="selectedDate" class="ml-2 text-xs font-semibold text-emerald-400 bg-emerald-500/20 px-2 py-0.5 rounded">
+                on {{ selectedDate }}
+              </span>
+            </h2>
+            <p class="text-xs text-gray-400">Click any user row to view individual book & stream breakdowns</p>
+          </div>
+          <div class="flex items-center gap-2">
+            <ui-btn v-if="selectedDate" color="bg-white/10 hover:bg-white/20" small @click="clearDateFilter">
+              <span class="material-symbols text-sm mr-1">close</span>
+              Clear Date Filter
+            </ui-btn>
+            <p class="text-xs text-gray-400">{{ userBreakdown.length }} Users</p>
+          </div>
         </div>
 
         <div class="bg-black/20 rounded-lg border border-white/5 overflow-hidden">
@@ -225,20 +420,30 @@
                 <th class="py-3 px-4 text-right hidden sm:table-cell">Downloads</th>
                 <th class="py-3 px-4 text-right font-bold text-white">Total</th>
                 <th class="py-3 px-4 w-36">% of Total</th>
+                <th class="py-3 px-2 w-10"></th>
               </tr>
             </thead>
             <tbody class="divide-y divide-white/5">
               <tr v-if="!userBreakdown.length">
-                <td colspan="7" class="text-center py-8 text-gray-400 text-sm">No user data recorded for this time frame.</td>
+                <td colspan="8" class="text-center py-8 text-gray-400 text-sm">No user data recorded for this time frame.</td>
               </tr>
-              <tr v-for="user in userBreakdown" :key="user.userId" class="hover:bg-white/5 transition-colors">
+              <tr
+                v-for="user in userBreakdown"
+                :key="user.userId"
+                class="hover:bg-white/10 transition-colors cursor-pointer group"
+                @click="selectUser(user.userId)"
+                title="Click to view item & book activity for this user"
+              >
                 <td class="py-3 px-4">
                   <div class="flex items-center">
-                    <span class="material-symbols text-xl mr-2" :class="user.userId === 'anonymous' ? 'text-gray-400' : 'text-primary'">
+                    <span class="material-symbols text-xl mr-2 group-hover:scale-110 transition-transform" :class="user.userId === 'anonymous' ? 'text-gray-400' : 'text-primary'">
                       {{ user.userId === 'anonymous' ? 'public' : 'person' }}
                     </span>
                     <div>
-                      <p class="font-medium text-white">{{ user.username }}</p>
+                      <p class="font-medium text-white group-hover:text-primary transition-colors flex items-center">
+                        {{ user.username }}
+                        <span class="material-symbols text-xs ml-1 opacity-0 group-hover:opacity-100 transition-opacity">open_in_new</span>
+                      </p>
                       <p v-if="user.userId !== 'anonymous'" class="text-[10px] text-gray-500 font-mono">{{ user.userId }}</p>
                     </div>
                   </div>
@@ -255,6 +460,9 @@
                     </div>
                     <span class="text-xs font-mono w-10 text-right text-gray-300">{{ user.percentOfTotal }}%</span>
                   </div>
+                </td>
+                <td class="py-3 px-2 text-center text-gray-500 group-hover:text-white">
+                  <span class="material-symbols text-sm">chevron_right</span>
                 </td>
               </tr>
             </tbody>
@@ -295,6 +503,7 @@ export default {
       selectedRange: 'last7Days',
       selectedTrafficType: 'all',
       selectedUserId: '',
+      selectedDate: null,
       rangeOptions: [
         { label: 'Today', value: 'today' },
         { label: 'Last 7 Days', value: 'last7Days' },
@@ -316,6 +525,7 @@ export default {
       },
       dailyChartData: [],
       userBreakdown: [],
+      itemBreakdown: [],
       filteredTotalBytes: 0,
       allUsers: []
     }
@@ -326,6 +536,21 @@ export default {
     },
     isTrackingEnabled() {
       return !!this.serverSettings.enableBandwidthTracking
+    },
+    selectedUserName() {
+      if (!this.selectedUserId) return ''
+      if (this.selectedUserId === 'anonymous') return 'Anonymous / Public'
+      const found = this.allUsers.find((u) => u.id === this.selectedUserId)
+      return found?.username || this.selectedUserId
+    },
+    selectedRangeLabel() {
+      const found = this.rangeOptions.find((r) => r.value === this.selectedRange)
+      return found?.label || this.selectedRange
+    },
+    selectedTrafficTypeLabel() {
+      if (this.selectedTrafficType === 'internet') return 'Internet (WAN)'
+      if (this.selectedTrafficType === 'local') return 'Local (LAN)'
+      return 'All Traffic'
     },
     userDropdownItems() {
       const items = [{ text: 'All Users', value: '' }]
@@ -346,10 +571,27 @@ export default {
   methods: {
     selectRange(range) {
       this.selectedRange = range
+      this.selectedDate = null
       this.loadStats()
     },
     selectTrafficType(type) {
       this.selectedTrafficType = type
+      this.loadStats()
+    },
+    selectUser(userId) {
+      this.selectedUserId = userId
+      this.loadStats()
+    },
+    selectDate(date) {
+      if (this.selectedDate === date) {
+        this.selectedDate = null
+      } else {
+        this.selectedDate = date
+      }
+      this.loadStats()
+    },
+    clearDateFilter() {
+      this.selectedDate = null
       this.loadStats()
     },
     getBarHeightBytes(item) {
@@ -359,6 +601,25 @@ export default {
         return item.bytesLocal || 0
       }
       return item.bytesTotal || 0
+    },
+    getItemIcon(item) {
+      if (item.libraryItemId === 'general') return 'devices'
+      if (item.libraryItemId === 'backup') return 'settings_backup_restore'
+      if (item.libraryItemId === 'shared') return 'share'
+      if (item.category === 'stream') return 'headphones'
+      if (item.category === 'download') return 'download_for_offline'
+      return 'book_2'
+    },
+    getItemIconClass(item) {
+      if (item.libraryItemId === 'general') return 'text-gray-400'
+      if (item.category === 'stream') return 'text-emerald-400'
+      if (item.category === 'download') return 'text-purple-400'
+      return 'text-primary'
+    },
+    getCategoryBadgeClass(category) {
+      if (category === 'stream') return 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
+      if (category === 'download') return 'bg-purple-500/20 text-purple-300 border border-purple-500/30'
+      return 'bg-blue-500/20 text-blue-300 border border-blue-500/30'
     },
     formatShortDate(dateStr) {
       if (!dateStr) return ''
@@ -378,11 +639,15 @@ export default {
         if (this.selectedTrafficType && this.selectedTrafficType !== 'all') {
           url += `&trafficType=${this.selectedTrafficType}`
         }
+        if (this.selectedDate) {
+          url += `&date=${this.selectedDate}`
+        }
         const data = await this.$axios.$get(url)
         if (data) {
           this.summary = data.summary || this.summary
           this.dailyChartData = data.daily || []
           this.userBreakdown = data.userBreakdown || []
+          this.itemBreakdown = data.itemBreakdown || []
           this.filteredTotalBytes = data.rangeTotalBytes || 0
         }
       } catch (err) {
@@ -406,6 +671,7 @@ export default {
         await this.$axios.$delete('/api/stats/bandwidth')
         this.$toast.success('Bandwidth statistics cleared')
         this.showConfirmClear = false
+        this.selectedDate = null
         await this.loadStats()
       } catch (err) {
         console.error('Failed to clear bandwidth stats:', err)

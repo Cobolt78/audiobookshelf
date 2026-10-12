@@ -162,6 +162,11 @@ class Database {
     return this.models.bandwidthStat
   }
 
+  /** @type {typeof import('./models/BandwidthItemStat')} */
+  get bandwidthItemStatModel() {
+    return this.models.bandwidthItemStat
+  }
+
   /**
    * Check if db file exists
    * @returns {boolean}
@@ -346,6 +351,7 @@ class Database {
     require('./models/CustomMetadataProvider').init(this.sequelize)
     require('./models/MediaItemShare').init(this.sequelize)
     require('./models/BandwidthStat').init(this.sequelize)
+    require('./models/BandwidthItemStat').init(this.sequelize)
 
     return this.sequelize.sync({ force, alter: false })
   }

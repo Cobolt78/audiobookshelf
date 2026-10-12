@@ -1,9 +1,9 @@
 diff --git a/CUSTOM_MODIFICATIONS.md b/CUSTOM_MODIFICATIONS.md
 new file mode 100644
-index 00000000..ca25e1e5
+index 00000000..c5ef3279
 --- /dev/null
 +++ b/CUSTOM_MODIFICATIONS.md
-@@ -0,0 +1,102 @@
+@@ -0,0 +1,115 @@
 +# Audiobookshelf Custom Modifications (`v2.37.1-custom`)
 +
 +This document tracks all custom features, fixes, and architectural modifications made to Audiobookshelf.
@@ -48,18 +48,30 @@ index 00000000..ca25e1e5
 +  6. **Local Network vs Internet (LAN / WAN) Tracking**: Automatically detects private RFC 1918 subnets (`192.168.x.x`, `10.x.x.x`, `172.16.x.x`, loopback, IPv6 local) vs external remote WAN IPs (including Cloudflare and reverse proxy headers) to distinguish data leaving the home internet from local Wi-Fi traffic.
 +  7. **User Profile Integration (`/config/users/:id`)**: Displays the user's total data transferred alongside their total listening time.
 +
++   8. **Book & Media Item Activity Breakdown**:
++      - Added `BandwidthItemStat` model and `bandwidthItemStats` table tracking per-user, per-day, and per-book egress (`libraryItemId`, `itemName`, `category`, `bytesLocal`, `bytesInternet`, `bytesTotal`, `requests`).
++      - Identifies titles and items from `/api/items/:id/...`, active playback sessions (`/public/session/:id/track/:index`), and HLS streams (`/hls/:stream/:file`) with in-memory caching.
++      - Displays dedicated "Book & Media Activity Breakdown" table when a user is selected or date is filtered.
++   9. **Interactive Date Bar Filtering & Tooltip Clarity**:
++      - Clicking any bar in the timeline chart filters stats and book activity specifically to that single date, with a one-click "✕ Clear Date Filter" button.
++      - Fixed tooltips and summary metrics to dynamically reflect the selected traffic filter (All, Internet WAN, or Local LAN) with explicit notices for historical data recorded prior to LAN/WAN separation.
++   10. **Streamlined Navigation & Clickable Users**:
++      - Clicking any user in the "Data Usage Breakdown by User" table immediately selects and navigates to that user's detailed view.
++      - Added a prominent "Back to All Users" button in the top toolbar and above the breakdown tables.
++
 +### Modified Files:
-+* `server/models/BandwidthStat.js` (New Sequelize model for `bandwidthStats` table)
-+* `server/managers/BandwidthManager.js` (New manager for measurement, in-memory buffering, flushing, and querying)
-+* `server/Database.js` (Registered `BandwidthStat` model in `buildModels` and added `bandwidthStatModel` getter)
-+* `server/Server.js` (Instantiated and mounted `BandwidthManager` middleware; flushed on stop)
++* `server/models/BandwidthStat.js` (Sequelize model for daily user bandwidth stats)
++* `server/models/BandwidthItemStat.js` (Sequelize model for per-item and book bandwidth stats)
++* `server/managers/BandwidthManager.js` (In-memory buffering, request categorization, session attribution, and stats querying)
++* `server/Database.js` (Registered BandwidthStat and BandwidthItemStat models and schema sync)
++* `server/Server.js` (Global middleware hook and shutdown flush for BandwidthManager)
 +* `server/objects/settings/ServerSettings.js` (Added `enableBandwidthTracking` setting, patchable key, and serialization)
-+* `server/controllers/StatsController.js` (Added `getBandwidthStats` and `clearBandwidthStats` endpoints)
++* `server/controllers/StatsController.js` (Added `getBandwidthStats` and `clearBandwidthStats` endpoints with trafficType & date filtering)
 +* `server/routers/ApiRouter.js` (Mounted `/stats/bandwidth` GET and DELETE routes)
 +* `client/pages/config/index.vue` (Added "Track Bandwidth & Data Usage" toggle switch under General Settings)
 +* `client/components/app/ConfigSideNav.vue` (Added "Bandwidth Stats" navigation link)
 +* `client/pages/config.vue` (Mapped bandwidth page route title)
-+* `client/pages/config/bandwidth.vue` (New admin Bandwidth Stats dashboard page)
++* `client/pages/config/bandwidth.vue` (Bandwidth dashboard with item breakdown, clickable users, back button, date bar filtering, and adaptive tooltips)
 +* `client/pages/config/users/_id/index.vue` (Added Data Transferred stat to user profile)
 +
 +---
@@ -93,17 +105,18 @@ index 00000000..ca25e1e5
 +| File Path | Description |
 +| :--- | :--- |
 +| `server/utils/queries/libraryItemsBookFilters.js` | Fixed series discovery filtering & removed single-item limit |
-+| `server/models/BandwidthStat.js` | Sequelize model and table definition for bandwidth stats |
-+| `server/managers/BandwidthManager.js` | In-memory buffering, request categorization, and stats querying |
-+| `server/Database.js` | Registered BandwidthStat model and schema sync |
++| `server/models/BandwidthStat.js` | Sequelize model and table definition for user bandwidth stats |
++| `server/models/BandwidthItemStat.js` | Sequelize model and table definition for per-item/book bandwidth stats |
++| `server/managers/BandwidthManager.js` | In-memory buffering, request categorization, item extraction, and stats querying |
++| `server/Database.js` | Registered BandwidthStat & BandwidthItemStat models and schema sync |
 +| `server/Server.js` | Global middleware hook and shutdown flush for BandwidthManager |
 +| `server/objects/settings/ServerSettings.js` | `enableBandwidthTracking` toggle setting |
-+| `server/controllers/StatsController.js` | REST controller methods for bandwidth stats |
++| `server/controllers/StatsController.js` | REST controller methods for bandwidth stats with trafficType and date params |
 +| `server/routers/ApiRouter.js` | Route definitions for `/stats/bandwidth` |
 +| `client/pages/config/index.vue` | UI toggle in Settings > General |
 +| `client/components/app/ConfigSideNav.vue` | Sidebar navigation link to Bandwidth Stats |
 +| `client/pages/config.vue` | Route title mapper |
-+| `client/pages/config/bandwidth.vue` | Full responsive Bandwidth Stats dashboard |
++| `client/pages/config/bandwidth.vue` | Responsive Bandwidth Stats dashboard with item breakdown, clickable users, and date filters |
 +| `client/pages/config/users/_id/index.vue` | Data transferred stat on user profile card |
 +| `custom_changes.patch` | Unified Git diff against upstream `v2.37.1` |
 diff --git a/client/components/app/ConfigSideNav.vue b/client/components/app/ConfigSideNav.vue
@@ -136,10 +149,10 @@ index c4fe2446..f42bc13d 100644
          else if (pageName === 'api-keys') return this.$strings.HeaderApiKeys
 diff --git a/client/pages/config/bandwidth.vue b/client/pages/config/bandwidth.vue
 new file mode 100644
-index 00000000..06acaf78
+index 00000000..d4a28c6e
 --- /dev/null
 +++ b/client/pages/config/bandwidth.vue
-@@ -0,0 +1,423 @@
+@@ -0,0 +1,689 @@
 +<template>
 +  <div class="w-full">
 +    <!-- Notice if tracking is disabled -->
@@ -233,8 +246,8 @@ index 00000000..06acaf78
 +        </div>
 +      </div>
 +
-+      <!-- Filters & Toolbar (Stacking context relative z-30 prevents chart clipping) -->
-+      <div class="relative z-30 flex flex-col md:flex-row md:items-center justify-between gap-3 border-b border-white/10 pb-4 mb-6">
++      <!-- Filters & Toolbar (Stacking context relative z-50 prevents chart clipping) -->
++      <div class="relative z-50 flex flex-col md:flex-row md:items-center justify-between gap-3 border-b border-white/10 pb-4 mb-4">
 +        <div class="flex flex-wrap items-center gap-2">
 +          <!-- Range Buttons -->
 +          <div class="inline-flex rounded-md shadow-sm bg-black/40 p-1 border border-white/10">
@@ -252,8 +265,14 @@ index 00000000..06acaf78
 +          </div>
 +        </div>
 +
-+        <!-- Controls: User Dropdown (no top label so button is vertically aligned) + Refresh + Clear -->
-+        <div class="flex items-center gap-2 relative z-40">
++        <!-- Controls: User Filter + Back Button + Refresh + Clear -->
++        <div class="flex items-center gap-2 relative z-50">
++          <!-- Back to All Users button (Prominent toolbar button when user is filtered) -->
++          <ui-btn v-if="selectedUserId" color="bg-primary/30 hover:bg-primary/50 text-sky-200 border border-primary/40" small @click="selectUser('')">
++            <span class="material-symbols text-sm mr-1">arrow_back</span>
++            All Users
++          </ui-btn>
++
 +          <!-- User Filter Dropdown -->
 +          <div class="w-48 relative">
 +            <ui-dropdown v-model="selectedUserId" small :items="userDropdownItems" @input="loadStats" />
@@ -273,13 +292,40 @@ index 00000000..06acaf78
 +        </div>
 +      </div>
 +
++      <!-- Active Filter Banner (shows when user or date filter is applied) -->
++      <div v-if="selectedUserId || selectedDate" class="flex flex-wrap items-center gap-2 bg-white/5 border border-white/10 rounded-lg px-3 py-2 mb-6 text-xs">
++        <span class="text-gray-400 font-medium">Active Filters:</span>
++
++        <span v-if="selectedUserId" class="inline-flex items-center bg-primary/30 text-sky-200 border border-primary/40 px-2 py-0.5 rounded-full">
++          <span class="material-symbols text-xs mr-1">person</span>
++          User: <strong class="ml-1">{{ selectedUserName }}</strong>
++          <button type="button" @click="selectUser('')" class="ml-1.5 text-gray-300 hover:text-white font-bold" title="Clear user filter">✕</button>
++        </span>
++
++        <span v-if="selectedDate" class="inline-flex items-center bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 px-2 py-0.5 rounded-full">
++          <span class="material-symbols text-xs mr-1">calendar_today</span>
++          Date: <strong class="ml-1">{{ selectedDate }}</strong>
++          <button type="button" @click="clearDateFilter" class="ml-1.5 text-gray-300 hover:text-white font-bold" title="Clear date filter">✕</button>
++        </span>
++
++        <span class="text-gray-500 ml-auto flex items-center gap-1">
++          <span class="material-symbols text-xs">info</span>
++          Click any bar to filter by day, or click user name to filter by user
++        </span>
++      </div>
++
 +      <!-- Timeline Chart Section -->
 +      <div class="mb-8">
 +        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-3">
 +          <h2 class="text-lg font-semibold flex items-center">
 +            <span class="material-symbols mr-2 text-primary">show_chart</span>
 +            Daily Transfer Timeline
-+            <span v-if="filteredTotalBytes" class="ml-2 text-xs font-mono font-normal text-gray-400"> (Range Total: {{ $bytesPretty(filteredTotalBytes) }}) </span>
++            <span v-if="filteredTotalBytes" class="ml-2 text-xs font-mono font-normal text-gray-400">
++              ({{ selectedTrafficTypeLabel }} Total: {{ $bytesPretty(filteredTotalBytes) }})
++            </span>
++            <span v-if="selectedDate" class="ml-2 text-xs font-semibold text-emerald-400 bg-emerald-500/20 px-2 py-0.5 rounded">
++              Selected Day: {{ selectedDate }}
++            </span>
 +          </h2>
 +          <!-- Legend -->
 +          <div class="flex items-center gap-4 text-xs">
@@ -310,34 +356,92 @@ index 00000000..06acaf78
 +            </div>
 +
 +            <!-- Top Y-Axis Label -->
-+            <div class="absolute top-2 left-2 text-[10px] font-mono text-gray-400 bg-black/60 px-1 rounded pointer-events-none">Max: {{ $bytesPretty(chartMaxBytes) }}</div>
++            <div class="absolute top-2 left-2 text-[10px] font-mono text-gray-400 bg-black/60 px-1 rounded pointer-events-none">
++              Max: {{ $bytesPretty(chartMaxBytes) }} ({{ selectedTrafficTypeLabel }})
++            </div>
 +
 +            <!-- Chart Bars -->
 +            <div class="w-full h-full flex items-end justify-between gap-1 z-10 px-2">
-+              <div v-for="item in dailyChartData" :key="item.date" class="flex-1 h-full flex flex-col justify-end items-center group relative cursor-pointer min-w-[12px]">
++              <div
++                v-for="item in dailyChartData"
++                :key="item.date"
++                class="flex-1 h-full flex flex-col justify-end items-center group relative cursor-pointer min-w-[12px] p-0.5 rounded transition-transform hover:scale-105"
++                :class="{ 'bg-primary/20 ring-2 ring-primary ring-offset-2 ring-offset-black': selectedDate === item.date }"
++                @click="selectDate(item.date)"
++              >
 +                <!-- Tooltip on Hover -->
-+                <div class="absolute bottom-full mb-2 hidden group-hover:flex flex-col bg-gray-900 border border-white/20 text-white rounded p-2 text-xs shadow-xl pointer-events-none z-50 whitespace-nowrap">
-+                  <p class="font-bold text-gray-200 border-b border-white/10 pb-1 mb-1">{{ item.date }}</p>
-+                  <p class="text-emerald-400">Stream: {{ $bytesPretty(item.bytesStream) }}</p>
-+                  <p class="text-purple-400">Download: {{ $bytesPretty(item.bytesDownload) }}</p>
-+                  <p class="text-blue-400">Other: {{ $bytesPretty(item.bytesOther) }}</p>
-+                  <div class="border-t border-white/10 pt-1 mt-1 space-y-0.5">
-+                    <p class="text-sky-300">🌐 Internet (WAN): {{ $bytesPretty(item.bytesInternet) }}</p>
-+                    <p class="text-amber-300">🏠 Local (LAN): {{ $bytesPretty(item.bytesLocal) }}</p>
-+                    <p class="font-bold text-white pt-0.5">Total: {{ $bytesPretty(item.bytesTotal) }}</p>
++                <div class="absolute bottom-full mb-2 hidden group-hover:flex flex-col bg-gray-900 border border-white/20 text-white rounded p-2.5 text-xs shadow-2xl pointer-events-none z-50 whitespace-nowrap min-w-[190px]">
++                  <div class="flex items-center justify-between border-b border-white/10 pb-1 mb-1.5">
++                    <span class="font-bold text-gray-200">{{ item.date }}</span>
++                    <span v-if="selectedDate === item.date" class="text-[10px] text-emerald-400 font-semibold">(Selected)</span>
 +                  </div>
-+                  <p class="text-[10px] text-gray-400 pt-0.5">Requests: {{ item.requests }}</p>
++
++                  <!-- Highlight Active Traffic Filter prominently -->
++                  <div v-if="selectedTrafficType === 'internet'" class="mb-1.5 pb-1.5 border-b border-white/10">
++                    <p class="text-sky-300 font-bold text-sm flex items-center">
++                      <span class="material-symbols text-sm mr-1">public</span>
++                      Internet (WAN): {{ $bytesPretty(item.bytesInternet) }}
++                    </p>
++                    <p v-if="item.isLegacy" class="text-amber-400 text-[10px] mt-0.5">
++                      ⚠️ Note: Recorded prior to LAN/WAN tracking
++                    </p>
++                  </div>
++                  <div v-else-if="selectedTrafficType === 'local'" class="mb-1.5 pb-1.5 border-b border-white/10">
++                    <p class="text-amber-300 font-bold text-sm flex items-center">
++                      <span class="material-symbols text-sm mr-1">home</span>
++                      Local (LAN): {{ $bytesPretty(item.bytesLocal) }}
++                    </p>
++                    <p v-if="item.isLegacy" class="text-amber-400 text-[10px] mt-0.5">
++                      ⚠️ Note: Recorded prior to LAN/WAN tracking
++                    </p>
++                  </div>
++                  <div v-else class="mb-1 pb-1 border-b border-white/10">
++                    <p class="text-white font-bold text-sm">
++                      Total Data: {{ $bytesPretty(item.bytesTotal) }}
++                    </p>
++                  </div>
++
++                  <!-- Category Breakdown -->
++                  <p class="text-emerald-400 flex justify-between"><span>Streaming:</span> <span class="font-mono">{{ $bytesPretty(item.bytesStream) }}</span></p>
++                  <p class="text-purple-400 flex justify-between"><span>Download:</span> <span class="font-mono">{{ $bytesPretty(item.bytesDownload) }}</span></p>
++                  <p class="text-blue-400 flex justify-between"><span>Other / API:</span> <span class="font-mono">{{ $bytesPretty(item.bytesOther) }}</span></p>
++
++                  <!-- Network breakdown -->
++                  <div class="border-t border-white/10 pt-1 mt-1 space-y-0.5 text-[11px]">
++                    <p class="text-sky-300 flex justify-between"><span>🌐 Internet:</span> <span class="font-mono">{{ $bytesPretty(item.bytesInternet) }}</span></p>
++                    <p class="text-amber-300 flex justify-between"><span>🏠 Local:</span> <span class="font-mono">{{ $bytesPretty(item.bytesLocal) }}</span></p>
++                    <p class="font-bold text-white flex justify-between pt-0.5"><span>All Traffic:</span> <span class="font-mono">{{ $bytesPretty(item.bytesTotal) }}</span></p>
++                  </div>
++
++                  <div class="border-t border-white/10 pt-1 mt-1 text-[10px] flex justify-between text-gray-400">
++                    <span>Requests: {{ item.requests }}</span>
++                    <span class="text-primary font-semibold">Click to filter</span>
++                  </div>
 +                </div>
 +
-+                <!-- Stacked Bar (Adjusted by selected traffic type if filtered) -->
-+                <div class="w-full max-w-[28px] rounded-t flex flex-col-reverse overflow-hidden transition-all duration-150 group-hover:brightness-125" :style="{ height: `${Math.max(2, (getBarHeightBytes(item) / chartMaxBytes) * 100)}%` }">
-+                  <div class="w-full bg-emerald-500" :style="{ height: `${(item.bytesStream / (item.bytesTotal || 1)) * 100}%` }" />
-+                  <div class="w-full bg-purple-500" :style="{ height: `${(item.bytesDownload / (item.bytesTotal || 1)) * 100}%` }" />
-+                  <div class="w-full bg-blue-500" :style="{ height: `${(item.bytesOther / (item.bytesTotal || 1)) * 100}%` }" />
++                <!-- Stacked Bar (Height adjusted by selected traffic type) -->
++                <div
++                  class="w-full max-w-[28px] rounded-t flex flex-col-reverse overflow-hidden transition-all duration-150 group-hover:brightness-125"
++                  :style="{ height: `${Math.max(3, (getBarHeightBytes(item) / chartMaxBytes) * 100)}%` }"
++                >
++                  <template v-if="selectedTrafficType === 'internet'">
++                    <div class="w-full h-full bg-sky-500" />
++                  </template>
++                  <template v-else-if="selectedTrafficType === 'local'">
++                    <div class="w-full h-full bg-amber-500" />
++                  </template>
++                  <template v-else>
++                    <div class="w-full bg-emerald-500" :style="{ height: `${(item.bytesStream / (item.bytesTotal || 1)) * 100}%` }" />
++                    <div class="w-full bg-purple-500" :style="{ height: `${(item.bytesDownload / (item.bytesTotal || 1)) * 100}%` }" />
++                    <div class="w-full bg-blue-500" :style="{ height: `${(item.bytesOther / (item.bytesTotal || 1)) * 100}%` }" />
++                  </template>
 +                </div>
 +
 +                <!-- X Axis Date Label -->
-+                <p class="text-[10px] text-gray-400 mt-2 truncate w-full text-center">
++                <p
++                  class="text-[10px] mt-2 truncate w-full text-center transition-colors"
++                  :class="selectedDate === item.date ? 'text-primary font-bold' : 'text-gray-400'"
++                >
 +                  {{ formatShortDate(item.date) }}
 +                </p>
 +              </div>
@@ -346,14 +450,118 @@ index 00000000..06acaf78
 +        </div>
 +      </div>
 +
-+      <!-- User Breakdown Table -->
-+      <div>
++      <!-- Item / Book Activity Breakdown Table (Shown when a user is selected OR a date is clicked) -->
++      <div v-if="selectedUserId" class="mb-8">
++        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-3">
++          <div>
++            <h2 class="text-lg font-semibold flex items-center">
++              <span class="material-symbols mr-2 text-primary">auto_stories</span>
++              Book & Media Activity Breakdown for {{ selectedUserName }}
++              <span v-if="selectedDate" class="ml-2 text-xs font-semibold text-emerald-400 bg-emerald-500/20 px-2 py-0.5 rounded">
++                on {{ selectedDate }}
++              </span>
++            </h2>
++            <p class="text-xs text-gray-400">
++              Showing media streamed, downloaded, and transferred
++              {{ selectedDate ? 'on ' + selectedDate : 'across ' + selectedRangeLabel }}
++            </p>
++          </div>
++
++          <div class="flex items-center gap-2">
++            <ui-btn v-if="selectedDate" color="bg-white/10 hover:bg-white/20" small @click="clearDateFilter">
++              <span class="material-symbols text-sm mr-1">close</span>
++              Clear Date Filter
++            </ui-btn>
++            <ui-btn color="bg-primary" small @click="selectUser('')">
++              <span class="material-symbols text-sm mr-1">arrow_back</span>
++              Back to All Users
++            </ui-btn>
++          </div>
++        </div>
++
++        <div class="bg-black/20 rounded-lg border border-white/5 overflow-hidden">
++          <table class="w-full text-left text-sm">
++            <thead class="bg-white/5 text-xs uppercase text-gray-400 font-semibold border-b border-white/10">
++              <tr>
++                <th class="py-3 px-4">Book / Media Item</th>
++                <th class="py-3 px-4 text-center">Activity</th>
++                <th class="py-3 px-4 text-right">Internet (WAN)</th>
++                <th class="py-3 px-4 text-right">Local (LAN)</th>
++                <th class="py-3 px-4 text-right font-bold text-white">Total Data</th>
++                <th class="py-3 px-4 text-right hidden sm:table-cell">Requests</th>
++                <th class="py-3 px-4 w-32">% of Activity</th>
++              </tr>
++            </thead>
++            <tbody class="divide-y divide-white/5">
++              <tr v-if="!itemBreakdown.length">
++                <td colspan="7" class="text-center py-8 text-gray-400 text-sm">
++                  <span class="material-symbols text-3xl mb-1 text-gray-500 block">hourglass_empty</span>
++                  No individual book activity recorded for this period yet.
++                  <p class="text-xs text-gray-500 mt-1">
++                    Book & item-level tracking automatically records activity as audiobooks and files are streamed or downloaded.
++                  </p>
++                </td>
++              </tr>
++              <tr v-for="item in itemBreakdown" :key="item.libraryItemId" class="hover:bg-white/5 transition-colors">
++                <td class="py-3 px-4">
++                  <div class="flex items-center">
++                    <span class="material-symbols text-xl mr-2.5" :class="getItemIconClass(item)">
++                      {{ getItemIcon(item) }}
++                    </span>
++                    <div>
++                      <p class="font-medium text-white">{{ item.itemName }}</p>
++                      <p v-if="item.libraryItemId !== 'general'" class="text-[10px] text-gray-500 font-mono">
++                        ID: {{ item.libraryItemId }}
++                      </p>
++                    </div>
++                  </div>
++                </td>
++                <td class="py-3 px-4 text-center">
++                  <span
++                    class="text-[10px] px-2 py-0.5 rounded-full font-semibold uppercase tracking-wider"
++                    :class="getCategoryBadgeClass(item.category)"
++                  >
++                    {{ item.category }}
++                  </span>
++                </td>
++                <td class="py-3 px-4 text-right font-mono text-sky-400 font-medium">{{ $bytesPretty(item.bytesInternet) }}</td>
++                <td class="py-3 px-4 text-right font-mono text-amber-300 font-medium">{{ $bytesPretty(item.bytesLocal) }}</td>
++                <td class="py-3 px-4 text-right font-mono font-bold text-white">{{ $bytesPretty(item.bytesTotal) }}</td>
++                <td class="py-3 px-4 text-right font-mono text-gray-300 hidden sm:table-cell">{{ item.requests }}</td>
++                <td class="py-3 px-4">
++                  <div class="flex items-center gap-2">
++                    <div class="grow bg-white/10 rounded-full h-2 overflow-hidden">
++                      <div class="bg-primary h-full rounded-full transition-all duration-300" :style="{ width: `${item.percentOfTotal}%` }" />
++                    </div>
++                    <span class="text-xs font-mono w-10 text-right text-gray-300">{{ item.percentOfTotal }}%</span>
++                  </div>
++                </td>
++              </tr>
++            </tbody>
++          </table>
++        </div>
++      </div>
++
++      <!-- User Breakdown Table (Shown on All Users view) -->
++      <div v-if="!selectedUserId">
 +        <div class="flex items-center justify-between mb-3">
-+          <h2 class="text-lg font-semibold flex items-center">
-+            <span class="material-symbols mr-2 text-primary">group</span>
-+            Data Usage Breakdown by User
-+          </h2>
-+          <p class="text-xs text-gray-400">{{ userBreakdown.length }} Users</p>
++          <div>
++            <h2 class="text-lg font-semibold flex items-center">
++              <span class="material-symbols mr-2 text-primary">group</span>
++              Data Usage Breakdown by User
++              <span v-if="selectedDate" class="ml-2 text-xs font-semibold text-emerald-400 bg-emerald-500/20 px-2 py-0.5 rounded">
++                on {{ selectedDate }}
++              </span>
++            </h2>
++            <p class="text-xs text-gray-400">Click any user row to view individual book & stream breakdowns</p>
++          </div>
++          <div class="flex items-center gap-2">
++            <ui-btn v-if="selectedDate" color="bg-white/10 hover:bg-white/20" small @click="clearDateFilter">
++              <span class="material-symbols text-sm mr-1">close</span>
++              Clear Date Filter
++            </ui-btn>
++            <p class="text-xs text-gray-400">{{ userBreakdown.length }} Users</p>
++          </div>
 +        </div>
 +
 +        <div class="bg-black/20 rounded-lg border border-white/5 overflow-hidden">
@@ -367,20 +575,30 @@ index 00000000..06acaf78
 +                <th class="py-3 px-4 text-right hidden sm:table-cell">Downloads</th>
 +                <th class="py-3 px-4 text-right font-bold text-white">Total</th>
 +                <th class="py-3 px-4 w-36">% of Total</th>
++                <th class="py-3 px-2 w-10"></th>
 +              </tr>
 +            </thead>
 +            <tbody class="divide-y divide-white/5">
 +              <tr v-if="!userBreakdown.length">
-+                <td colspan="7" class="text-center py-8 text-gray-400 text-sm">No user data recorded for this time frame.</td>
++                <td colspan="8" class="text-center py-8 text-gray-400 text-sm">No user data recorded for this time frame.</td>
 +              </tr>
-+              <tr v-for="user in userBreakdown" :key="user.userId" class="hover:bg-white/5 transition-colors">
++              <tr
++                v-for="user in userBreakdown"
++                :key="user.userId"
++                class="hover:bg-white/10 transition-colors cursor-pointer group"
++                @click="selectUser(user.userId)"
++                title="Click to view item & book activity for this user"
++              >
 +                <td class="py-3 px-4">
 +                  <div class="flex items-center">
-+                    <span class="material-symbols text-xl mr-2" :class="user.userId === 'anonymous' ? 'text-gray-400' : 'text-primary'">
++                    <span class="material-symbols text-xl mr-2 group-hover:scale-110 transition-transform" :class="user.userId === 'anonymous' ? 'text-gray-400' : 'text-primary'">
 +                      {{ user.userId === 'anonymous' ? 'public' : 'person' }}
 +                    </span>
 +                    <div>
-+                      <p class="font-medium text-white">{{ user.username }}</p>
++                      <p class="font-medium text-white group-hover:text-primary transition-colors flex items-center">
++                        {{ user.username }}
++                        <span class="material-symbols text-xs ml-1 opacity-0 group-hover:opacity-100 transition-opacity">open_in_new</span>
++                      </p>
 +                      <p v-if="user.userId !== 'anonymous'" class="text-[10px] text-gray-500 font-mono">{{ user.userId }}</p>
 +                    </div>
 +                  </div>
@@ -397,6 +615,9 @@ index 00000000..06acaf78
 +                    </div>
 +                    <span class="text-xs font-mono w-10 text-right text-gray-300">{{ user.percentOfTotal }}%</span>
 +                  </div>
++                </td>
++                <td class="py-3 px-2 text-center text-gray-500 group-hover:text-white">
++                  <span class="material-symbols text-sm">chevron_right</span>
 +                </td>
 +              </tr>
 +            </tbody>
@@ -437,6 +658,7 @@ index 00000000..06acaf78
 +      selectedRange: 'last7Days',
 +      selectedTrafficType: 'all',
 +      selectedUserId: '',
++      selectedDate: null,
 +      rangeOptions: [
 +        { label: 'Today', value: 'today' },
 +        { label: 'Last 7 Days', value: 'last7Days' },
@@ -458,6 +680,7 @@ index 00000000..06acaf78
 +      },
 +      dailyChartData: [],
 +      userBreakdown: [],
++      itemBreakdown: [],
 +      filteredTotalBytes: 0,
 +      allUsers: []
 +    }
@@ -468,6 +691,21 @@ index 00000000..06acaf78
 +    },
 +    isTrackingEnabled() {
 +      return !!this.serverSettings.enableBandwidthTracking
++    },
++    selectedUserName() {
++      if (!this.selectedUserId) return ''
++      if (this.selectedUserId === 'anonymous') return 'Anonymous / Public'
++      const found = this.allUsers.find((u) => u.id === this.selectedUserId)
++      return found?.username || this.selectedUserId
++    },
++    selectedRangeLabel() {
++      const found = this.rangeOptions.find((r) => r.value === this.selectedRange)
++      return found?.label || this.selectedRange
++    },
++    selectedTrafficTypeLabel() {
++      if (this.selectedTrafficType === 'internet') return 'Internet (WAN)'
++      if (this.selectedTrafficType === 'local') return 'Local (LAN)'
++      return 'All Traffic'
 +    },
 +    userDropdownItems() {
 +      const items = [{ text: 'All Users', value: '' }]
@@ -488,10 +726,27 @@ index 00000000..06acaf78
 +  methods: {
 +    selectRange(range) {
 +      this.selectedRange = range
++      this.selectedDate = null
 +      this.loadStats()
 +    },
 +    selectTrafficType(type) {
 +      this.selectedTrafficType = type
++      this.loadStats()
++    },
++    selectUser(userId) {
++      this.selectedUserId = userId
++      this.loadStats()
++    },
++    selectDate(date) {
++      if (this.selectedDate === date) {
++        this.selectedDate = null
++      } else {
++        this.selectedDate = date
++      }
++      this.loadStats()
++    },
++    clearDateFilter() {
++      this.selectedDate = null
 +      this.loadStats()
 +    },
 +    getBarHeightBytes(item) {
@@ -501,6 +756,25 @@ index 00000000..06acaf78
 +        return item.bytesLocal || 0
 +      }
 +      return item.bytesTotal || 0
++    },
++    getItemIcon(item) {
++      if (item.libraryItemId === 'general') return 'devices'
++      if (item.libraryItemId === 'backup') return 'settings_backup_restore'
++      if (item.libraryItemId === 'shared') return 'share'
++      if (item.category === 'stream') return 'headphones'
++      if (item.category === 'download') return 'download_for_offline'
++      return 'book_2'
++    },
++    getItemIconClass(item) {
++      if (item.libraryItemId === 'general') return 'text-gray-400'
++      if (item.category === 'stream') return 'text-emerald-400'
++      if (item.category === 'download') return 'text-purple-400'
++      return 'text-primary'
++    },
++    getCategoryBadgeClass(category) {
++      if (category === 'stream') return 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
++      if (category === 'download') return 'bg-purple-500/20 text-purple-300 border border-purple-500/30'
++      return 'bg-blue-500/20 text-blue-300 border border-blue-500/30'
 +    },
 +    formatShortDate(dateStr) {
 +      if (!dateStr) return ''
@@ -520,11 +794,15 @@ index 00000000..06acaf78
 +        if (this.selectedTrafficType && this.selectedTrafficType !== 'all') {
 +          url += `&trafficType=${this.selectedTrafficType}`
 +        }
++        if (this.selectedDate) {
++          url += `&date=${this.selectedDate}`
++        }
 +        const data = await this.$axios.$get(url)
 +        if (data) {
 +          this.summary = data.summary || this.summary
 +          this.dailyChartData = data.daily || []
 +          this.userBreakdown = data.userBreakdown || []
++          this.itemBreakdown = data.itemBreakdown || []
 +          this.filteredTotalBytes = data.rangeTotalBytes || 0
 +        }
 +      } catch (err) {
@@ -548,6 +826,7 @@ index 00000000..06acaf78
 +        await this.$axios.$delete('/api/stats/bandwidth')
 +        this.$toast.success('Bandwidth statistics cleared')
 +        this.showConfirmClear = false
++        this.selectedDate = null
 +        await this.loadStats()
 +      } catch (err) {
 +        console.error('Failed to clear bandwidth stats:', err)
@@ -620,497 +899,11 @@ index 34a0fc86..bde60640 100644
        console.log('Loaded user listening data', this.listeningSessions, this.listeningStats)
      }
    },
-diff --git a/custom_changes.patch b/custom_changes.patch
-new file mode 100644
-index 00000000..025acc57
---- /dev/null
-+++ b/custom_changes.patch
-@@ -0,0 +1,479 @@
-+diff --git a/CUSTOM_MODIFICATIONS.md b/CUSTOM_MODIFICATIONS.md
-+new file mode 100644
-+index 00000000..ca25e1e5
-+--- /dev/null
-++++ b/CUSTOM_MODIFICATIONS.md
-+@@ -0,0 +1,102 @@
-++# Audiobookshelf Custom Modifications (`v2.37.1-custom`)
-++
-++This document tracks all custom features, fixes, and architectural modifications made to Audiobookshelf.
-++
-++---
-++
-++## 1. Discover Shelf Series Recommendations
-++
-++### Summary
-++* **Problem**: Upstream Audiobookshelf completely excludes series books from the "Discover" shelf if any book in that series has been started or finished. Additionally, Sequelize's `separate: true` with `limit: 1` combined with an outer limit caused a severe probability bias that resulted in only standalone (non-series) books appearing in Discover.
-++* **Fix**:
-++  1. Updated `getDiscoverLibraryItems` in `server/utils/queries/libraryItemsBookFilters.js`.
-++  2. Removed `limit: 1` from the separate include so all books are evaluated, and JavaScript maps to find the first unread/unstarted book for each series.
-++  3. Included unstarted series books in the random pool alongside standalone books.
-++
-++### Modified Files:
-++* `server/utils/queries/libraryItemsBookFilters.js`
-++
-++---
-++
-++## 2. Bandwidth & Data Usage Tracking per User
-++
-++### Summary
-++* **Problem**: Audiobookshelf natively tracks playback duration (listening sessions/minutes), but has no way to track network egress or data usage (MB/GB transferred). When users download full audiobooks or stream high-bitrate files, server bandwidth is consumed without any visibility for the administrator.
-++* **Feature**:
-++  1. **Zero-Overhead In-Memory Buffer**: Middleware captures outgoing wire/socket bytes across all HTTP requests (streaming audio, HLS chunks, item downloads, ebooks, covers, and API responses). Data is aggregated in an in-memory map and batched into SQLite every 60 seconds (and on server shutdown) via atomic UPSERT transactions.
-++  2. **Categorization**: Automatically classifies traffic into:
-++     - `Streaming`: Audio playback, HLS segment requests, session audio streams.
-++     - `Downloads`: Explicit item downloads, zip archives, ebook file downloads.
-++     - `Other`: Cover images, API JSON responses, web client assets, RSS feeds.
-++  3. **Attribution**: Identifies the authenticated user (`req.user.id`), attributes HLS stream segments to the active session user, and attributes unauthenticated/public traffic to `Anonymous / Public`.
-++  4. **Toggle Setting**: Added `enableBandwidthTracking` to Server Settings. Admins can toggle bandwidth tracking ON or OFF at any time in **Settings > General**.
-++  5. **Admin Dashboard (`/config/bandwidth`)**:
-++     - **Summary KPI Cards**: Data transferred Today, Last 7 Days, This Month, This Year, and All-Time with Internet (WAN) vs Local (LAN) breakdown.
-++     - **Timeline Chart**: Interactive daily transfer bar chart with hover tooltips and category breakdown.
-++     - **Time Range Filters**: Today, Last 7 Days, Last 30 Days, This Year, All Time.
-++     - **Traffic Type Filters**: All Traffic, Internet Only (WAN), and Local Only (LAN).
-++     - **User Breakdown Table**: Complete breakdown showing each user's username, Internet (WAN) bytes, Local (LAN) bytes, streaming bytes, download bytes, total bytes, and percentage bar of total traffic.
-++     - **User Filter**: Filter chart and stats by specific user or view all users combined.
-++     - **Clear Records**: Admin action to reset/clear historical bandwidth statistics.
-++     - **UI Alignment & Stacking Fixes**: Resolved vertical offset of User Filter dropdown and fixed z-index stacking context to prevent chart bars from overlaying open dropdown menu options.
-++  6. **Local Network vs Internet (LAN / WAN) Tracking**: Automatically detects private RFC 1918 subnets (`192.168.x.x`, `10.x.x.x`, `172.16.x.x`, loopback, IPv6 local) vs external remote WAN IPs (including Cloudflare and reverse proxy headers) to distinguish data leaving the home internet from local Wi-Fi traffic.
-++  7. **User Profile Integration (`/config/users/:id`)**: Displays the user's total data transferred alongside their total listening time.
-++
-++### Modified Files:
-++* `server/models/BandwidthStat.js` (New Sequelize model for `bandwidthStats` table)
-++* `server/managers/BandwidthManager.js` (New manager for measurement, in-memory buffering, flushing, and querying)
-++* `server/Database.js` (Registered `BandwidthStat` model in `buildModels` and added `bandwidthStatModel` getter)
-++* `server/Server.js` (Instantiated and mounted `BandwidthManager` middleware; flushed on stop)
-++* `server/objects/settings/ServerSettings.js` (Added `enableBandwidthTracking` setting, patchable key, and serialization)
-++* `server/controllers/StatsController.js` (Added `getBandwidthStats` and `clearBandwidthStats` endpoints)
-++* `server/routers/ApiRouter.js` (Mounted `/stats/bandwidth` GET and DELETE routes)
-++* `client/pages/config/index.vue` (Added "Track Bandwidth & Data Usage" toggle switch under General Settings)
-++* `client/components/app/ConfigSideNav.vue` (Added "Bandwidth Stats" navigation link)
-++* `client/pages/config.vue` (Mapped bandwidth page route title)
-++* `client/pages/config/bandwidth.vue` (New admin Bandwidth Stats dashboard page)
-++* `client/pages/config/users/_id/index.vue` (Added Data Transferred stat to user profile)
-++
-++---
-++
-++## 3. Build & Packaging Instructions
-++
-++### Standalone Windows Executable:
-++```powershell
-++# 1. Compile Client Nuxt Assets
-++cd client
-++npm run generate
-++cd ..
-++
-++# 2. Compile Server TypeScript
-++npm run build:server
-++
-++# 3. Package Windows Binary (dist/win/audiobookshelf.exe)
-++npx pkg --config package.json -t node24-win-x64 -o ./dist/win/audiobookshelf -C GZip dist-server/index.js
-++```
-++
-++### Git & Patch Synchronization:
-++```powershell
-++# Regenerate patch against upstream baseline
-++git diff v2.37.1 > custom_changes.patch
-++```
-++
-++---
-++
-++## 4. Modified Files Inventory
-++
-++| File Path | Description |
-++| :--- | :--- |
-++| `server/utils/queries/libraryItemsBookFilters.js` | Fixed series discovery filtering & removed single-item limit |
-++| `server/models/BandwidthStat.js` | Sequelize model and table definition for bandwidth stats |
-++| `server/managers/BandwidthManager.js` | In-memory buffering, request categorization, and stats querying |
-++| `server/Database.js` | Registered BandwidthStat model and schema sync |
-++| `server/Server.js` | Global middleware hook and shutdown flush for BandwidthManager |
-++| `server/objects/settings/ServerSettings.js` | `enableBandwidthTracking` toggle setting |
-++| `server/controllers/StatsController.js` | REST controller methods for bandwidth stats |
-++| `server/routers/ApiRouter.js` | Route definitions for `/stats/bandwidth` |
-++| `client/pages/config/index.vue` | UI toggle in Settings > General |
-++| `client/components/app/ConfigSideNav.vue` | Sidebar navigation link to Bandwidth Stats |
-++| `client/pages/config.vue` | Route title mapper |
-++| `client/pages/config/bandwidth.vue` | Full responsive Bandwidth Stats dashboard |
-++| `client/pages/config/users/_id/index.vue` | Data transferred stat on user profile card |
-++| `custom_changes.patch` | Unified Git diff against upstream `v2.37.1` |
-+diff --git a/client/components/app/ConfigSideNav.vue b/client/components/app/ConfigSideNav.vue
-+index 32e7e694..aee46878 100644
-+--- a/client/components/app/ConfigSideNav.vue
-++++ b/client/components/app/ConfigSideNav.vue
-+@@ -80,6 +80,11 @@ export default {
-+           title: this.$strings.HeaderListeningSessions,
-+           path: '/config/sessions'
-+         },
-++        {
-++          id: 'config-bandwidth',
-++          title: 'Bandwidth Stats',
-++          path: '/config/bandwidth'
-++        },
-+         {
-+           id: 'config-backups',
-+           title: this.$strings.HeaderBackups,
-+diff --git a/client/pages/config.vue b/client/pages/config.vue
-+index c4fe2446..f42bc13d 100644
-+--- a/client/pages/config.vue
-++++ b/client/pages/config.vue
-+@@ -51,6 +51,7 @@ export default {
-+         else if (pageName === 'libraries') return this.$strings.HeaderLibraries
-+         else if (pageName === 'notifications') return this.$strings.HeaderNotifications
-+         else if (pageName === 'sessions') return this.$strings.HeaderListeningSessions
-++        else if (pageName === 'bandwidth') return 'Bandwidth Stats'
-+         else if (pageName === 'stats') return this.$strings.HeaderYourStats
-+         else if (pageName === 'users') return this.$strings.HeaderUsers
-+         else if (pageName === 'api-keys') return this.$strings.HeaderApiKeys
-+diff --git a/client/pages/config/bandwidth.vue b/client/pages/config/bandwidth.vue
-+new file mode 100644
-+index 00000000..06acaf78
-+--- /dev/null
-++++ b/client/pages/config/bandwidth.vue
-+@@ -0,0 +1,423 @@
-++<template>
-++  <div class="w-full">
-++    <!-- Notice if tracking is disabled -->
-++    <div v-if="!isTrackingEnabled" class="bg-warning/20 border border-warning/50 rounded-md p-4 mb-6 flex items-center justify-between">
-++      <div class="flex items-center">
-++        <span class="material-symbols text-warning text-3xl mr-3">warning</span>
-++        <div>
-++          <p class="font-semibold text-warning">Bandwidth Tracking is Currently Disabled</p>
-++          <p class="text-xs text-gray-300">Data usage is not actively being recorded. You can enable it in Server Settings.</p>
-++        </div>
-++      </div>
-++      <ui-btn to="/config" color="bg-warning text-black" class="text-xs font-semibold">Go to Settings</ui-btn>
-++    </div>
-++
-++    <app-settings-content header-text="Bandwidth & Data Usage">
-++      <!-- KPI Summary Cards -->
-++      <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 mb-6">
-++        <div class="bg-primary/20 border border-white/5 rounded-lg p-3 flex flex-col justify-between">
-++          <p class="text-xs uppercase font-semibold text-gray-400 mb-1">Today</p>
-++          <p class="text-2xl font-bold font-mono text-emerald-400">{{ $bytesPretty(summary.today.total) }}</p>
-++          <div class="text-[11px] text-gray-300 mt-2 space-y-0.5 border-t border-white/5 pt-1.5">
-++            <p class="truncate flex items-center justify-between">
-++              <span class="text-sky-300 font-medium flex items-center"><span class="material-symbols text-[13px] mr-1">public</span>Internet:</span>
-++              <span class="font-mono">{{ $bytesPretty(summary.today.internet) }}</span>
-++            </p>
-++            <p class="truncate flex items-center justify-between">
-++              <span class="text-amber-300 font-medium flex items-center"><span class="material-symbols text-[13px] mr-1">home</span>Local:</span>
-++              <span class="font-mono">{{ $bytesPretty(summary.today.local) }}</span>
-++            </p>
-++          </div>
-++        </div>
-++
-++        <div class="bg-primary/20 border border-white/5 rounded-lg p-3 flex flex-col justify-between">
-++          <p class="text-xs uppercase font-semibold text-gray-400 mb-1">Last 7 Days</p>
-++          <p class="text-2xl font-bold font-mono text-emerald-400">{{ $bytesPretty(summary.last7Days.total) }}</p>
-++          <div class="text-[11px] text-gray-300 mt-2 space-y-0.5 border-t border-white/5 pt-1.5">
-++            <p class="truncate flex items-center justify-between">
-++              <span class="text-sky-300 font-medium flex items-center"><span class="material-symbols text-[13px] mr-1">public</span>Internet:</span>
-++              <span class="font-mono">{{ $bytesPretty(summary.last7Days.internet) }}</span>
-++            </p>
-++            <p class="truncate flex items-center justify-between">
-++              <span class="text-amber-300 font-medium flex items-center"><span class="material-symbols text-[13px] mr-1">home</span>Local:</span>
-++              <span class="font-mono">{{ $bytesPretty(summary.last7Days.local) }}</span>
-++            </p>
-++          </div>
-++        </div>
-++
-++        <div class="bg-primary/20 border border-white/5 rounded-lg p-3 flex flex-col justify-between">
-++          <p class="text-xs uppercase font-semibold text-gray-400 mb-1">This Month</p>
-++          <p class="text-2xl font-bold font-mono text-emerald-400">{{ $bytesPretty(summary.thisMonth.total) }}</p>
-++          <div class="text-[11px] text-gray-300 mt-2 space-y-0.5 border-t border-white/5 pt-1.5">
-++            <p class="truncate flex items-center justify-between">
-++              <span class="text-sky-300 font-medium flex items-center"><span class="material-symbols text-[13px] mr-1">public</span>Internet:</span>
-++              <span class="font-mono">{{ $bytesPretty(summary.thisMonth.internet) }}</span>
-++            </p>
-++            <p class="truncate flex items-center justify-between">
-++              <span class="text-amber-300 font-medium flex items-center"><span class="material-symbols text-[13px] mr-1">home</span>Local:</span>
-++              <span class="font-mono">{{ $bytesPretty(summary.thisMonth.local) }}</span>
-++            </p>
-++          </div>
-++        </div>
-++
-++        <div class="bg-primary/20 border border-white/5 rounded-lg p-3 flex flex-col justify-between">
-++          <p class="text-xs uppercase font-semibold text-gray-400 mb-1">This Year</p>
-++          <p class="text-2xl font-bold font-mono text-emerald-400">{{ $bytesPretty(summary.thisYear.total) }}</p>
-++          <div class="text-[11px] text-gray-300 mt-2 space-y-0.5 border-t border-white/5 pt-1.5">
-++            <p class="truncate flex items-center justify-between">
-++              <span class="text-sky-300 font-medium flex items-center"><span class="material-symbols text-[13px] mr-1">public</span>Internet:</span>
-++              <span class="font-mono">{{ $bytesPretty(summary.thisYear.internet) }}</span>
-++            </p>
-++            <p class="truncate flex items-center justify-between">
-++              <span class="text-amber-300 font-medium flex items-center"><span class="material-symbols text-[13px] mr-1">home</span>Local:</span>
-++              <span class="font-mono">{{ $bytesPretty(summary.thisYear.local) }}</span>
-++            </p>
-++          </div>
-++        </div>
-++
-++        <div class="bg-primary/20 border border-white/5 rounded-lg p-3 flex flex-col justify-between col-span-2 sm:col-span-1">
-++          <p class="text-xs uppercase font-semibold text-gray-400 mb-1">All Time Total</p>
-++          <p class="text-2xl font-bold font-mono text-cyan-400">{{ $bytesPretty(summary.allTime.total) }}</p>
-++          <div class="text-[11px] text-gray-300 mt-2 space-y-0.5 border-t border-white/5 pt-1.5">
-++            <p class="truncate flex items-center justify-between">
-++              <span class="text-sky-300 font-medium flex items-center"><span class="material-symbols text-[13px] mr-1">public</span>Internet:</span>
-++              <span class="font-mono">{{ $bytesPretty(summary.allTime.internet) }}</span>
-++            </p>
-++            <p class="truncate flex items-center justify-between">
-++              <span class="text-amber-300 font-medium flex items-center"><span class="material-symbols text-[13px] mr-1">home</span>Local:</span>
-++              <span class="font-mono">{{ $bytesPretty(summary.allTime.local) }}</span>
-++            </p>
-++          </div>
-++        </div>
-++      </div>
-++
-++      <!-- Filters & Toolbar (Stacking context relative z-30 prevents chart clipping) -->
-++      <div class="relative z-30 flex flex-col md:flex-row md:items-center justify-between gap-3 border-b border-white/10 pb-4 mb-6">
-++        <div class="flex flex-wrap items-center gap-2">
-++          <!-- Range Buttons -->
-++          <div class="inline-flex rounded-md shadow-sm bg-black/40 p-1 border border-white/10">
-++            <button v-for="r in rangeOptions" :key="r.value" type="button" @click="selectRange(r.value)" class="px-3 py-1 text-xs font-medium rounded transition-colors" :class="selectedRange === r.value ? 'bg-primary text-white shadow' : 'text-gray-400 hover:text-white'">
-++              {{ r.label }}
-++            </button>
-++          </div>
-++
-++          <!-- Traffic Type Filter (All / Internet WAN / Local LAN) -->
-++          <div class="inline-flex rounded-md shadow-sm bg-black/40 p-1 border border-white/10">
-++            <button v-for="t in trafficTypeOptions" :key="t.value" type="button" @click="selectTrafficType(t.value)" class="px-2.5 py-1 text-xs font-medium rounded transition-colors flex items-center gap-1" :class="selectedTrafficType === t.value ? 'bg-primary text-white shadow' : 'text-gray-400 hover:text-white'">
-++              <span class="material-symbols text-[14px]">{{ t.icon }}</span>
-++              <span>{{ t.label }}</span>
-++            </button>
-++          </div>
-++        </div>
-++
-++        <!-- Controls: User Dropdown (no top label so button is vertically aligned) + Refresh + Clear -->
-++        <div class="flex items-center gap-2 relative z-40">
-++          <!-- User Filter Dropdown -->
-++          <div class="w-48 relative">
-++            <ui-dropdown v-model="selectedUserId" small :items="userDropdownItems" @input="loadStats" />
-++          </div>
-++
-++          <!-- Refresh Button -->
-++          <ui-btn color="bg-primary" small :loading="loading" @click="loadStats">
-++            <span class="material-symbols text-sm mr-1">refresh</span>
-++            Refresh
-++          </ui-btn>
-++
-++          <!-- Clear Stats Button -->
-++          <ui-btn color="bg-error" small @click="showConfirmClear = true">
-++            <span class="material-symbols text-sm mr-1">delete</span>
-++            Clear
-++          </ui-btn>
-++        </div>
-++      </div>
-++
-++      <!-- Timeline Chart Section -->
-++      <div class="mb-8">
-++        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-3">
-++          <h2 class="text-lg font-semibold flex items-center">
-++            <span class="material-symbols mr-2 text-primary">show_chart</span>
-++            Daily Transfer Timeline
-++            <span v-if="filteredTotalBytes" class="ml-2 text-xs font-mono font-normal text-gray-400"> (Range Total: {{ $bytesPretty(filteredTotalBytes) }}) </span>
-++          </h2>
-++          <!-- Legend -->
-++          <div class="flex items-center gap-4 text-xs">
-++            <div class="flex items-center"><span class="w-3 h-3 rounded-sm bg-emerald-500 mr-1.5" /> Streaming</div>
-++            <div class="flex items-center"><span class="w-3 h-3 rounded-sm bg-purple-500 mr-1.5" /> Downloads</div>
-++            <div class="flex items-center"><span class="w-3 h-3 rounded-sm bg-blue-500 mr-1.5" /> Other / API</div>
-++          </div>
-++        </div>
-++
-++        <div v-if="loading" class="h-64 flex items-center justify-center bg-black/20 rounded-lg border border-white/5">
-++          <ui-loading-indicator />
-++        </div>
-++
-++        <div v-else-if="!dailyChartData.length" class="h-64 flex flex-col items-center justify-center bg-black/20 rounded-lg border border-white/5 text-gray-400">
-++          <span class="material-symbols text-4xl mb-2 text-gray-500">query_stats</span>
-++          <p class="text-sm">No transfer records found for this period</p>
-++        </div>
-++
-++        <!-- Responsive Bar Chart -->
-++        <div v-else class="bg-black/30 rounded-lg border border-white/5 p-4 overflow-x-auto">
-++          <div class="relative h-64 flex items-end pt-8 pb-6 min-w-[500px]">
-++            <!-- Grid Lines -->
-++            <div class="absolute inset-x-0 top-8 bottom-6 flex flex-col justify-between pointer-events-none opacity-20">
-++              <div class="border-b border-white" />
-++              <div class="border-b border-white" />
-++              <div class="border-b border-white" />
-++              <div class="border-b border-white" />
-++            </div>
-++
-++            <!-- Top Y-Axis Label -->
-++            <div class="absolute top-2 left-2 text-[10px] font-mono text-gray-400 bg-black/60 px-1 rounded pointer-events-none">Max: {{ $bytesPretty(chartMaxBytes) }}</div>
-++
-++            <!-- Chart Bars -->
-++            <div class="w-full h-full flex items-end justify-between gap-1 z-10 px-2">
-++              <div v-for="item in dailyChartData" :key="item.date" class="flex-1 h-full flex flex-col justify-end items-center group relative cursor-pointer min-w-[12px]">
-++                <!-- Tooltip on Hover -->
-++                <div class="absolute bottom-full mb-2 hidden group-hover:flex flex-col bg-gray-900 border border-white/20 text-white rounded p-2 text-xs shadow-xl pointer-events-none z-50 whitespace-nowrap">
-++                  <p class="font-bold text-gray-200 border-b border-white/10 pb-1 mb-1">{{ item.date }}</p>
-++                  <p class="text-emerald-400">Stream: {{ $bytesPretty(item.bytesStream) }}</p>
-++                  <p class="text-purple-400">Download: {{ $bytesPretty(item.bytesDownload) }}</p>
-++                  <p class="text-blue-400">Other: {{ $bytesPretty(item.bytesOther) }}</p>
-++                  <div class="border-t border-white/10 pt-1 mt-1 space-y-0.5">
-++                    <p class="text-sky-300">🌐 Internet (WAN): {{ $bytesPretty(item.bytesInternet) }}</p>
-++                    <p class="text-amber-300">🏠 Local (LAN): {{ $bytesPretty(item.bytesLocal) }}</p>
-++                    <p class="font-bold text-white pt-0.5">Total: {{ $bytesPretty(item.bytesTotal) }}</p>
-++                  </div>
-++                  <p class="text-[10px] text-gray-400 pt-0.5">Requests: {{ item.requests }}</p>
-++                </div>
-++
-++                <!-- Stacked Bar (Adjusted by selected traffic type if filtered) -->
-++                <div class="w-full max-w-[28px] rounded-t flex flex-col-reverse overflow-hidden transition-all duration-150 group-hover:brightness-125" :style="{ height: `${Math.max(2, (getBarHeightBytes(item) / chartMaxBytes) * 100)}%` }">
-++                  <div class="w-full bg-emerald-500" :style="{ height: `${(item.bytesStream / (item.bytesTotal || 1)) * 100}%` }" />
-++                  <div class="w-full bg-purple-500" :style="{ height: `${(item.bytesDownload / (item.bytesTotal || 1)) * 100}%` }" />
-++                  <div class="w-full bg-blue-500" :style="{ height: `${(item.bytesOther / (item.bytesTotal || 1)) * 100}%` }" />
-++                </div>
-++
-++                <!-- X Axis Date Label -->
-++                <p class="text-[10px] text-gray-400 mt-2 truncate w-full text-center">
-++                  {{ formatShortDate(item.date) }}
-++                </p>
-++              </div>
-++            </div>
-++          </div>
-++        </div>
-++      </div>
-++
-++      <!-- User Breakdown Table -->
-++      <div>
-++        <div class="flex items-center justify-between mb-3">
-++          <h2 class="text-lg font-semibold flex items-center">
-++            <span class="material-symbols mr-2 text-primary">group</span>
-++            Data Usage Breakdown by User
-++          </h2>
-++          <p class="text-xs text-gray-400">{{ userBreakdown.length }} Users</p>
-++        </div>
-++
-++        <div class="bg-black/20 rounded-lg border border-white/5 overflow-hidden">
-++          <table class="w-full text-left text-sm">
-++            <thead class="bg-white/5 text-xs uppercase text-gray-400 font-semibold border-b border-white/10">
-++              <tr>
-++                <th class="py-3 px-4">User</th>
-++                <th class="py-3 px-4 text-right">Internet (WAN)</th>
-++                <th class="py-3 px-4 text-right">Local (LAN)</th>
-++                <th class="py-3 px-4 text-right hidden sm:table-cell">Streaming</th>
-++                <th class="py-3 px-4 text-right hidden sm:table-cell">Downloads</th>
-++                <th class="py-3 px-4 text-right font-bold text-white">Total</th>
-++                <th class="py-3 px-4 w-36">% of Total</th>
-++              </tr>
-++            </thead>
-++            <tbody class="divide-y divide-white/5">
-++              <tr v-if="!userBreakdown.length">
-++                <td colspan="7" class="text-center py-8 text-gray-400 text-sm">No user data recorded for this time frame.</td>
-++              </tr>
-++              <tr v-for="user in userBreakdown" :key="user.userId" class="hover:bg-white/5 transition-colors">
-++                <td class="py-3 px-4">
-++                  <div class="flex items-center">
-++                    <span class="material-symbols text-xl mr-2" :class="user.userId === 'anonymous' ? 'text-gray-400' : 'text-primary'">
-++                      {{ user.userId === 'anonymous' ? 'public' : 'person' }}
-++                    </span>
-++                    <div>
-++                      <p class="font-medium text-white">{{ user.username }}</p>
-++                      <p v-if="user.userId !== 'anonymous'" class="text-[10px] text-gray-500 font-mono">{{ user.userId }}</p>
-++                    </div>
-++                  </div>
-++                </td>
-++                <td class="py-3 px-4 text-right font-mono text-sky-400 font-medium">{{ $bytesPretty(user.bytesInternet) }}</td>
-++                <td class="py-3 px-4 text-right font-mono text-amber-300 font-medium">{{ $bytesPretty(user.bytesLocal) }}</td>
-++                <td class="py-3 px-4 text-right font-mono text-emerald-400 hidden sm:table-cell">{{ $bytesPretty(user.bytesStream) }}</td>
-++                <td class="py-3 px-4 text-right font-mono text-purple-400 hidden sm:table-cell">{{ $bytesPretty(user.bytesDownload) }}</td>
-++                <td class="py-3 px-4 text-right font-mono font-bold text-white">{{ $bytesPretty(user.bytesTotal) }}</td>
-++                <td class="py-3 px-4">
-++                  <div class="flex items-center gap-2">
-++                    <div class="grow bg-white/10 rounded-full h-2 overflow-hidden">
-++                      <div class="bg-primary h-full rounded-full transition-all duration-300" :style="{ width: `${user.percentOfTotal}%` }" />
-++                    </div>
-++                    <span class="text-xs font-mono w-10 text-right text-gray-300">{{ user.percentOfTotal }}%</span>
-++                  </div>
-++                </td>
-++              </tr>
-++            </tbody>
-++          </table>
-++        </div>
-++      </div>
-++    </app-settings-content>
-++
-++    <!-- Confirm Clear Stats Modal -->
-++    <prompt-dialog v-model="showConfirmClear" :width="500">
-++      <div class="px-6 py-6 rounded-lg bg-bg shadow-xl border border-white/10">
-++        <h2 class="text-lg font-semibold text-error mb-2 flex items-center">
-++          <span class="material-symbols mr-2">delete_forever</span>
-++          Clear All Bandwidth Records?
-++        </h2>
-++        <p class="text-sm text-gray-300 mb-6">This will permanently erase all accumulated bandwidth and data transfer statistics across all users. This action cannot be undone.</p>
-++        <div class="flex justify-end gap-3">
-++          <ui-btn color="bg-primary" @click="showConfirmClear = false">Cancel</ui-btn>
-++          <ui-btn color="bg-error" :loading="clearing" @click="clearStats">Yes, Clear Stats</ui-btn>
-++        </div>
-++      </div>
-++    </prompt-dialog>
-++  </div>
-++</template>
-++
-++<script>
-++export default {
-++  asyncData({ store, redirect }) {
-++    if (!store.getters['user/getIsAdminOrUp']) {
-++      redirect('/')
-++    }
-++  },
-++  data() {
-++    return {
-++      loading: false,
-++      clearing: false,
-++      showConfirmClear: false,
-++      selectedRange: 'last7Days',
-++      selectedTrafficType: 'all',
-++      selectedUserId: '',
-++      rangeOptions: [
-++        { label: 'Today', value: 'today' },
-++        { label: 'Last 7 Days', value: 'last7Days' },
-++        { label: 'Last 30 Days', value: 'last30Days' },
-++        { label: 'This Year', value: 'thisYear' },
-++        { label: 'All Time', value: 'all' }
-++      ],
-++      trafficTypeOptions: [
-++        { label: 'All Traffic', value: 'all', icon: 'traffic' },
-++        { label: 'Internet', value: 'internet', icon: 'public' },
-++        { label: 'Local LAN', value: 'local', icon: 'home' }
-++      ],
-++      summary: {
-++        today: { total: 0, stream: 0, download: 0, other: 0, local: 0, internet: 0, requests: 0 },
-++        last7Days: { total: 0, stream: 0, download: 0, other: 0, local: 0, internet: 0, requests: 0 },
-++        thisMonth: { total: 0, stream: 0, download: 0, other: 0, local: 0, internet: 0, requests: 0 },
-++        thisYear: { total: 0, stream: 0, download: 0, other: 0, local: 0, internet: 0, requests: 0 },
-++        allTime: { total: 0, stream: 0, download: 0, other: 0, local: 0, internet: 0, requests: 0 }
-++      },
-++      dailyChartData: [],
-++      userBreakdown: [],
-++      filteredTotalBytes: 0,
-++      allUsers: []
-++    }
-++  },
-++  computed: {
-++    serverSettings() {
-++      return this.$store.state.serverSettings || {}
-++    },
-++    isTrackingEnabled() {
-++      return !!this.serverSettings.enableBandwidthTracking
-++    },
-++    userDropdownItems() {
-++      const items = [{ text: 'All Users', value: '' }]
-++      if (this.allUsers?.length) {
-++        this.allUsers.forEach((u) => {
-++          items.push({ text: u.username, value: u.id })
-++        })
-++      }
-++      items.push({ text: 'Anonymous / Public', value: 'anonymou
-\ No newline at end of file
 diff --git a/server/Database.js b/server/Database.js
-index 65c8d539..d371a145 100644
+index 65c8d539..2bbed9e2 100644
 --- a/server/Database.js
 +++ b/server/Database.js
-@@ -157,6 +157,11 @@ class Database {
+@@ -157,6 +157,16 @@ class Database {
      return this.models.device
    }
  
@@ -1119,14 +912,20 @@ index 65c8d539..d371a145 100644
 +    return this.models.bandwidthStat
 +  }
 +
++  /** @type {typeof import('./models/BandwidthItemStat')} */
++  get bandwidthItemStatModel() {
++    return this.models.bandwidthItemStat
++  }
++
    /**
     * Check if db file exists
     * @returns {boolean}
-@@ -340,6 +345,7 @@ class Database {
+@@ -340,6 +350,8 @@ class Database {
      require('./models/Setting').init(this.sequelize)
      require('./models/CustomMetadataProvider').init(this.sequelize)
      require('./models/MediaItemShare').init(this.sequelize)
 +    require('./models/BandwidthStat').init(this.sequelize)
++    require('./models/BandwidthItemStat').init(this.sequelize)
  
      return this.sequelize.sync({ force, alter: false })
    }
@@ -1187,10 +986,10 @@ index 5fac001d..37822d2e 100644
      Logger.info('[Server] Watcher Closed')
      await SocketAuthority.close()
 diff --git a/server/controllers/StatsController.js b/server/controllers/StatsController.js
-index 32ed1973..47ad9ce5 100644
+index 32ed1973..fd05e8e1 100644
 --- a/server/controllers/StatsController.js
 +++ b/server/controllers/StatsController.js
-@@ -57,6 +57,55 @@ class StatsController {
+@@ -57,6 +57,57 @@ class StatsController {
      res.json(stats)
    }
  
@@ -1212,7 +1011,9 @@ index 32ed1973..47ad9ce5 100644
 +        range: req.query.range,
 +        userId: req.query.userId,
 +        startDate: req.query.startDate,
-+        endDate: req.query.endDate
++        endDate: req.query.endDate,
++        trafficType: req.query.trafficType,
++        date: req.query.date
 +      })
 +      res.json(stats)
 +    } catch (err) {
@@ -1248,10 +1049,11 @@ index 32ed1973..47ad9ce5 100644
     * @param {RequestWithUser} req
 diff --git a/server/managers/BandwidthManager.js b/server/managers/BandwidthManager.js
 new file mode 100644
-index 00000000..e4a72b4e
+index 00000000..dde61686
 --- /dev/null
 +++ b/server/managers/BandwidthManager.js
-@@ -0,0 +1,490 @@
+@@ -0,0 +1,767 @@
++const { Op } = require('sequelize')
 +const Database = require('../Database')
 +const Logger = require('../Logger')
 +const dateAndTime = require('../libs/dateAndTime')
@@ -1289,6 +1091,10 @@ index 00000000..e4a72b4e
 +    this.server = server
 +    /** @type {Map<string, { userId: string, date: string, bytesStream: number, bytesDownload: number, bytesOther: number, bytesTotal: number, bytesLocal: number, bytesInternet: number, requests: number }>} */
 +    this.buffer = new Map()
++    /** @type {Map<string, { userId: string, date: string, libraryItemId: string, itemName: string, category: string, bytesLocal: number, bytesInternet: number, bytesTotal: number, requests: number }>} */
++    this.itemBuffer = new Map()
++    /** @type {Map<string, string>} */
++    this.itemTitleCache = new Map()
 +    this.flushInterval = null
 +  }
 +
@@ -1297,6 +1103,15 @@ index 00000000..e4a72b4e
 +
 +    // Ensure bytesLocal and bytesInternet columns exist in SQLite if table was created before
 +    await this.ensureColumns()
++
++    // Ensure bandwidthItemStats table exists
++    if (Database.bandwidthItemStatModel) {
++      try {
++        await Database.bandwidthItemStatModel.sync()
++      } catch (err) {
++        Logger.error('[BandwidthManager] Error syncing bandwidthItemStats table:', err)
++      }
++    }
 +
 +    // Flush buffered stats to database every 60 seconds
 +    this.flushInterval = setInterval(() => {
@@ -1330,14 +1145,106 @@ index 00000000..e4a72b4e
 +  }
 +
 +  /**
++   * Extract libraryItemId, itemName, and associated userId from request
++   *
++   * @param {import('express').Request} req
++   * @returns {Promise<{ libraryItemId: string, itemName: string, userId?: string }>}
++   */
++  async extractItemInfo(req) {
++    if (!req) return { libraryItemId: 'general', itemName: 'General / Web App' }
++
++    // 1. Attached libraryItem from LibraryItemController middleware
++    if (req.libraryItem) {
++      const id = req.libraryItem.id
++      const title = req.libraryItem.media?.title || req.libraryItem.title || 'Unknown Title'
++      if (id && title) {
++        this.itemTitleCache.set(id, title)
++        return { libraryItemId: id, itemName: title }
++      }
++    }
++
++    const path = req.path || ''
++    const url = req.originalUrl || req.url || ''
++
++    // 2. Playback Session Track Streaming: /session/:id/track/:index or /public/session/:id/track/:index
++    const sessionMatch = path.match(/\/session\/([^/]+)\/track/)
++    if (sessionMatch) {
++      const sessionId = sessionMatch[1]
++      const session = this.server?.playbackSessionManager?.getSession(sessionId)
++      if (session) {
++        const id = session.libraryItemId || sessionId
++        const title = session.displayTitle || 'Audio Track'
++        this.itemTitleCache.set(id, title)
++        return { libraryItemId: id, itemName: title, userId: session.userId }
++      }
++    }
++
++    // 3. HLS Streaming: /hls/:stream/:file
++    if (path.startsWith('/hls/')) {
++      const parts = path.split('/')
++      const streamId = parts[2]
++      if (streamId) {
++        const session = this.server?.playbackSessionManager?.getSession(streamId)
++        if (session) {
++          const id = session.libraryItemId || streamId
++          const title = session.displayTitle || 'HLS Stream'
++          this.itemTitleCache.set(id, title)
++          return { libraryItemId: id, itemName: title, userId: session.userId }
++        }
++      }
++    }
++
++    // 4. Library Item Routes: /api/items/:id/...
++    const itemMatch = url.match(/\/api\/items\/([^/?#]+)/)
++    if (itemMatch) {
++      const itemId = itemMatch[1]
++      if (this.itemTitleCache.has(itemId)) {
++        return { libraryItemId: itemId, itemName: this.itemTitleCache.get(itemId) }
++      }
++      try {
++        if (Database.libraryItemModel) {
++          const item = await Database.libraryItemModel.findByPk(itemId, {
++            attributes: ['id', 'mediaType'],
++            include: [
++              { model: Database.bookModel, attributes: ['title'] },
++              { model: Database.podcastModel, attributes: ['title'] }
++            ]
++          })
++          if (item) {
++            const title = item.media?.title || item.book?.title || item.podcast?.title || 'Library Item'
++            this.itemTitleCache.set(itemId, title)
++            return { libraryItemId: itemId, itemName: title }
++          }
++        }
++      } catch (err) {
++        Logger.debug(`[BandwidthManager] Failed to resolve item title for ${itemId}: ${err.message}`)
++      }
++      return { libraryItemId: itemId, itemName: 'Item ' + itemId.substring(0, 8) }
++    }
++
++    // 5. Shared media links: /share/:slug or /public/share/:slug
++    if (path.includes('/share/')) {
++      return { libraryItemId: 'shared', itemName: 'Shared Media Link' }
++    }
++
++    // 6. Backups
++    if (path.includes('/backups/')) {
++      return { libraryItemId: 'backup', itemName: 'Server Backup' }
++    }
++
++    return { libraryItemId: 'general', itemName: 'General / Web App' }
++  }
++
++  /**
 +   * Record data transfer into in-memory buffer
 +   *
 +   * @param {string|null} userId
 +   * @param {'stream'|'download'|'other'} category
 +   * @param {number} bytes
 +   * @param {boolean} isLocal
++   * @param {{ libraryItemId?: string, itemName?: string }|null} [itemInfo]
 +   */
-+  record(userId, category, bytes, isLocal = false) {
++  record(userId, category, bytes, isLocal = false, itemInfo = null) {
 +    if (!global.ServerSettings?.enableBandwidthTracking) return
 +    if (!bytes || bytes <= 0 || isNaN(bytes)) return
 +
@@ -1377,6 +1284,39 @@ index 00000000..e4a72b4e
 +
 +    entry.bytesTotal += bytes
 +    entry.requests += 1
++
++    // Also record per-item statistics
++    const libraryItemId = itemInfo?.libraryItemId || 'general'
++    const itemName = itemInfo?.itemName || (libraryItemId === 'general' ? 'General / Web App' : 'Item ' + libraryItemId.substring(0, 8))
++    const itemKey = `${uid}_${date}_${libraryItemId}_${category}`
++
++    let itemEntry = this.itemBuffer.get(itemKey)
++    if (!itemEntry) {
++      itemEntry = {
++        userId: uid,
++        date: date,
++        libraryItemId: libraryItemId,
++        itemName: itemName,
++        category: category,
++        bytesLocal: 0,
++        bytesInternet: 0,
++        bytesTotal: 0,
++        requests: 0
++      }
++      this.itemBuffer.set(itemKey, itemEntry)
++    }
++
++    if (itemName && itemEntry.itemName === 'General / Web App' && itemName !== 'General / Web App') {
++      itemEntry.itemName = itemName
++    }
++
++    if (isLocal) {
++      itemEntry.bytesLocal += bytes
++    } else {
++      itemEntry.bytesInternet += bytes
++    }
++    itemEntry.bytesTotal += bytes
++    itemEntry.requests += 1
 +  }
 +
 +  /**
@@ -1432,7 +1372,7 @@ index 00000000..e4a72b4e
 +    const clientIp = requestIp.getClientIp(req)
 +    const isLocal = isLocalIp(clientIp)
 +
-+    const onResponseEnd = () => {
++    const onResponseEnd = async () => {
 +      if (recorded) return
 +      recorded = true
 +
@@ -1449,23 +1389,16 @@ index 00000000..e4a72b4e
 +
 +      if (bytesSent <= 0) return
 +
++      const itemInfo = await this.extractItemInfo(req)
++
 +      // Determine user attribution
 +      let userId = req.user?.id || null
-+
-+      // For HLS streams, lookup userId via active stream / session
-+      if (!userId && req.path?.startsWith('/hls/')) {
-+        const parts = req.path.split('/')
-+        const streamId = parts[2]
-+        if (streamId && this.server?.playbackSessionManager) {
-+          const session = this.server.playbackSessionManager.getSession(streamId)
-+          if (session?.userId) {
-+            userId = session.userId
-+          }
-+        }
++      if (!userId && itemInfo.userId) {
++        userId = itemInfo.userId
 +      }
 +
 +      const category = this.categorizeRequest(req)
-+      this.record(userId, category, bytesSent, isLocal)
++      this.record(userId, category, bytesSent, isLocal, itemInfo)
 +    }
 +
 +    res.on('finish', onResponseEnd)
@@ -1478,14 +1411,16 @@ index 00000000..e4a72b4e
 +   * Flush in-memory buffer into SQLite database using an atomic UPSERT transaction
 +   */
 +  async flush() {
-+    if (this.buffer.size === 0) return
++    if (this.buffer.size === 0 && this.itemBuffer.size === 0) return
 +    if (!Database.sequelize) return
 +
 +    const currentBuffer = this.buffer
++    const currentItemBuffer = this.itemBuffer
 +    this.buffer = new Map()
++    this.itemBuffer = new Map()
 +
 +    const entries = Array.from(currentBuffer.values())
-+    if (!entries.length) return
++    const itemEntries = Array.from(currentItemBuffer.values())
 +
 +    try {
 +      await Database.sequelize.transaction(async (t) => {
@@ -1504,6 +1439,24 @@ index 00000000..e4a72b4e
 +               updatedAt = datetime('now');`,
 +            {
 +              replacements: entry,
++              transaction: t
++            }
++          )
++        }
++
++        for (const itemEntry of itemEntries) {
++          await Database.sequelize.query(
++            `INSERT INTO bandwidthItemStats (userId, date, libraryItemId, itemName, category, bytesLocal, bytesInternet, bytesTotal, requests, createdAt, updatedAt)
++             VALUES (:userId, :date, :libraryItemId, :itemName, :category, :bytesLocal, :bytesInternet, :bytesTotal, :requests, datetime('now'), datetime('now'))
++             ON CONFLICT(userId, date, libraryItemId, category) DO UPDATE SET
++               bytesLocal = bytesLocal + excluded.bytesLocal,
++               bytesInternet = bytesInternet + excluded.bytesInternet,
++               bytesTotal = bytesTotal + excluded.bytesTotal,
++               requests = requests + excluded.requests,
++               itemName = COALESCE(excluded.itemName, bandwidthItemStats.itemName),
++               updatedAt = datetime('now');`,
++            {
++              replacements: itemEntry,
 +              transaction: t
 +            }
 +          )
@@ -1527,6 +1480,19 @@ index 00000000..e4a72b4e
 +          this.buffer.set(key, entry)
 +        }
 +      }
++
++      for (const itemEntry of itemEntries) {
++        const itemKey = `${itemEntry.userId}_${itemEntry.date}_${itemEntry.libraryItemId}_${itemEntry.category}`
++        const existingItem = this.itemBuffer.get(itemKey)
++        if (existingItem) {
++          existingItem.bytesLocal += itemEntry.bytesLocal
++          existingItem.bytesInternet += itemEntry.bytesInternet
++          existingItem.bytesTotal += itemEntry.bytesTotal
++          existingItem.requests += itemEntry.requests
++        } else {
++          this.itemBuffer.set(itemKey, itemEntry)
++        }
++      }
 +    }
 +  }
 +
@@ -1539,6 +1505,7 @@ index 00000000..e4a72b4e
 +   * @param {string} [options.startDate]
 +   * @param {string} [options.endDate]
 +   * @param {string} [options.trafficType] 'all' | 'internet' | 'local'
++   * @param {string} [options.date]
 +   */
 +  async getStats(options = {}) {
 +    // Flush current buffer first for live, up-to-the-second stats
@@ -1657,7 +1624,8 @@ index 00000000..e4a72b4e
 +          bytesTotal: 0,
 +          bytesLocal: 0,
 +          bytesInternet: 0,
-+          requests: 0
++          requests: 0,
++          isLegacy: false
 +        }
 +        dailyMap.set(rec.date, dailyEntry)
 +      }
@@ -1668,6 +1636,10 @@ index 00000000..e4a72b4e
 +      dailyEntry.bytesLocal += Number(rec.bytesLocal || 0)
 +      dailyEntry.bytesInternet += Number(rec.bytesInternet || 0)
 +      dailyEntry.requests += Number(rec.requests || 0)
++
++      if (dailyEntry.bytesTotal > 0 && dailyEntry.bytesLocal === 0 && dailyEntry.bytesInternet === 0) {
++        dailyEntry.isLegacy = true
++      }
 +    }
 +
 +    const daily = Array.from(dailyMap.values()).sort((a, b) => a.date.localeCompare(b.date))
@@ -1707,15 +1679,115 @@ index 00000000..e4a72b4e
 +      userEntry.bytesLocal += Number(rec.bytesLocal || 0)
 +      userEntry.bytesInternet += Number(rec.bytesInternet || 0)
 +      userEntry.requests += Number(rec.requests || 0)
-+      rangeTotalBytes += Number(rec.bytesTotal || 0)
++
++      if (options.trafficType === 'internet') {
++        rangeTotalBytes += Number(rec.bytesInternet || 0)
++      } else if (options.trafficType === 'local') {
++        rangeTotalBytes += Number(rec.bytesLocal || 0)
++      } else {
++        rangeTotalBytes += Number(rec.bytesTotal || 0)
++      }
 +    }
 +
 +    const userBreakdown = Array.from(userMap.values())
 +      .map((u) => {
-+        u.percentOfTotal = rangeTotalBytes > 0 ? Number(((u.bytesTotal / rangeTotalBytes) * 100).toFixed(1)) : 0
++        let userTrafficBytes = u.bytesTotal
++        if (options.trafficType === 'internet') userTrafficBytes = u.bytesInternet
++        else if (options.trafficType === 'local') userTrafficBytes = u.bytesLocal
++
++        u.percentOfTotal = rangeTotalBytes > 0 ? Number(((userTrafficBytes / rangeTotalBytes) * 100).toFixed(1)) : 0
 +        return u
 +      })
-+      .sort((a, b) => b.bytesTotal - a.bytesTotal)
++      .sort((a, b) => {
++        if (options.trafficType === 'internet') return b.bytesInternet - a.bytesInternet
++        if (options.trafficType === 'local') return b.bytesLocal - a.bytesLocal
++        return b.bytesTotal - a.bytesTotal
++      })
++
++    // Query Item Breakdown
++    let itemBreakdown = []
++    if (Database.bandwidthItemStatModel) {
++      const itemWhere = {}
++      if (options.userId) {
++        itemWhere.userId = options.userId
++      }
++      // If a specific single date is queried (e.g. clicking a date bar on the chart)
++      if (options.date) {
++        itemWhere.date = options.date
++      } else if (filterStart && filterEnd) {
++        if (filterStart === filterEnd) {
++          itemWhere.date = filterStart
++        } else {
++          itemWhere.date = { [Op.between]: [filterStart, filterEnd] }
++        }
++      } else if (filterStart) {
++        itemWhere.date = { [Op.gte]: filterStart }
++      } else if (filterEnd) {
++        itemWhere.date = { [Op.lte]: filterEnd }
++      }
++
++      const itemRecords = await Database.bandwidthItemStatModel.findAll({
++        where: itemWhere
++      })
++
++      const aggregatedItems = new Map()
++      let itemTotalBytes = 0
++
++      for (const rec of itemRecords) {
++        let it = aggregatedItems.get(rec.libraryItemId)
++        if (!it) {
++          it = {
++            libraryItemId: rec.libraryItemId,
++            itemName: rec.itemName || (rec.libraryItemId === 'general' ? 'General / Web App' : 'Unknown Item'),
++            category: rec.category,
++            bytesLocal: 0,
++            bytesInternet: 0,
++            bytesTotal: 0,
++            bytesStream: 0,
++            bytesDownload: 0,
++            bytesOther: 0,
++            requests: 0,
++            percentOfTotal: 0
++          }
++          aggregatedItems.set(rec.libraryItemId, it)
++        }
++        it.bytesLocal += Number(rec.bytesLocal || 0)
++        it.bytesInternet += Number(rec.bytesInternet || 0)
++        it.bytesTotal += Number(rec.bytesTotal || 0)
++        it.requests += Number(rec.requests || 0)
++
++        if (rec.category === 'stream') it.bytesStream += Number(rec.bytesTotal || 0)
++        else if (rec.category === 'download') it.bytesDownload += Number(rec.bytesTotal || 0)
++        else it.bytesOther += Number(rec.bytesTotal || 0)
++
++        if (rec.itemName && (!it.itemName || it.itemName.startsWith('Item '))) {
++          it.itemName = rec.itemName
++        }
++
++        if (options.trafficType === 'internet') {
++          itemTotalBytes += Number(rec.bytesInternet || 0)
++        } else if (options.trafficType === 'local') {
++          itemTotalBytes += Number(rec.bytesLocal || 0)
++        } else {
++          itemTotalBytes += Number(rec.bytesTotal || 0)
++        }
++      }
++
++      itemBreakdown = Array.from(aggregatedItems.values())
++        .map((it) => {
++          let itTrafficBytes = it.bytesTotal
++          if (options.trafficType === 'internet') itTrafficBytes = it.bytesInternet
++          else if (options.trafficType === 'local') itTrafficBytes = it.bytesLocal
++
++          it.percentOfTotal = itemTotalBytes > 0 ? Number(((itTrafficBytes / itemTotalBytes) * 100).toFixed(1)) : 0
++          return it
++        })
++        .sort((a, b) => {
++          if (options.trafficType === 'internet') return b.bytesInternet - a.bytesInternet
++          if (options.trafficType === 'local') return b.bytesLocal - a.bytesLocal
++          return b.bytesTotal - a.bytesTotal
++        })
++    }
 +
 +    return {
 +      isEnabled: !!global.ServerSettings?.enableBandwidthTracking,
@@ -1723,9 +1795,11 @@ index 00000000..e4a72b4e
 +      trafficType: options.trafficType || 'all',
 +      startDate: filterStart,
 +      endDate: filterEnd,
++      selectedDate: options.date || null,
 +      summary,
 +      daily,
 +      userBreakdown,
++      itemBreakdown,
 +      rangeTotalBytes
 +    }
 +  }
@@ -1735,13 +1809,128 @@ index 00000000..e4a72b4e
 +   */
 +  async clearStats() {
 +    this.buffer.clear()
++    this.itemBuffer.clear()
 +    await Database.bandwidthStatModel.destroy({ where: {}, truncate: true })
++    if (Database.bandwidthItemStatModel) {
++      await Database.bandwidthItemStatModel.destroy({ where: {}, truncate: true })
++    }
 +    Logger.info('[BandwidthManager] All bandwidth statistics cleared by admin')
 +    return true
 +  }
 +}
 +
 +module.exports = BandwidthManager
+diff --git a/server/models/BandwidthItemStat.js b/server/models/BandwidthItemStat.js
+new file mode 100644
+index 00000000..d4533b47
+--- /dev/null
++++ b/server/models/BandwidthItemStat.js
+@@ -0,0 +1,105 @@
++const { DataTypes, Model } = require('sequelize')
++
++class BandwidthItemStat extends Model {
++  constructor(values, options) {
++    super(values, options)
++
++    /** @type {number} */
++    this.id
++    /** @type {string} */
++    this.userId
++    /** @type {string} */
++    this.date
++    /** @type {string} */
++    this.libraryItemId
++    /** @type {string} */
++    this.itemName
++    /** @type {string} */
++    this.category
++    /** @type {number} */
++    this.bytesLocal
++    /** @type {number} */
++    this.bytesInternet
++    /** @type {number} */
++    this.bytesTotal
++    /** @type {number} */
++    this.requests
++    /** @type {Date} */
++    this.createdAt
++    /** @type {Date} */
++    this.updatedAt
++  }
++
++  /**
++   * Initialize model
++   * @param {import('../Database').sequelize} sequelize
++   */
++  static init(sequelize) {
++    super.init(
++      {
++        id: {
++          type: DataTypes.INTEGER,
++          primaryKey: true,
++          autoIncrement: true
++        },
++        userId: {
++          type: DataTypes.STRING,
++          allowNull: false,
++          defaultValue: 'anonymous'
++        },
++        date: {
++          type: DataTypes.STRING,
++          allowNull: false
++        },
++        libraryItemId: {
++          type: DataTypes.STRING,
++          allowNull: false,
++          defaultValue: 'general'
++        },
++        itemName: {
++          type: DataTypes.STRING,
++          allowNull: true
++        },
++        category: {
++          type: DataTypes.STRING,
++          allowNull: false,
++          defaultValue: 'other'
++        },
++        bytesLocal: {
++          type: DataTypes.BIGINT,
++          defaultValue: 0
++        },
++        bytesInternet: {
++          type: DataTypes.BIGINT,
++          defaultValue: 0
++        },
++        bytesTotal: {
++          type: DataTypes.BIGINT,
++          defaultValue: 0
++        },
++        requests: {
++          type: DataTypes.INTEGER,
++          defaultValue: 0
++        }
++      },
++      {
++        sequelize,
++        modelName: 'bandwidthItemStat',
++        indexes: [
++          {
++            unique: true,
++            fields: ['userId', 'date', 'libraryItemId', 'category']
++          },
++          {
++            fields: ['userId', 'date']
++          },
++          {
++            fields: ['date']
++          }
++        ]
++      }
++    )
++  }
++}
++
++module.exports = BandwidthItemStat
 diff --git a/server/models/BandwidthStat.js b/server/models/BandwidthStat.js
 new file mode 100644
 index 00000000..fddf8a1c

@@ -75,7 +75,9 @@ class StatsController {
         range: req.query.range,
         userId: req.query.userId,
         startDate: req.query.startDate,
-        endDate: req.query.endDate
+        endDate: req.query.endDate,
+        trafficType: req.query.trafficType,
+        date: req.query.date
       })
       res.json(stats)
     } catch (err) {

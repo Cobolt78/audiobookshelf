@@ -42,18 +42,30 @@ This document tracks all custom features, fixes, and architectural modifications
   6. **Local Network vs Internet (LAN / WAN) Tracking**: Automatically detects private RFC 1918 subnets (`192.168.x.x`, `10.x.x.x`, `172.16.x.x`, loopback, IPv6 local) vs external remote WAN IPs (including Cloudflare and reverse proxy headers) to distinguish data leaving the home internet from local Wi-Fi traffic.
   7. **User Profile Integration (`/config/users/:id`)**: Displays the user's total data transferred alongside their total listening time.
 
+   8. **Book & Media Item Activity Breakdown**:
+      - Added `BandwidthItemStat` model and `bandwidthItemStats` table tracking per-user, per-day, and per-book egress (`libraryItemId`, `itemName`, `category`, `bytesLocal`, `bytesInternet`, `bytesTotal`, `requests`).
+      - Identifies titles and items from `/api/items/:id/...`, active playback sessions (`/public/session/:id/track/:index`), and HLS streams (`/hls/:stream/:file`) with in-memory caching.
+      - Displays dedicated "Book & Media Activity Breakdown" table when a user is selected or date is filtered.
+   9. **Interactive Date Bar Filtering & Tooltip Clarity**:
+      - Clicking any bar in the timeline chart filters stats and book activity specifically to that single date, with a one-click "✕ Clear Date Filter" button.
+      - Fixed tooltips and summary metrics to dynamically reflect the selected traffic filter (All, Internet WAN, or Local LAN) with explicit notices for historical data recorded prior to LAN/WAN separation.
+   10. **Streamlined Navigation & Clickable Users**:
+      - Clicking any user in the "Data Usage Breakdown by User" table immediately selects and navigates to that user's detailed view.
+      - Added a prominent "Back to All Users" button in the top toolbar and above the breakdown tables.
+
 ### Modified Files:
-* `server/models/BandwidthStat.js` (New Sequelize model for `bandwidthStats` table)
-* `server/managers/BandwidthManager.js` (New manager for measurement, in-memory buffering, flushing, and querying)
-* `server/Database.js` (Registered `BandwidthStat` model in `buildModels` and added `bandwidthStatModel` getter)
-* `server/Server.js` (Instantiated and mounted `BandwidthManager` middleware; flushed on stop)
+* `server/models/BandwidthStat.js` (Sequelize model for daily user bandwidth stats)
+* `server/models/BandwidthItemStat.js` (Sequelize model for per-item and book bandwidth stats)
+* `server/managers/BandwidthManager.js` (In-memory buffering, request categorization, session attribution, and stats querying)
+* `server/Database.js` (Registered BandwidthStat and BandwidthItemStat models and schema sync)
+* `server/Server.js` (Global middleware hook and shutdown flush for BandwidthManager)
 * `server/objects/settings/ServerSettings.js` (Added `enableBandwidthTracking` setting, patchable key, and serialization)
-* `server/controllers/StatsController.js` (Added `getBandwidthStats` and `clearBandwidthStats` endpoints)
+* `server/controllers/StatsController.js` (Added `getBandwidthStats` and `clearBandwidthStats` endpoints with trafficType & date filtering)
 * `server/routers/ApiRouter.js` (Mounted `/stats/bandwidth` GET and DELETE routes)
 * `client/pages/config/index.vue` (Added "Track Bandwidth & Data Usage" toggle switch under General Settings)
 * `client/components/app/ConfigSideNav.vue` (Added "Bandwidth Stats" navigation link)
 * `client/pages/config.vue` (Mapped bandwidth page route title)
-* `client/pages/config/bandwidth.vue` (New admin Bandwidth Stats dashboard page)
+* `client/pages/config/bandwidth.vue` (Bandwidth dashboard with item breakdown, clickable users, back button, date bar filtering, and adaptive tooltips)
 * `client/pages/config/users/_id/index.vue` (Added Data Transferred stat to user profile)
 
 ---
@@ -87,16 +99,17 @@ git diff v2.37.1 > custom_changes.patch
 | File Path | Description |
 | :--- | :--- |
 | `server/utils/queries/libraryItemsBookFilters.js` | Fixed series discovery filtering & removed single-item limit |
-| `server/models/BandwidthStat.js` | Sequelize model and table definition for bandwidth stats |
-| `server/managers/BandwidthManager.js` | In-memory buffering, request categorization, and stats querying |
-| `server/Database.js` | Registered BandwidthStat model and schema sync |
+| `server/models/BandwidthStat.js` | Sequelize model and table definition for user bandwidth stats |
+| `server/models/BandwidthItemStat.js` | Sequelize model and table definition for per-item/book bandwidth stats |
+| `server/managers/BandwidthManager.js` | In-memory buffering, request categorization, item extraction, and stats querying |
+| `server/Database.js` | Registered BandwidthStat & BandwidthItemStat models and schema sync |
 | `server/Server.js` | Global middleware hook and shutdown flush for BandwidthManager |
 | `server/objects/settings/ServerSettings.js` | `enableBandwidthTracking` toggle setting |
-| `server/controllers/StatsController.js` | REST controller methods for bandwidth stats |
+| `server/controllers/StatsController.js` | REST controller methods for bandwidth stats with trafficType and date params |
 | `server/routers/ApiRouter.js` | Route definitions for `/stats/bandwidth` |
 | `client/pages/config/index.vue` | UI toggle in Settings > General |
 | `client/components/app/ConfigSideNav.vue` | Sidebar navigation link to Bandwidth Stats |
 | `client/pages/config.vue` | Route title mapper |
-| `client/pages/config/bandwidth.vue` | Full responsive Bandwidth Stats dashboard |
+| `client/pages/config/bandwidth.vue` | Responsive Bandwidth Stats dashboard with item breakdown, clickable users, and date filters |
 | `client/pages/config/users/_id/index.vue` | Data transferred stat on user profile card |
 | `custom_changes.patch` | Unified Git diff against upstream `v2.37.1` |
