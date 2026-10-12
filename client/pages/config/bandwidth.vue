@@ -584,12 +584,22 @@
                   </div>
                 </td>
                 <td class="py-3 px-4 text-center">
-                  <span
-                    class="text-[10px] px-2 py-0.5 rounded-full font-semibold uppercase tracking-wider"
-                    :class="getCategoryBadgeClass(item.category)"
-                  >
-                    {{ item.category }}
-                  </span>
+                  <div class="inline-flex flex-col items-center">
+                    <span
+                      class="text-[10px] px-2 py-0.5 rounded-full font-semibold uppercase tracking-wider"
+                      :class="getCategoryBadgeClass(item.category)"
+                      :title="getActivityTooltip(item)"
+                    >
+                      {{ item.category }}
+                    </span>
+                    <span
+                      v-if="hasSecondaryActivity(item)"
+                      class="text-[9px] text-gray-400 font-mono mt-0.5 cursor-help"
+                      :title="getActivityTooltip(item)"
+                    >
+                      {{ getSecondaryActivityText(item) }}
+                    </span>
+                  </div>
                 </td>
                 <td class="py-3 px-4 text-right font-mono text-sky-400 font-medium">{{ $bytesPretty(item.bytesInternet) }}</td>
                 <td class="py-3 px-4 text-right font-mono text-amber-300 font-medium">{{ $bytesPretty(item.bytesLocal) }}</td>
@@ -957,6 +967,36 @@ export default {
       if (category === 'stream') return 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
       if (category === 'download') return 'bg-purple-500/20 text-purple-300 border border-purple-500/30'
       return 'bg-blue-500/20 text-blue-300 border border-blue-500/30'
+    },
+    hasSecondaryActivity(item) {
+      if (!item) return false
+      let count = 0
+      if ((item.bytesStream || 0) > 0) count++
+      if ((item.bytesDownload || 0) > 0) count++
+      if ((item.bytesOther || 0) > 0) count++
+      return count > 1
+    },
+    getSecondaryActivityText(item) {
+      if (!item) return ''
+      const parts = []
+      if (item.category !== 'stream' && (item.bytesStream || 0) > 0) {
+        parts.push(`+${this.$bytesPretty(item.bytesStream)} stream`)
+      }
+      if (item.category !== 'download' && (item.bytesDownload || 0) > 0) {
+        parts.push(`+${this.$bytesPretty(item.bytesDownload)} dl`)
+      }
+      if (item.category !== 'other' && (item.bytesOther || 0) > 0) {
+        parts.push(`+${this.$bytesPretty(item.bytesOther)} other`)
+      }
+      return parts.join(', ')
+    },
+    getActivityTooltip(item) {
+      if (!item) return ''
+      const parts = []
+      if ((item.bytesStream || 0) > 0) parts.push(`Streaming: ${this.$bytesPretty(item.bytesStream)}`)
+      if ((item.bytesDownload || 0) > 0) parts.push(`Downloads: ${this.$bytesPretty(item.bytesDownload)}`)
+      if ((item.bytesOther || 0) > 0) parts.push(`Other (Covers/Meta): ${this.$bytesPretty(item.bytesOther)}`)
+      return parts.join(' | ')
     },
     formatShortDate(dateStr) {
       if (!dateStr) return ''

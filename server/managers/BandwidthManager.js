@@ -870,9 +870,15 @@ class BandwidthManager {
         it.bytesTotal += Number(rec.bytesTotal || 0)
         it.requests += Number(rec.requests || 0)
 
-        if (rec.category === 'stream') it.bytesStream += Number(rec.bytesTotal || 0)
-        else if (rec.category === 'download') it.bytesDownload += Number(rec.bytesTotal || 0)
-        else it.bytesOther += Number(rec.bytesTotal || 0)
+        const catBytes = options.trafficType === 'internet'
+          ? Number(rec.bytesInternet || 0)
+          : options.trafficType === 'local'
+            ? Number(rec.bytesLocal || 0)
+            : Number(rec.bytesTotal || 0)
+
+        if (rec.category === 'stream') it.bytesStream += catBytes
+        else if (rec.category === 'download') it.bytesDownload += catBytes
+        else it.bytesOther += catBytes
 
         if (rec.itemName && (!it.itemName || it.itemName.startsWith('Item '))) {
           it.itemName = rec.itemName
@@ -889,6 +895,16 @@ class BandwidthManager {
 
       itemBreakdown = Array.from(aggregatedItems.values())
         .map((it) => {
+          // Determine dominant category based on highest transfer volume
+          const maxBytes = Math.max(it.bytesStream || 0, it.bytesDownload || 0, it.bytesOther || 0)
+          if (maxBytes === (it.bytesStream || 0) && (it.bytesStream || 0) > 0) {
+            it.category = 'stream'
+          } else if (maxBytes === (it.bytesDownload || 0) && (it.bytesDownload || 0) > 0) {
+            it.category = 'download'
+          } else {
+            it.category = 'other'
+          }
+
           let itTrafficBytes = it.bytesTotal
           if (options.trafficType === 'internet') itTrafficBytes = it.bytesInternet
           else if (options.trafficType === 'local') itTrafficBytes = it.bytesLocal

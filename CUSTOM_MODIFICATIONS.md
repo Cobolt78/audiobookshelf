@@ -64,6 +64,10 @@ This document tracks all custom features, fixes, and architectural modifications
       - **UI Contrast & Tooltip Fixes**:
         - Anchored timeline and waveform tooltips cleanly at the top of the chart container to prevent popup cut-offs.
         - Improved text contrast on interactive elements (e.g. 'Click to filter' highlighted with `text-emerald-400 bg-emerald-500/15`).
+   12. **Accurate Item Activity Categorization & Multi-Activity Attribution**:
+       - Fixed an aggregation issue where an item's initial minor request (e.g. 27 KB cover/metadata) caused subsequent large transfers (e.g. 317 MB streaming playback) to retain the 'other' category tag.
+       - Aggregation now dynamically designates the primary activity (`stream`, `download`, or `other`) according to the highest transfer volume.
+       - Added secondary activity indicators (e.g. `+27.29 KB other`) with detailed breakdown tooltips on the Book & Media Activity table so administrators can clearly distinguish streaming playback from auxiliary cover art or metadata downloads.
 
 ### Modified Files:
 * `server/models/BandwidthStat.js` (Sequelize model for daily user bandwidth stats)

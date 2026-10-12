@@ -1,9 +1,9 @@
 diff --git a/CUSTOM_MODIFICATIONS.md b/CUSTOM_MODIFICATIONS.md
 new file mode 100644
-index 00000000..92abeeb4
+index 00000000..aa1ea609
 --- /dev/null
 +++ b/CUSTOM_MODIFICATIONS.md
-@@ -0,0 +1,131 @@
+@@ -0,0 +1,135 @@
 +# Audiobookshelf Custom Modifications (`v2.37.1-custom`)
 +
 +This document tracks all custom features, fixes, and architectural modifications made to Audiobookshelf.
@@ -70,6 +70,10 @@ index 00000000..92abeeb4
 +      - **UI Contrast & Tooltip Fixes**:
 +        - Anchored timeline and waveform tooltips cleanly at the top of the chart container to prevent popup cut-offs.
 +        - Improved text contrast on interactive elements (e.g. 'Click to filter' highlighted with `text-emerald-400 bg-emerald-500/15`).
++   12. **Accurate Item Activity Categorization & Multi-Activity Attribution**:
++       - Fixed an aggregation issue where an item's initial minor request (e.g. 27 KB cover/metadata) caused subsequent large transfers (e.g. 317 MB streaming playback) to retain the 'other' category tag.
++       - Aggregation now dynamically designates the primary activity (`stream`, `download`, or `other`) according to the highest transfer volume.
++       - Added secondary activity indicators (e.g. `+27.29 KB other`) with detailed breakdown tooltips on the Book & Media Activity table so administrators can clearly distinguish streaming playback from auxiliary cover art or metadata downloads.
 +
 +### Modified Files:
 +* `server/models/BandwidthStat.js` (Sequelize model for daily user bandwidth stats)
@@ -165,10 +169,10 @@ index c4fe2446..f42bc13d 100644
          else if (pageName === 'api-keys') return this.$strings.HeaderApiKeys
 diff --git a/client/pages/config/bandwidth.vue b/client/pages/config/bandwidth.vue
 new file mode 100644
-index 00000000..08b1a6bd
+index 00000000..aa855846
 --- /dev/null
 +++ b/client/pages/config/bandwidth.vue
-@@ -0,0 +1,1035 @@
+@@ -0,0 +1,1075 @@
 +<template>
 +  <div class="w-full">
 +    <!-- Notice if tracking is disabled -->
@@ -755,12 +759,22 @@ index 00000000..08b1a6bd
 +                  </div>
 +                </td>
 +                <td class="py-3 px-4 text-center">
-+                  <span
-+                    class="text-[10px] px-2 py-0.5 rounded-full font-semibold uppercase tracking-wider"
-+                    :class="getCategoryBadgeClass(item.category)"
-+                  >
-+                    {{ item.category }}
-+                  </span>
++                  <div class="inline-flex flex-col items-center">
++                    <span
++                      class="text-[10px] px-2 py-0.5 rounded-full font-semibold uppercase tracking-wider"
++                      :class="getCategoryBadgeClass(item.category)"
++                      :title="getActivityTooltip(item)"
++                    >
++                      {{ item.category }}
++                    </span>
++                    <span
++                      v-if="hasSecondaryActivity(item)"
++                      class="text-[9px] text-gray-400 font-mono mt-0.5 cursor-help"
++                      :title="getActivityTooltip(item)"
++                    >
++                      {{ getSecondaryActivityText(item) }}
++                    </span>
++                  </div>
 +                </td>
 +                <td class="py-3 px-4 text-right font-mono text-sky-400 font-medium">{{ $bytesPretty(item.bytesInternet) }}</td>
 +                <td class="py-3 px-4 text-right font-mono text-amber-300 font-medium">{{ $bytesPretty(item.bytesLocal) }}</td>
@@ -1129,6 +1143,36 @@ index 00000000..08b1a6bd
 +      if (category === 'download') return 'bg-purple-500/20 text-purple-300 border border-purple-500/30'
 +      return 'bg-blue-500/20 text-blue-300 border border-blue-500/30'
 +    },
++    hasSecondaryActivity(item) {
++      if (!item) return false
++      let count = 0
++      if ((item.bytesStream || 0) > 0) count++
++      if ((item.bytesDownload || 0) > 0) count++
++      if ((item.bytesOther || 0) > 0) count++
++      return count > 1
++    },
++    getSecondaryActivityText(item) {
++      if (!item) return ''
++      const parts = []
++      if (item.category !== 'stream' && (item.bytesStream || 0) > 0) {
++        parts.push(`+${this.$bytesPretty(item.bytesStream)} stream`)
++      }
++      if (item.category !== 'download' && (item.bytesDownload || 0) > 0) {
++        parts.push(`+${this.$bytesPretty(item.bytesDownload)} dl`)
++      }
++      if (item.category !== 'other' && (item.bytesOther || 0) > 0) {
++        parts.push(`+${this.$bytesPretty(item.bytesOther)} other`)
++      }
++      return parts.join(', ')
++    },
++    getActivityTooltip(item) {
++      if (!item) return ''
++      const parts = []
++      if ((item.bytesStream || 0) > 0) parts.push(`Streaming: ${this.$bytesPretty(item.bytesStream)}`)
++      if ((item.bytesDownload || 0) > 0) parts.push(`Downloads: ${this.$bytesPretty(item.bytesDownload)}`)
++      if ((item.bytesOther || 0) > 0) parts.push(`Other (Covers/Meta): ${this.$bytesPretty(item.bytesOther)}`)
++      return parts.join(' | ')
++    },
 +    formatShortDate(dateStr) {
 +      if (!dateStr) return ''
 +      const parts = dateStr.split('-')
@@ -1423,10 +1467,10 @@ index 32ed1973..fd05e8e1 100644
     * @param {RequestWithUser} req
 diff --git a/server/managers/BandwidthManager.js b/server/managers/BandwidthManager.js
 new file mode 100644
-index 00000000..608488a4
+index 00000000..68a0f959
 --- /dev/null
 +++ b/server/managers/BandwidthManager.js
-@@ -0,0 +1,1082 @@
+@@ -0,0 +1,1098 @@
 +const { Op } = require('sequelize')
 +const Database = require('../Database')
 +const Logger = require('../Logger')
@@ -2299,9 +2343,15 @@ index 00000000..608488a4
 +        it.bytesTotal += Number(rec.bytesTotal || 0)
 +        it.requests += Number(rec.requests || 0)
 +
-+        if (rec.category === 'stream') it.bytesStream += Number(rec.bytesTotal || 0)
-+        else if (rec.category === 'download') it.bytesDownload += Number(rec.bytesTotal || 0)
-+        else it.bytesOther += Number(rec.bytesTotal || 0)
++        const catBytes = options.trafficType === 'internet'
++          ? Number(rec.bytesInternet || 0)
++          : options.trafficType === 'local'
++            ? Number(rec.bytesLocal || 0)
++            : Number(rec.bytesTotal || 0)
++
++        if (rec.category === 'stream') it.bytesStream += catBytes
++        else if (rec.category === 'download') it.bytesDownload += catBytes
++        else it.bytesOther += catBytes
 +
 +        if (rec.itemName && (!it.itemName || it.itemName.startsWith('Item '))) {
 +          it.itemName = rec.itemName
@@ -2318,6 +2368,16 @@ index 00000000..608488a4
 +
 +      itemBreakdown = Array.from(aggregatedItems.values())
 +        .map((it) => {
++          // Determine dominant category based on highest transfer volume
++          const maxBytes = Math.max(it.bytesStream || 0, it.bytesDownload || 0, it.bytesOther || 0)
++          if (maxBytes === (it.bytesStream || 0) && (it.bytesStream || 0) > 0) {
++            it.category = 'stream'
++          } else if (maxBytes === (it.bytesDownload || 0) && (it.bytesDownload || 0) > 0) {
++            it.category = 'download'
++          } else {
++            it.category = 'other'
++          }
++
 +          let itTrafficBytes = it.bytesTotal
 +          if (options.trafficType === 'internet') itTrafficBytes = it.bytesInternet
 +          else if (options.trafficType === 'local') itTrafficBytes = it.bytesLocal
