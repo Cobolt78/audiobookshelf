@@ -1,7 +1,7 @@
 <template>
   <div id="page-wrapper" class="page p-2 md:p-6 overflow-y-auto relative" :class="streamLibraryItem ? 'streaming' : ''">
     <app-config-side-nav :is-open.sync="sideDrawerOpen" />
-    <div class="configContent" :class="`page-${currentPage}`">
+    <div class="configContent" :class="[`page-${currentPage}`, isWidePage ? 'configContentWide' : '']">
       <div v-show="isMobilePortrait" class="w-full pb-4 px-2 flex border-b border-white/10 mb-2 cursor-pointer" @click.stop.prevent="toggleShowMore">
         <span class="material-symbols text-2xl cursor-pointer">arrow_forward</span>
         <p class="pl-3 capitalize">{{ currentPage }}</p>
@@ -40,6 +40,9 @@ export default {
     },
     streamLibraryItem() {
       return this.$store.state.streamLibraryItem
+    },
+    isWidePage() {
+      return this.$route.name === 'config-bandwidth'
     },
     currentPage() {
       if (!this.$route.name) return this.$strings.HeaderSettings
@@ -83,13 +86,19 @@ export default {
   width: 900px;
   max-width: calc(100% - 176px);
 }
+.configContent.configContentWide {
+  margin-left: 176px;
+  width: auto;
+  max-width: none;
+}
 @media (max-width: 1240px) {
   .configContent {
     margin-left: 176px;
   }
 }
 @media (max-width: 640px) {
-  .configContent {
+  .configContent,
+  .configContent.configContentWide {
     margin-left: 0px;
     width: 100%;
     max-width: 100%;

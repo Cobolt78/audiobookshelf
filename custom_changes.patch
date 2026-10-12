@@ -1,9 +1,9 @@
 diff --git a/CUSTOM_MODIFICATIONS.md b/CUSTOM_MODIFICATIONS.md
 new file mode 100644
-index 00000000..aa1ea609
+index 00000000..e862026d
 --- /dev/null
 +++ b/CUSTOM_MODIFICATIONS.md
-@@ -0,0 +1,135 @@
+@@ -0,0 +1,138 @@
 +# Audiobookshelf Custom Modifications (`v2.37.1-custom`)
 +
 +This document tracks all custom features, fixes, and architectural modifications made to Audiobookshelf.
@@ -74,6 +74,9 @@ index 00000000..aa1ea609
 +       - Fixed an aggregation issue where an item's initial minor request (e.g. 27 KB cover/metadata) caused subsequent large transfers (e.g. 317 MB streaming playback) to retain the 'other' category tag.
 +       - Aggregation now dynamically designates the primary activity (`stream`, `download`, or `other`) according to the highest transfer volume.
 +       - Added secondary activity indicators (e.g. `+27.29 KB other`) with detailed breakdown tooltips on the Book & Media Activity table so administrators can clearly distinguish streaming playback from auxiliary cover art or metadata downloads.
++   13. **Expanded Full-Width Responsive Dashboard Layout**:
++       - Replaced the constrained 900px form wrapper with an expanded responsive layout for the Bandwidth Stats dashboard (`configContentWide`).
++       - Utilizes full available screen width to maximize horizontal resolution for the 48-hour 288-interval SVG waveform, evenly spaces the 5 KPI summary cards, and provides ample space for multi-column activity breakdown tables.
 +
 +### Modified Files:
 +* `server/models/BandwidthStat.js` (Sequelize model for daily user bandwidth stats)
@@ -135,7 +138,7 @@ index 00000000..aa1ea609
 +| `server/routers/ApiRouter.js` | Route definitions for `/stats/bandwidth` |
 +| `client/pages/config/index.vue` | UI toggle in Settings > General |
 +| `client/components/app/ConfigSideNav.vue` | Sidebar navigation link to Bandwidth Stats |
-+| `client/pages/config.vue` | Route title mapper |
++| `client/pages/config.vue` | Route title mapper & full-width layout for bandwidth dashboard |
 +| `client/pages/config/bandwidth.vue` | Responsive Bandwidth Stats dashboard with 48h SVG waveform, 24h hourly breakdown, item breakdown, clickable users, and date filters |
 +| `client/pages/config/users/_id/index.vue` | Data transferred stat on user profile card |
 +| `custom_changes.patch` | Unified Git diff against upstream `v2.37.1` |
@@ -156,10 +159,29 @@ index 32e7e694..aee46878 100644
            id: 'config-backups',
            title: this.$strings.HeaderBackups,
 diff --git a/client/pages/config.vue b/client/pages/config.vue
-index c4fe2446..f42bc13d 100644
+index c4fe2446..495ac2bf 100644
 --- a/client/pages/config.vue
 +++ b/client/pages/config.vue
-@@ -51,6 +51,7 @@ export default {
+@@ -1,7 +1,7 @@
+ <template>
+   <div id="page-wrapper" class="page p-2 md:p-6 overflow-y-auto relative" :class="streamLibraryItem ? 'streaming' : ''">
+     <app-config-side-nav :is-open.sync="sideDrawerOpen" />
+-    <div class="configContent" :class="`page-${currentPage}`">
++    <div class="configContent" :class="[`page-${currentPage}`, isWidePage ? 'configContentWide' : '']">
+       <div v-show="isMobilePortrait" class="w-full pb-4 px-2 flex border-b border-white/10 mb-2 cursor-pointer" @click.stop.prevent="toggleShowMore">
+         <span class="material-symbols text-2xl cursor-pointer">arrow_forward</span>
+         <p class="pl-3 capitalize">{{ currentPage }}</p>
+@@ -41,6 +41,9 @@ export default {
+     streamLibraryItem() {
+       return this.$store.state.streamLibraryItem
+     },
++    isWidePage() {
++      return this.$route.name === 'config-bandwidth'
++    },
+     currentPage() {
+       if (!this.$route.name) return this.$strings.HeaderSettings
+       var routeName = this.$route.name.split('-')
+@@ -51,6 +54,7 @@ export default {
          else if (pageName === 'libraries') return this.$strings.HeaderLibraries
          else if (pageName === 'notifications') return this.$strings.HeaderNotifications
          else if (pageName === 'sessions') return this.$strings.HeaderListeningSessions
@@ -167,6 +189,27 @@ index c4fe2446..f42bc13d 100644
          else if (pageName === 'stats') return this.$strings.HeaderYourStats
          else if (pageName === 'users') return this.$strings.HeaderUsers
          else if (pageName === 'api-keys') return this.$strings.HeaderApiKeys
+@@ -82,13 +86,19 @@ export default {
+   width: 900px;
+   max-width: calc(100% - 176px);
+ }
++.configContent.configContentWide {
++  margin-left: 176px;
++  width: auto;
++  max-width: none;
++}
+ @media (max-width: 1240px) {
+   .configContent {
+     margin-left: 176px;
+   }
+ }
+ @media (max-width: 640px) {
+-  .configContent {
++  .configContent,
++  .configContent.configContentWide {
+     margin-left: 0px;
+     width: 100%;
+     max-width: 100%;
 diff --git a/client/pages/config/bandwidth.vue b/client/pages/config/bandwidth.vue
 new file mode 100644
 index 00000000..aa855846

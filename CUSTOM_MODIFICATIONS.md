@@ -68,6 +68,9 @@ This document tracks all custom features, fixes, and architectural modifications
        - Fixed an aggregation issue where an item's initial minor request (e.g. 27 KB cover/metadata) caused subsequent large transfers (e.g. 317 MB streaming playback) to retain the 'other' category tag.
        - Aggregation now dynamically designates the primary activity (`stream`, `download`, or `other`) according to the highest transfer volume.
        - Added secondary activity indicators (e.g. `+27.29 KB other`) with detailed breakdown tooltips on the Book & Media Activity table so administrators can clearly distinguish streaming playback from auxiliary cover art or metadata downloads.
+   13. **Expanded Full-Width Responsive Dashboard Layout**:
+       - Replaced the constrained 900px form wrapper with an expanded responsive layout for the Bandwidth Stats dashboard (`configContentWide`).
+       - Utilizes full available screen width to maximize horizontal resolution for the 48-hour 288-interval SVG waveform, evenly spaces the 5 KPI summary cards, and provides ample space for multi-column activity breakdown tables.
 
 ### Modified Files:
 * `server/models/BandwidthStat.js` (Sequelize model for daily user bandwidth stats)
@@ -129,7 +132,7 @@ git diff v2.37.1 > custom_changes.patch
 | `server/routers/ApiRouter.js` | Route definitions for `/stats/bandwidth` |
 | `client/pages/config/index.vue` | UI toggle in Settings > General |
 | `client/components/app/ConfigSideNav.vue` | Sidebar navigation link to Bandwidth Stats |
-| `client/pages/config.vue` | Route title mapper |
+| `client/pages/config.vue` | Route title mapper & full-width layout for bandwidth dashboard |
 | `client/pages/config/bandwidth.vue` | Responsive Bandwidth Stats dashboard with 48h SVG waveform, 24h hourly breakdown, item breakdown, clickable users, and date filters |
 | `client/pages/config/users/_id/index.vue` | Data transferred stat on user profile card |
 | `custom_changes.patch` | Unified Git diff against upstream `v2.37.1` |
