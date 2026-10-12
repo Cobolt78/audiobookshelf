@@ -26,7 +26,8 @@ const PATCHABLE_SETTINGS_KEYS = new Set([
   'language',
   'chromecastEnabled',
   'sortingIgnorePrefix',
-  'enableBandwidthTracking'
+  'enableBandwidthTracking',
+  'bandwidthLocalSubnets'
 ])
 
 class ServerSettings {
@@ -81,6 +82,7 @@ class ServerSettings {
     this.language = 'en-us'
     this.allowedOrigins = []
     this.enableBandwidthTracking = true
+    this.bandwidthLocalSubnets = ''
 
     this.logLevel = Logger.logLevel
 
@@ -150,6 +152,7 @@ class ServerSettings {
     this.language = settings.language || 'en-us'
     this.allowedOrigins = settings.allowedOrigins || []
     this.enableBandwidthTracking = settings.enableBandwidthTracking !== undefined ? !!settings.enableBandwidthTracking : true
+    this.bandwidthLocalSubnets = typeof settings.bandwidthLocalSubnets === 'string' ? settings.bandwidthLocalSubnets.trim() : ''
     this.logLevel = settings.logLevel || Logger.logLevel
     this.version = settings.version || null
     this.buildNumber = settings.buildNumber || 0 // Added v2.4.5
@@ -263,6 +266,7 @@ class ServerSettings {
       language: this.language,
       allowedOrigins: this.allowedOrigins,
       enableBandwidthTracking: this.enableBandwidthTracking,
+      bandwidthLocalSubnets: this.bandwidthLocalSubnets,
       logLevel: this.logLevel,
       version: this.version,
       buildNumber: this.buildNumber,

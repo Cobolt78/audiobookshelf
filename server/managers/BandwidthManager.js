@@ -1,3 +1,5 @@
+const os = require('os')
+const axios = require('axios')
 const { Op } = require('sequelize')
 const Database = require('../Database')
 const Logger = require('../Logger')
@@ -5,27 +7,34 @@ const dateAndTime = require('../libs/dateAndTime')
 const requestIp = require('../libs/requestIp')
 
 /**
- * Check if IP address belongs to a private / local network
+ * Match IPv4 address against an IP or CIDR block (e.g. "192.168.1.0/24")
  * @param {string} ip
+ * @param {string} cidr
  * @returns {boolean}
  */
-function isLocalIp(ip) {
-  if (!ip) return false
-  if (ip.startsWith('::ffff:')) {
-    ip = ip.substring(7)
+function ipInCidr(ip, cidr) {
+  if (!ip || !cidr) return false
+  const [range, bitsStr] = cidr.trim().split('/')
+  if (!range) return false
+
+  // Exact IP match if no mask bits specified
+  if (!bitsStr) {
+    return ip === range
   }
-  if (ip === '127.0.0.1' || ip === '::1' || ip === 'localhost') return true
-  // 10.0.0.0/8
-  if (/^10\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(ip)) return true
-  // 172.16.0.0/12 (172.16.0.0 - 172.31.255.255)
-  if (/^172\.(1[6-9]|2\d|3[0-1])\.\d{1,3}\.\d{1,3}$/.test(ip)) return true
-  // 192.168.0.0/16
-  if (/^192\.168\.\d{1,3}\.\d{1,3}$/.test(ip)) return true
-  // 169.254.0.0/16 (link-local)
-  if (/^169\.254\.\d{1,3}\.\d{1,3}$/.test(ip)) return true
-  // IPv6 local: fc00::/7, fe80::/10
-  if (/^(fc|fd|fe80)/i.test(ip)) return true
-  return false
+
+  const bits = parseInt(bitsStr, 10)
+  if (isNaN(bits) || bits < 0 || bits > 32) return false
+
+  const ipParts = ip.split('.').map(Number)
+  const rangeParts = range.split('.').map(Number)
+  if (ipParts.length !== 4 || rangeParts.length !== 4) return false
+  if (ipParts.some(isNaN) || rangeParts.some(isNaN)) return false
+
+  const ipNum = ((ipParts[0] << 24) | (ipParts[1] << 16) | (ipParts[2] << 8) | ipParts[3]) >>> 0
+  const rangeNum = ((rangeParts[0] << 24) | (rangeParts[1] << 16) | (rangeParts[2] << 8) | rangeParts[3]) >>> 0
+  const mask = bits === 0 ? 0 : (~0 << (32 - bits)) >>> 0
+
+  return (ipNum & mask) === (rangeNum & mask)
 }
 
 class BandwidthManager {
@@ -44,11 +53,141 @@ class BandwidthManager {
     this.timeBuffer = new Map()
     /** @type {Map<string, string>} */
     this.itemTitleCache = new Map()
+
+    /** @type {Set<string>} Host machine interface IPs */
+    this.localInterfaceIps = new Set()
+    /** @type {Set<string>} Server's own public WAN IP(s) to correctly classify Hairpin NAT loopback from LAN */
+    this.serverPublicIps = new Set()
+
     this.flushInterval = null
+    this.publicIpRefreshInterval = null
+
+    this.initLocalInterfaces()
+  }
+
+  /**
+   * Enumerate host network interfaces
+   */
+  initLocalInterfaces() {
+    this.localInterfaceIps.clear()
+    try {
+      const interfaces = os.networkInterfaces()
+      for (const name in interfaces) {
+        for (const iface of interfaces[name]) {
+          if (iface.address) {
+            let addr = iface.address
+            if (addr.startsWith('::ffff:')) addr = addr.substring(7)
+            this.localInterfaceIps.add(addr.toLowerCase())
+          }
+        }
+      }
+      Logger.debug(`[BandwidthManager] Initialized ${this.localInterfaceIps.size} local host interface IPs`)
+    } catch (err) {
+      Logger.error('[BandwidthManager] Failed to enumerate host network interfaces:', err)
+    }
+  }
+
+  /**
+   * Auto-detect server public WAN IP via external lookup service
+   * This is essential for recognizing router Hairpin NAT (NAT Loopback) from devices on home Wi-Fi
+   * @returns {Promise<string|null>}
+   */
+  async fetchPublicIp() {
+    const endpoints = [
+      'https://api.ipify.org',
+      'https://api.my-ip.io/ip',
+      'https://ifconfig.me/ip',
+      'https://icanhazip.com'
+    ]
+
+    for (const endpoint of endpoints) {
+      try {
+        const res = await axios.get(endpoint, {
+          timeout: 5000,
+          headers: { 'User-Agent': 'audiobookshelf-bandwidth-manager' },
+          responseType: 'text'
+        })
+        const ip = (res.data || '').toString().trim()
+        if (ip && (/^(\d{1,3}\.){3}\d{1,3}$/.test(ip) || ip.includes(':'))) {
+          if (!this.serverPublicIps.has(ip)) {
+            this.serverPublicIps.add(ip)
+            Logger.info(`[BandwidthManager] Detected server public WAN IP: ${ip} (Hairpin NAT loopback traffic will be classified as Local LAN)`)
+          }
+          return ip
+        }
+      } catch {
+        // Try next endpoint
+      }
+    }
+    return null
+  }
+
+  /**
+   * Check if IP address belongs to local network (LAN), host loopback, or router Hairpin NAT loopback
+   * @param {string} ip
+   * @returns {boolean}
+   */
+  isLocalIp(ip) {
+    if (!ip) return false
+    if (ip.startsWith('::ffff:')) {
+      ip = ip.substring(7)
+    }
+    ip = ip.trim().toLowerCase()
+
+    // 1. Loopback
+    if (ip === '127.0.0.1' || ip === '::1' || ip === 'localhost') return true
+
+    // 2. Server's public WAN IP(s) - Hairpin NAT (NAT Loopback) from home Wi-Fi/LAN
+    if (this.serverPublicIps.has(ip)) return true
+
+    // 3. Host network interfaces
+    if (this.localInterfaceIps.has(ip)) return true
+
+    // 4. RFC 1918 Private IPv4:
+    // 10.0.0.0/8
+    if (/^10\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(ip)) return true
+    // 172.16.0.0/12 (172.16.0.0 - 172.31.255.255)
+    if (/^172\.(1[6-9]|2\d|3[0-1])\.\d{1,3}\.\d{1,3}$/.test(ip)) return true
+    // 192.168.0.0/16
+    if (/^192\.168\.\d{1,3}\.\d{1,3}$/.test(ip)) return true
+
+    // 5. RFC 6598: Carrier-Grade NAT (100.64.0.0/10: 100.64.0.0 - 100.127.255.255) used by Tailscale, NetBird & CGNAT
+    if (/^100\.(6[4-9]|[7-9]\d|1[0-1]\d|12[0-7])\.\d{1,3}\.\d{1,3}$/.test(ip)) return true
+
+    // 6. Link-local (169.254.0.0/16)
+    if (/^169\.254\.\d{1,3}\.\d{1,3}$/.test(ip)) return true
+
+    // 7. IPv6 local: Unique Local Addresses (fc00::/7) and Link-Local (fe80::/10)
+    if (/^(fc|fd|fe80)/i.test(ip)) return true
+
+    // 8. Custom user-configured local subnets / IPs
+    const customSubnets = global.ServerSettings?.bandwidthLocalSubnets
+    if (customSubnets && typeof customSubnets === 'string') {
+      const entries = customSubnets.split(/[,;\s]+/).map((s) => s.trim()).filter(Boolean)
+      for (const entry of entries) {
+        if (ipInCidr(ip, entry)) return true
+      }
+    }
+
+    return false
   }
 
   async init() {
     Logger.info('[BandwidthManager] Initialized')
+
+    // Refresh local network interfaces and auto-detect server public WAN IP
+    this.initLocalInterfaces()
+    this.fetchPublicIp().catch((err) => {
+      Logger.debug(`[BandwidthManager] Note: Could not auto-detect public WAN IP on startup: ${err.message}`)
+    })
+
+    // Refresh public WAN IP every 6 hours in case of dynamic IP change
+    this.publicIpRefreshInterval = setInterval(() => {
+      this.fetchPublicIp().catch(() => {})
+    }, 6 * 3600 * 1000)
+    if (this.publicIpRefreshInterval.unref) {
+      this.publicIpRefreshInterval.unref()
+    }
 
     // Ensure legacy SQLite columns exist
     await this.ensureColumns()
@@ -103,6 +242,10 @@ class BandwidthManager {
     if (this.flushInterval) {
       clearInterval(this.flushInterval)
       this.flushInterval = null
+    }
+    if (this.publicIpRefreshInterval) {
+      clearInterval(this.publicIpRefreshInterval)
+      this.publicIpRefreshInterval = null
     }
     await this.flush()
   }
@@ -185,12 +328,70 @@ class BandwidthManager {
       return { libraryItemId: itemId, itemName: 'Item ' + itemId.substring(0, 8) }
     }
 
-    // 5. Shared media links: /share/:slug or /public/share/:slug
-    if (path.includes('/share/')) {
+    // 5. RSS Feeds: /feed/:slug/...
+    const feedMatch = path.match(/\/feed\/([^/]+)/)
+    if (feedMatch) {
+      const slug = feedMatch[1]
+      const cacheKey = `feed_${slug}`
+      if (this.itemTitleCache.has(cacheKey)) {
+        return { libraryItemId: cacheKey, itemName: this.itemTitleCache.get(cacheKey) }
+      }
+      try {
+        if (Database.feedModel) {
+          const feed = await Database.feedModel.findOne({
+            where: { slug },
+            attributes: ['id', 'entityId', 'entityType', 'title', 'userId']
+          })
+          if (feed) {
+            const title = feed.title ? `RSS: ${feed.title}` : 'RSS Feed'
+            this.itemTitleCache.set(cacheKey, title)
+            return { libraryItemId: feed.entityId || feed.id, itemName: title, userId: feed.userId }
+          }
+        }
+      } catch (err) {
+        Logger.debug(`[BandwidthManager] Failed to resolve feed title for ${slug}: ${err.message}`)
+      }
+      return { libraryItemId: cacheKey, itemName: `RSS Feed (${slug})` }
+    }
+
+    // 6. Shared media links: /share/:slug or /public/share/:slug
+    const shareMatch = path.match(/\/share\/([^/]+)/)
+    if (shareMatch) {
+      const slug = shareMatch[1]
+      const cacheKey = `share_${slug}`
+      if (this.itemTitleCache.has(cacheKey)) {
+        return { libraryItemId: cacheKey, itemName: this.itemTitleCache.get(cacheKey) }
+      }
+      try {
+        if (Database.mediaItemShareModel) {
+          const share = await Database.mediaItemShareModel.findOne({
+            where: { slug },
+            attributes: ['id', 'libraryItemId', 'userId']
+          })
+          if (share) {
+            let title = this.itemTitleCache.get(share.libraryItemId)
+            if (!title && Database.libraryItemModel) {
+              const item = await Database.libraryItemModel.findByPk(share.libraryItemId, {
+                attributes: ['id'],
+                include: [
+                  { model: Database.bookModel, attributes: ['title'] },
+                  { model: Database.podcastModel, attributes: ['title'] }
+                ]
+              })
+              title = item?.media?.title || item?.book?.title || item?.podcast?.title || 'Shared Media'
+              this.itemTitleCache.set(share.libraryItemId, title)
+            }
+            this.itemTitleCache.set(cacheKey, title || 'Shared Media')
+            return { libraryItemId: share.libraryItemId || cacheKey, itemName: title || 'Shared Media', userId: share.userId }
+          }
+        }
+      } catch (err) {
+        Logger.debug(`[BandwidthManager] Failed to resolve share info for ${slug}: ${err.message}`)
+      }
       return { libraryItemId: 'shared', itemName: 'Shared Media Link' }
     }
 
-    // 6. Backups
+    // 7. Backups
     if (path.includes('/backups/')) {
       return { libraryItemId: 'backup', itemName: 'Server Backup' }
     }
@@ -340,36 +541,41 @@ class BandwidthManager {
   }
 
   /**
-   * Determine traffic category based on request URL and query
+   * Determine traffic category based on request URL, query, headers, and response content-type
    *
    * @param {import('express').Request} req
+   * @param {import('express').Response} [res]
    * @returns {'stream'|'download'|'other'}
    */
-  categorizeRequest(req) {
+  categorizeRequest(req, res = null) {
     const url = req.originalUrl || req.url || ''
     const path = req.path || ''
 
-    // Download: explicit downloads, ebooks, zip archives
+    // Download: explicit downloads, ebooks, zip archives, or attachment disposition
     if (
       url.includes('/download') ||
       url.includes('/ebook') ||
       req.query?.download === '1' ||
-      req.query?.download === 'true'
+      req.query?.download === 'true' ||
+      res?.getHeader('content-disposition')?.includes('attachment')
     ) {
       return 'download'
     }
 
-    // Audio streaming: HLS, direct play, active playback session audio track chunks
+    // Audio streaming: HLS segments, direct play, session tracks, shared tracks, RSS feed episodes, or audio/* content
     if (
       path.startsWith('/hls') ||
       path.includes('/play') ||
       path.includes('/session') ||
-      (path.includes('/file/') && !url.includes('/download'))
+      path.includes('/track') ||
+      (path.includes('/feed/') && path.includes('/item/')) ||
+      (path.includes('/file/') && !url.includes('/download')) ||
+      res?.getHeader('content-type')?.startsWith('audio/')
     ) {
       return 'stream'
     }
 
-    // General: covers, API JSON, static client assets, RSS feeds
+    // General: covers, API JSON, static client assets, RSS xml feeds
     return 'other'
   }
 
@@ -390,7 +596,7 @@ class BandwidthManager {
 
     // Identify client IP and determine if local network or internet
     const clientIp = requestIp.getClientIp(req)
-    const isLocal = isLocalIp(clientIp)
+    const isLocal = this.isLocalIp(clientIp)
 
     const onResponseEnd = async () => {
       if (recorded) return
@@ -417,7 +623,7 @@ class BandwidthManager {
         userId = itemInfo.userId
       }
 
-      const category = this.categorizeRequest(req)
+      const category = this.categorizeRequest(req, res)
       this.record(userId, category, bytesSent, isLocal, itemInfo)
     }
 

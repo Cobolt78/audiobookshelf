@@ -1,9 +1,9 @@
 diff --git a/CUSTOM_MODIFICATIONS.md b/CUSTOM_MODIFICATIONS.md
 new file mode 100644
-index 00000000..e862026d
+index 00000000..d9191cb5
 --- /dev/null
 +++ b/CUSTOM_MODIFICATIONS.md
-@@ -0,0 +1,138 @@
+@@ -0,0 +1,146 @@
 +# Audiobookshelf Custom Modifications (`v2.37.1-custom`)
 +
 +This document tracks all custom features, fixes, and architectural modifications made to Audiobookshelf.
@@ -78,6 +78,14 @@ index 00000000..e862026d
 +       - Replaced the constrained 900px form wrapper with an expanded responsive layout for the Bandwidth Stats dashboard (`configContentWide`).
 +       - Utilizes full available screen width to maximize horizontal resolution for the 48-hour 288-interval SVG waveform, evenly spaces the 5 KPI summary cards, and provides ample space for multi-column activity breakdown tables.
 +
++    14. **Hairpin NAT Auto-Detection, Local Interface Enumeration & Comprehensive Traffic Classification**:
++        - **Hairpin NAT (NAT Loopback) Detection**: Auto-detects server public WAN IP (`fetchPublicIp`) with a 6-hour refresh schedule. Requests from clients within the local network looping through the router's public IP are now accurately identified as Local (LAN).
++        - **Host Network Interfaces**: Automatically enumerates all host adapter addresses (`os.networkInterfaces()`) to ensure traffic on any machine interface is recognized as local.
++        - **Carrier-Grade NAT & Mesh VPNs**: Added RFC 6598 support (`100.64.0.0/10`) for Tailscale, NetBird, and CGNAT environments.
++        - **Custom Local LAN Subnets Setting**: Added `bandwidthLocalSubnets` in Server Settings with CIDR bitmask evaluation and a dedicated configuration input in **Settings > General**.
++        - **Comprehensive Route & Audio Stream Categorization**: Added `res.getHeader('content-type')` audio fallback, explicit `/track` and `/feed/` streaming paths in `categorizeRequest(req, res)`, and automated RSS feed and shared link title resolution in `extractItemInfo(req)`.
++        - **Historical Data Correction**: Migrated historical records for Cobolt78 in `absdatabase.sqlite` on 2026-10-12 to accurately reflect local Wi-Fi downloads.
++
 +### Modified Files:
 +* `server/models/BandwidthStat.js` (Sequelize model for daily user bandwidth stats)
 +* `server/models/BandwidthItemStat.js` (Sequelize model for per-item and book bandwidth stats)
@@ -86,10 +94,10 @@ index 00000000..e862026d
 +* `server/managers/BandwidthManager.js` (In-memory buffering, request categorization, 10m/hourly buckets, auto-pruning, and stats querying)
 +* `server/Database.js` (Registered BandwidthStat, BandwidthItemStat, BandwidthHourlyStat, and BandwidthTimeStat models and schema sync)
 +* `server/Server.js` (Global middleware hook and shutdown flush for BandwidthManager)
-+* `server/objects/settings/ServerSettings.js` (Added `enableBandwidthTracking` setting, patchable key, and serialization)
++* `server/objects/settings/ServerSettings.js` (Added `enableBandwidthTracking` and `bandwidthLocalSubnets` settings, patchable keys, and serialization)
 +* `server/controllers/StatsController.js` (Added `getBandwidthStats` and `clearBandwidthStats` endpoints with trafficType & date filtering)
 +* `server/routers/ApiRouter.js` (Mounted `/stats/bandwidth` GET and DELETE routes)
-+* `client/pages/config/index.vue` (Added "Track Bandwidth & Data Usage" toggle switch under General Settings)
++* `client/pages/config/index.vue` (Added "Track Bandwidth & Data Usage" toggle and "Custom Local LAN Subnets / IPs" input in Settings > General)
 +* `client/components/app/ConfigSideNav.vue` (Added "Bandwidth Stats" navigation link)
 +* `client/pages/config.vue` (Mapped bandwidth page route title)
 +* `client/pages/config/bandwidth.vue` (Bandwidth dashboard with item breakdown, clickable users, back button, date bar filtering, and adaptive tooltips)
@@ -130,13 +138,13 @@ index 00000000..e862026d
 +| `server/models/BandwidthItemStat.js` | Sequelize model and table definition for per-item/book bandwidth stats |
 +| `server/models/BandwidthHourlyStat.js` | Sequelize model and table definition for 24-hour hourly bandwidth stats |
 +| `server/models/BandwidthTimeStat.js` | Sequelize model and table definition for rolling 48-hour 10-minute bandwidth stats |
-+| `server/managers/BandwidthManager.js` | In-memory buffering, request categorization, 10m/hourly buckets, auto-pruning, and stats querying |
++| `server/managers/BandwidthManager.js` | In-memory buffering, request categorization, 10m/hourly buckets, auto-pruning, public WAN IP detection, host interface enumeration, CIDR evaluation, and stats querying |
 +| `server/Database.js` | Registered BandwidthStat, BandwidthItemStat, BandwidthHourlyStat & BandwidthTimeStat models and schema sync |
 +| `server/Server.js` | Global middleware hook and shutdown flush for BandwidthManager |
-+| `server/objects/settings/ServerSettings.js` | `enableBandwidthTracking` toggle setting |
++| `server/objects/settings/ServerSettings.js` | `enableBandwidthTracking` and `bandwidthLocalSubnets` settings |
 +| `server/controllers/StatsController.js` | REST controller methods for bandwidth stats with trafficType and date params |
 +| `server/routers/ApiRouter.js` | Route definitions for `/stats/bandwidth` |
-+| `client/pages/config/index.vue` | UI toggle in Settings > General |
++| `client/pages/config/index.vue` | Bandwidth tracking toggle and custom local LAN subnets/IPs input in Settings > General |
 +| `client/components/app/ConfigSideNav.vue` | Sidebar navigation link to Bandwidth Stats |
 +| `client/pages/config.vue` | Route title mapper & full-width layout for bandwidth dashboard |
 +| `client/pages/config/bandwidth.vue` | Responsive Bandwidth Stats dashboard with 48h SVG waveform, 24h hourly breakdown, item breakdown, clickable users, and date filters |
@@ -1292,10 +1300,10 @@ index 00000000..aa855846
 +}
 +</script>
 diff --git a/client/pages/config/index.vue b/client/pages/config/index.vue
-index 7fb84d46..d8627a50 100644
+index 7fb84d46..4d82f10c 100644
 --- a/client/pages/config/index.vue
 +++ b/client/pages/config/index.vue
-@@ -42,6 +42,16 @@
+@@ -42,6 +42,28 @@
              </div>
            </div>
  
@@ -1308,10 +1316,43 @@ index 7fb84d46..d8627a50 100644
 +              </p>
 +            </ui-tooltip>
 +          </div>
++          <div v-if="newServerSettings.enableBandwidthTracking" class="w-80 ml-14 mb-2">
++            <ui-text-input-with-label
++              v-model="newServerSettings.bandwidthLocalSubnets"
++              label="Custom Local LAN Subnets / IPs"
++              placeholder="e.g. 192.168.1.0/24, 10.0.0.0/16"
++              :disabled="updatingServerSettings"
++              @blur="updateBandwidthLocalSubnets"
++            />
++            <p class="text-xs text-white/50 mt-1">
++              LAN subnets, host IPs &amp; router Hairpin NAT are auto-detected. Specify extra CIDRs or IPs separated by commas.
++            </p>
++          </div>
 +
            <div class="pt-4">
              <h2 class="font-semibold">{{ $strings.HeaderSettingsScanner }}</h2>
            </div>
+@@ -336,6 +358,12 @@ export default {
+       this.newServerSettings.allowedOrigins = validOrigins
+       this.updateSettingsKey('allowedOrigins', validOrigins)
+     },
++    updateBandwidthLocalSubnets() {
++      const val = (this.newServerSettings.bandwidthLocalSubnets || '').trim()
++      if (val !== (this.serverSettings?.bandwidthLocalSubnets || '').trim()) {
++        this.updateSettingsKey('bandwidthLocalSubnets', val)
++      }
++    },
+     updateSettingsKey(key, val) {
+       if (key === 'scannerDisableWatcher') {
+         this.newServerSettings.scannerDisableWatcher = val
+@@ -366,6 +394,7 @@ export default {
+       this.newServerSettings = this.serverSettings ? { ...this.serverSettings } : {}
+       this.newServerSettings.sortingPrefixes = [...(this.newServerSettings.sortingPrefixes || [])]
+       this.newServerSettings.allowedOrigins = [...(this.newServerSettings.allowedOrigins || [])]
++      this.newServerSettings.bandwidthLocalSubnets = this.newServerSettings.bandwidthLocalSubnets || ''
+       this.scannerEnableWatcher = !this.newServerSettings.scannerDisableWatcher
+ 
+       this.homepageUseBookshelfView = this.newServerSettings.homeBookshelfView != this.$constants.BookshelfView.DETAIL
 diff --git a/client/pages/config/users/_id/index.vue b/client/pages/config/users/_id/index.vue
 index 34a0fc86..bde60640 100644
 --- a/client/pages/config/users/_id/index.vue
@@ -1348,6 +1389,1309 @@ index 34a0fc86..bde60640 100644
        console.log('Loaded user listening data', this.listeningSessions, this.listeningStats)
      }
    },
+diff --git a/custom_changes.patch b/custom_changes.patch
+new file mode 100644
+index 00000000..ceba689c
+--- /dev/null
++++ b/custom_changes.patch
+@@ -0,0 +1,1296 @@
++diff --git a/CUSTOM_MODIFICATIONS.md b/CUSTOM_MODIFICATIONS.md
++new file mode 100644
++index 00000000..d9191cb5
++--- /dev/null
+++++ b/CUSTOM_MODIFICATIONS.md
++@@ -0,0 +1,146 @@
+++# Audiobookshelf Custom Modifications (`v2.37.1-custom`)
+++
+++This document tracks all custom features, fixes, and architectural modifications made to Audiobookshelf.
+++
+++---
+++
+++## 1. Discover Shelf Series Recommendations
+++
+++### Summary
+++* **Problem**: Upstream Audiobookshelf completely excludes series books from the "Discover" shelf if any book in that series has been started or finished. Additionally, Sequelize's `separate: true` with `limit: 1` combined with an outer limit caused a severe probability bias that resulted in only standalone (non-series) books appearing in Discover.
+++* **Fix**:
+++  1. Updated `getDiscoverLibraryItems` in `server/utils/queries/libraryItemsBookFilters.js`.
+++  2. Removed `limit: 1` from the separate include so all books are evaluated, and JavaScript maps to find the first unread/unstarted book for each series.
+++  3. Included unstarted series books in the random pool alongside standalone books.
+++
+++### Modified Files:
+++* `server/utils/queries/libraryItemsBookFilters.js`
+++
+++---
+++
+++## 2. Bandwidth & Data Usage Tracking per User
+++
+++### Summary
+++* **Problem**: Audiobookshelf natively tracks playback duration (listening sessions/minutes), but has no way to track network egress or data usage (MB/GB transferred). When users download full audiobooks or stream high-bitrate files, server bandwidth is consumed without any visibility for the administrator.
+++* **Feature**:
+++  1. **Zero-Overhead In-Memory Buffer**: Middleware captures outgoing wire/socket bytes across all HTTP requests (streaming audio, HLS chunks, item downloads, ebooks, covers, and API responses). Data is aggregated in an in-memory map and batched into SQLite every 60 seconds (and on server shutdown) via atomic UPSERT transactions.
+++  2. **Categorization**: Automatically classifies traffic into:
+++     - `Streaming`: Audio playback, HLS segment requests, session audio streams.
+++     - `Downloads`: Explicit item downloads, zip archives, ebook file downloads.
+++     - `Other`: Cover images, API JSON responses, web client assets, RSS feeds.
+++  3. **Attribution**: Identifies the authenticated user (`req.user.id`), attributes HLS stream segments to the active session user, and attributes unauthenticated/public traffic to `Anonymous / Public`.
+++  4. **Toggle Setting**: Added `enableBandwidthTracking` to Server Settings. Admins can toggle bandwidth tracking ON or OFF at any time in **Settings > General**.
+++  5. **Admin Dashboard (`/config/bandwidth`)**:
+++     - **Summary KPI Cards**: Data transferred Today, Last 7 Days, This Month, This Year, and All-Time with Internet (WAN) vs Local (LAN) breakdown.
+++     - **Timeline Chart**: Interactive daily transfer bar chart with hover tooltips and category breakdown.
+++     - **Time Range Filters**: Today, Last 7 Days, Last 30 Days, This Year, All Time.
+++     - **Traffic Type Filters**: All Traffic, Internet Only (WAN), and Local Only (LAN).
+++     - **User Breakdown Table**: Complete breakdown showing each user's username, Internet (WAN) bytes, Local (LAN) bytes, streaming bytes, download bytes, total bytes, and percentage bar of total traffic.
+++     - **User Filter**: Filter chart and stats by specific user or view all users combined.
+++     - **Clear Records**: Admin action to reset/clear historical bandwidth statistics.
+++     - **UI Alignment & Stacking Fixes**: Resolved vertical offset of User Filter dropdown and fixed z-index stacking context to prevent chart bars from overlaying open dropdown menu options.
+++  6. **Local Network vs Internet (LAN / WAN) Tracking**: Automatically detects private RFC 1918 subnets (`192.168.x.x`, `10.x.x.x`, `172.16.x.x`, loopback, IPv6 local) vs external remote WAN IPs (including Cloudflare and reverse proxy headers) to distinguish data leaving the home internet from local Wi-Fi traffic.
+++  7. **User Profile Integration (`/config/users/:id`)**: Displays the user's total data transferred alongside their total listening time.
+++
+++   8. **Book & Media Item Activity Breakdown**:
+++      - Added `BandwidthItemStat` model and `bandwidthItemStats` table tracking per-user, per-day, and per-book egress (`libraryItemId`, `itemName`, `category`, `bytesLocal`, `bytesInternet`, `bytesTotal`, `requests`).
+++      - Identifies titles and items from `/api/items/:id/...`, active playback sessions (`/public/session/:id/track/:index`), and HLS streams (`/hls/:stream/:file`) with in-memory caching.
+++      - Displays dedicated "Book & Media Activity Breakdown" table when a user is selected or date is filtered.
+++   9. **Interactive Date Bar Filtering & Tooltip Clarity**:
+++      - Clicking any bar in the timeline chart filters stats and book activity specifically to that single date, with a one-click "✕ Clear Date Filter" button.
+++      - Fixed tooltips and summary metrics to dynamically reflect the selected traffic filter (All, Internet WAN, or Local LAN) with explicit notices for historical data recorded prior to LAN/WAN separation.
+++   10. **Streamlined Navigation & Clickable Users**:
+++      - Clicking any user in the "Data Usage Breakdown by User" table immediately selects and navigates to that user's detailed view.
+++      - Added a prominent "Back to All Users" button in the top toolbar and above the breakdown tables.
+++   11. **Hybrid High-Resolution Drill-Down Architecture**:
+++      - **Approach 1: 24-Hour Time-of-Day (Hourly) Breakdown**:
+++        - Added `BandwidthHourlyStat` model and `bandwidthHourlyStats` table tracking hourly egress (`date`, `hour`, `bytesStream`, `bytesDownload`, `bytesOther`, `bytesLocal`, `bytesInternet`, `bytesTotal`, `requests`).
+++        - When a single date is selected or filtered, an interactive 24-hour histogram (`00:00` to `23:00`) is rendered showing the exact hours of traffic spikes, request volume, and category distribution.
+++      - **Approach 2: Rolling 48-Hour High-Resolution 10-Minute Area Waveform**:
+++        - Added `BandwidthTimeStat` model and `bandwidthTimeStats` table capturing 10-minute intervals (`bucketTime`, `timeLabel`, `date`, `hour`, `minute`).
+++        - **Automatic 48-Hour Pruning**: Prunes rows older than 48 hours on every periodic flush to cap table size at ~1,440 rows (~200 KB in SQLite) preventing long-term database bloat.
+++        - **Smooth SVG Area/Line Waveform (Layout Option A)**: Built a lightweight native SVG area and line waveform covering 288 contiguous time buckets over 48 hours. Zero DOM overhead or heavy chart dependencies.
+++        - **Interactive Crosshair HUD**: Moving mouse across the waveform displays a vertical crosshair guide and floating telemetry HUD pill showing exact time bucket, ~Mbps burst rate, MB transferred, WAN vs LAN, and category breakdown.
+++      - **UI Contrast & Tooltip Fixes**:
+++        - Anchored timeline and waveform tooltips cleanly at the top of the chart container to prevent popup cut-offs.
+++        - Improved text contrast on interactive elements (e.g. 'Click to filter' highlighted with `text-emerald-400 bg-emerald-500/15`).
+++   12. **Accurate Item Activity Categorization & Multi-Activity Attribution**:
+++       - Fixed an aggregation issue where an item's initial minor request (e.g. 27 KB cover/metadata) caused subsequent large transfers (e.g. 317 MB streaming playback) to retain the 'other' category tag.
+++       - Aggregation now dynamically designates the primary activity (`stream`, `download`, or `other`) according to the highest transfer volume.
+++       - Added secondary activity indicators (e.g. `+27.29 KB other`) with detailed breakdown tooltips on the Book & Media Activity table so administrators can clearly distinguish streaming playback from auxiliary cover art or metadata downloads.
+++   13. **Expanded Full-Width Responsive Dashboard Layout**:
+++       - Replaced the constrained 900px form wrapper with an expanded responsive layout for the Bandwidth Stats dashboard (`configContentWide`).
+++       - Utilizes full available screen width to maximize horizontal resolution for the 48-hour 288-interval SVG waveform, evenly spaces the 5 KPI summary cards, and provides ample space for multi-column activity breakdown tables.
+++
+++    14. **Hairpin NAT Auto-Detection, Local Interface Enumeration & Comprehensive Traffic Classification**:
+++        - **Hairpin NAT (NAT Loopback) Detection**: Auto-detects server public WAN IP (`fetchPublicIp`) with a 6-hour refresh schedule. Requests from clients within the local network looping through the router's public IP are now accurately identified as Local (LAN).
+++        - **Host Network Interfaces**: Automatically enumerates all host adapter addresses (`os.networkInterfaces()`) to ensure traffic on any machine interface is recognized as local.
+++        - **Carrier-Grade NAT & Mesh VPNs**: Added RFC 6598 support (`100.64.0.0/10`) for Tailscale, NetBird, and CGNAT environments.
+++        - **Custom Local LAN Subnets Setting**: Added `bandwidthLocalSubnets` in Server Settings with CIDR bitmask evaluation and a dedicated configuration input in **Settings > General**.
+++        - **Comprehensive Route & Audio Stream Categorization**: Added `res.getHeader('content-type')` audio fallback, explicit `/track` and `/feed/` streaming paths in `categorizeRequest(req, res)`, and automated RSS feed and shared link title resolution in `extractItemInfo(req)`.
+++        - **Historical Data Correction**: Migrated historical records for Cobolt78 in `absdatabase.sqlite` on 2026-10-12 to accurately reflect local Wi-Fi downloads.
+++
+++### Modified Files:
+++* `server/models/BandwidthStat.js` (Sequelize model for daily user bandwidth stats)
+++* `server/models/BandwidthItemStat.js` (Sequelize model for per-item and book bandwidth stats)
+++* `server/models/BandwidthHourlyStat.js` (Sequelize model for 24-hour hourly bandwidth stats)
+++* `server/models/BandwidthTimeStat.js` (Sequelize model for rolling 48-hour 10-minute high-resolution bandwidth stats)
+++* `server/managers/BandwidthManager.js` (In-memory buffering, request categorization, 10m/hourly buckets, auto-pruning, and stats querying)
+++* `server/Database.js` (Registered BandwidthStat, BandwidthItemStat, BandwidthHourlyStat, and BandwidthTimeStat models and schema sync)
+++* `server/Server.js` (Global middleware hook and shutdown flush for BandwidthManager)
+++* `server/objects/settings/ServerSettings.js` (Added `enableBandwidthTracking` and `bandwidthLocalSubnets` settings, patchable keys, and serialization)
+++* `server/controllers/StatsController.js` (Added `getBandwidthStats` and `clearBandwidthStats` endpoints with trafficType & date filtering)
+++* `server/routers/ApiRouter.js` (Mounted `/stats/bandwidth` GET and DELETE routes)
+++* `client/pages/config/index.vue` (Added "Track Bandwidth & Data Usage" toggle and "Custom Local LAN Subnets / IPs" input in Settings > General)
+++* `client/components/app/ConfigSideNav.vue` (Added "Bandwidth Stats" navigation link)
+++* `client/pages/config.vue` (Mapped bandwidth page route title)
+++* `client/pages/config/bandwidth.vue` (Bandwidth dashboard with item breakdown, clickable users, back button, date bar filtering, and adaptive tooltips)
+++* `client/pages/config/users/_id/index.vue` (Added Data Transferred stat to user profile)
+++
+++---
+++
+++## 3. Build & Packaging Instructions
+++
+++### Standalone Windows Executable:
+++```powershell
+++# 1. Compile Client Nuxt Assets
+++cd client
+++npm run generate
+++cd ..
+++
+++# 2. Compile Server TypeScript
+++npm run build:server
+++
+++# 3. Package Windows Binary (dist/win/audiobookshelf.exe)
+++npx pkg --config package.json -t node24-win-x64 -o ./dist/win/audiobookshelf -C GZip dist-server/index.js
+++```
+++
+++### Git & Patch Synchronization:
+++```powershell
+++# Regenerate patch against upstream baseline
+++git diff v2.37.1 > custom_changes.patch
+++```
+++
+++---
+++
+++## 4. Modified Files Inventory
+++
+++| File Path | Description |
+++| :--- | :--- |
+++| `server/utils/queries/libraryItemsBookFilters.js` | Fixed series discovery filtering & removed single-item limit |
+++| `server/models/BandwidthStat.js` | Sequelize model and table definition for user bandwidth stats |
+++| `server/models/BandwidthItemStat.js` | Sequelize model and table definition for per-item/book bandwidth stats |
+++| `server/models/BandwidthHourlyStat.js` | Sequelize model and table definition for 24-hour hourly bandwidth stats |
+++| `server/models/BandwidthTimeStat.js` | Sequelize model and table definition for rolling 48-hour 10-minute bandwidth stats |
+++| `server/managers/BandwidthManager.js` | In-memory buffering, request categorization, 10m/hourly buckets, auto-pruning, public WAN IP detection, host interface enumeration, CIDR evaluation, and stats querying |
+++| `server/Database.js` | Registered BandwidthStat, BandwidthItemStat, BandwidthHourlyStat & BandwidthTimeStat models and schema sync |
+++| `server/Server.js` | Global middleware hook and shutdown flush for BandwidthManager |
+++| `server/objects/settings/ServerSettings.js` | `enableBandwidthTracking` and `bandwidthLocalSubnets` settings |
+++| `server/controllers/StatsController.js` | REST controller methods for bandwidth stats with trafficType and date params |
+++| `server/routers/ApiRouter.js` | Route definitions for `/stats/bandwidth` |
+++| `client/pages/config/index.vue` | Bandwidth tracking toggle and custom local LAN subnets/IPs input in Settings > General |
+++| `client/components/app/ConfigSideNav.vue` | Sidebar navigation link to Bandwidth Stats |
+++| `client/pages/config.vue` | Route title mapper & full-width layout for bandwidth dashboard |
+++| `client/pages/config/bandwidth.vue` | Responsive Bandwidth Stats dashboard with 48h SVG waveform, 24h hourly breakdown, item breakdown, clickable users, and date filters |
+++| `client/pages/config/users/_id/index.vue` | Data transferred stat on user profile card |
+++| `custom_changes.patch` | Unified Git diff against upstream `v2.37.1` |
++diff --git a/client/components/app/ConfigSideNav.vue b/client/components/app/ConfigSideNav.vue
++index 32e7e694..aee46878 100644
++--- a/client/components/app/ConfigSideNav.vue
+++++ b/client/components/app/ConfigSideNav.vue
++@@ -80,6 +80,11 @@ export default {
++           title: this.$strings.HeaderListeningSessions,
++           path: '/config/sessions'
++         },
+++        {
+++          id: 'config-bandwidth',
+++          title: 'Bandwidth Stats',
+++          path: '/config/bandwidth'
+++        },
++         {
++           id: 'config-backups',
++           title: this.$strings.HeaderBackups,
++diff --git a/client/pages/config.vue b/client/pages/config.vue
++index c4fe2446..495ac2bf 100644
++--- a/client/pages/config.vue
+++++ b/client/pages/config.vue
++@@ -1,7 +1,7 @@
++ <template>
++   <div id="page-wrapper" class="page p-2 md:p-6 overflow-y-auto relative" :class="streamLibraryItem ? 'streaming' : ''">
++     <app-config-side-nav :is-open.sync="sideDrawerOpen" />
++-    <div class="configContent" :class="`page-${currentPage}`">
+++    <div class="configContent" :class="[`page-${currentPage}`, isWidePage ? 'configContentWide' : '']">
++       <div v-show="isMobilePortrait" class="w-full pb-4 px-2 flex border-b border-white/10 mb-2 cursor-pointer" @click.stop.prevent="toggleShowMore">
++         <span class="material-symbols text-2xl cursor-pointer">arrow_forward</span>
++         <p class="pl-3 capitalize">{{ currentPage }}</p>
++@@ -41,6 +41,9 @@ export default {
++     streamLibraryItem() {
++       return this.$store.state.streamLibraryItem
++     },
+++    isWidePage() {
+++      return this.$route.name === 'config-bandwidth'
+++    },
++     currentPage() {
++       if (!this.$route.name) return this.$strings.HeaderSettings
++       var routeName = this.$route.name.split('-')
++@@ -51,6 +54,7 @@ export default {
++         else if (pageName === 'libraries') return this.$strings.HeaderLibraries
++         else if (pageName === 'notifications') return this.$strings.HeaderNotifications
++         else if (pageName === 'sessions') return this.$strings.HeaderListeningSessions
+++        else if (pageName === 'bandwidth') return 'Bandwidth Stats'
++         else if (pageName === 'stats') return this.$strings.HeaderYourStats
++         else if (pageName === 'users') return this.$strings.HeaderUsers
++         else if (pageName === 'api-keys') return this.$strings.HeaderApiKeys
++@@ -82,13 +86,19 @@ export default {
++   width: 900px;
++   max-width: calc(100% - 176px);
++ }
+++.configContent.configContentWide {
+++  margin-left: 176px;
+++  width: auto;
+++  max-width: none;
+++}
++ @media (max-width: 1240px) {
++   .configContent {
++     margin-left: 176px;
++   }
++ }
++ @media (max-width: 640px) {
++-  .configContent {
+++  .configContent,
+++  .configContent.configContentWide {
++     margin-left: 0px;
++     width: 100%;
++     max-width: 100%;
++diff --git a/client/pages/config/bandwidth.vue b/client/pages/config/bandwidth.vue
++new file mode 100644
++index 00000000..aa855846
++--- /dev/null
+++++ b/client/pages/config/bandwidth.vue
++@@ -0,0 +1,1075 @@
+++<template>
+++  <div class="w-full">
+++    <!-- Notice if tracking is disabled -->
+++    <div v-if="!isTrackingEnabled" class="bg-warning/20 border border-warning/50 rounded-md p-4 mb-6 flex items-center justify-between">
+++      <div class="flex items-center">
+++        <span class="material-symbols text-warning text-3xl mr-3">warning</span>
+++        <div>
+++          <p class="font-semibold text-warning">Bandwidth Tracking is Currently Disabled</p>
+++          <p class="text-xs text-gray-300">Data usage is not actively being recorded. You can enable it in Server Settings.</p>
+++        </div>
+++      </div>
+++      <ui-btn to="/config" color="bg-warning text-black" class="text-xs font-semibold">Go to Settings</ui-btn>
+++    </div>
+++
+++    <app-settings-content header-text="Bandwidth & Data Usage">
+++      <!-- KPI Summary Cards -->
+++      <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 mb-6">
+++        <div class="bg-primary/20 border border-white/5 rounded-lg p-3 flex flex-col justify-between">
+++          <p class="text-xs uppercase font-semibold text-gray-400 mb-1">Today</p>
+++          <p class="text-2xl font-bold font-mono text-emerald-400">{{ $bytesPretty(summary.today.total) }}</p>
+++          <div class="text-[11px] text-gray-300 mt-2 space-y-0.5 border-t border-white/5 pt-1.5">
+++            <p class="truncate flex items-center justify-between">
+++              <span class="text-sky-300 font-medium flex items-center"><span class="material-symbols text-[13px] mr-1">public</span>Internet:</span>
+++              <span class="font-mono">{{ $bytesPretty(summary.today.internet) }}</span>
+++            </p>
+++            <p class="truncate flex items-center justify-between">
+++              <span class="text-amber-300 font-medium flex items-center"><span class="material-symbols text-[13px] mr-1">home</span>Local:</span>
+++              <span class="font-mono">{{ $bytesPretty(summary.today.local) }}</span>
+++            </p>
+++          </div>
+++        </div>
+++
+++        <div class="bg-primary/20 border border-white/5 rounded-lg p-3 flex flex-col justify-between">
+++          <p class="text-xs uppercase font-semibold text-gray-400 mb-1">Last 7 Days</p>
+++          <p class="text-2xl font-bold font-mono text-emerald-400">{{ $bytesPretty(summary.last7Days.total) }}</p>
+++          <div class="text-[11px] text-gray-300 mt-2 space-y-0.5 border-t border-white/5 pt-1.5">
+++            <p class="truncate flex items-center justify-between">
+++              <span class="text-sky-300 font-medium flex items-center"><span class="material-symbols text-[13px] mr-1">public</span>Internet:</span>
+++              <span class="font-mono">{{ $bytesPretty(summary.last7Days.internet) }}</span>
+++            </p>
+++            <p class="truncate flex items-center justify-between">
+++              <span class="text-amber-300 font-medium flex items-center"><span class="material-symbols text-[13px] mr-1">home</span>Local:</span>
+++              <span class="font-mono">{{ $bytesPretty(summary.last7Days.local) }}</span>
+++            </p>
+++          </div>
+++        </div>
+++
+++        <div class="bg-primary/20 border border-white/5 rounded-lg p-3 flex flex-col justify-between">
+++          <p class="text-xs uppercase font-semibold text-gray-400 mb-1">This Month</p>
+++          <p class="text-2xl font-bold font-mono text-emerald-400">{{ $bytesPretty(summary.thisMonth.total) }}</p>
+++          <div class="text-[11px] text-gray-300 mt-2 space-y-0.5 border-t border-white/5 pt-1.5">
+++            <p class="truncate flex items-center justify-between">
+++              <span class="text-sky-300 font-medium flex items-center"><span class="material-symbols text-[13px] mr-1">public</span>Internet:</span>
+++              <span class="font-mono">{{ $bytesPretty(summary.thisMonth.internet) }}</span>
+++            </p>
+++            <p class="truncate flex items-center justify-between">
+++              <span class="text-amber-300 font-medium flex items-center"><span class="material-symbols text-[13px] mr-1">home</span>Local:</span>
+++              <span class="font-mono">{{ $bytesPretty(summary.thisMonth.local) }}</span>
+++            </p>
+++          </div>
+++        </div>
+++
+++        <div class="bg-primary/20 border border-white/5 rounded-lg p-3 flex flex-col justify-between">
+++          <p class="text-xs uppercase font-semibold text-gray-400 mb-1">This Year</p>
+++          <p class="text-2xl font-bold font-mono text-emerald-400">{{ $bytesPretty(summary.thisYear.total) }}</p>
+++          <div class="text-[11px] text-gray-300 mt-2 space-y-0.5 border-t border-white/5 pt-1.5">
+++            <p class="truncate flex items-center justify-between">
+++              <span class="text-sky-300 font-medium flex items-center"><span class="material-symbols text-[13px] mr-1">public</span>Internet:</span>
+++              <span class="font-mono">{{ $bytesPretty(summary.thisYear.internet) }}</span>
+++            </p>
+++            <p class="truncate flex items-center justify-between">
+++              <span class="text-amber-300 font-medium flex items-center"><span class="material-symbols text-[13px] mr-1">home</span>Local:</span>
+++              <span class="font-mono">{{ $bytesPretty(summary.thisYear.local) }}</span>
+++            </p>
+++          </div>
+++        </div>
+++
+++        <div class="bg-primary/20 border border-white/5 rounded-lg p-3 flex flex-col justify-between col-span-2 sm:col-span-1">
+++          <p class="text-xs uppercase font-semibold text-gray-400 mb-1">All Time Total</p>
+++          <p class="text-2xl font-bold font-mono text-cyan-400">{{ $bytesPretty(summary.allTime.total) }}</p>
+++          <div class="text-[11px] text-gray-300 mt-2 space-y-0.5 border-t border-white/5 pt-1.5">
+++            <p class="truncate flex items-center justify-between">
+++              <span class="text-sky-300 font-medium flex items-center"><span class="material-symbols text-[13px] mr-1">public</span>Internet:</span>
+++              <span class="font-mono">{{ $bytesPretty(summary.allTime.internet) }}</span>
+++            </p>
+++            <p class="truncate flex items-center justify-between">
+++              <span class="text-amber-300 font-medium flex items-center"><span class="material-symbols text-[13px] mr-1">home</span>Local:</span>
+++              <span class="font-mono">{{ $bytesPretty(summary.allTime.local) }}</span>
+++            </p>
+++          </div>
+++        </div>
+++      </div>
+++
+++      <!-- Filters & Toolbar (Stacking context relative z-50 prevents chart clipping) -->
+++      <div class="relative z-50 flex flex-col md:flex-row md:items-center justify-between gap-3 border-b border-white/10 pb-4 mb-4">
+++        <div class="flex flex-wrap items-center gap-2">
+++          <!-- Range Buttons: Includes Live 48h (10m) high-res mode -->
+++          <div class="inline-flex rounded-md shadow-sm bg-black/40 p-1 border border-white/10">
+++            <button
+++              v-for="r in rangeOptions"
+++              :key="r.value"
+++              type="button"
+++              @click="selectRange(r.value)"
+++              class="px-3 py-1 text-xs font-medium rounded transition-colors flex items-center gap-1"
+++              :class="selectedRange === r.value ? 'bg-primary text-white shadow' : 'text-gray-400 hover:text-white'"
+++            >
+++              <span v-if="r.value === 'last48Hours'" class="material-symbols text-[13px] text-emerald-400">show_chart</span>
+++              {{ r.label }}
+++            </button>
+++          </div>
+++
+++          <!-- Traffic Type Filter (All / Internet WAN / Local LAN) -->
+++          <div class="inline-flex rounded-md shadow-sm bg-black/40 p-1 border border-white/10">
+++            <button
+++              v-for="t in trafficTypeOptions"
+++              :key="t.value"
+++              type="button"
+++              @click="selectTrafficType(t.value)"
+++              class="px-2.5 py-1 text-xs font-medium rounded transition-colors flex items-center gap-1"
+++              :class="selectedTrafficType === t.value ? 'bg-primary text-white shadow' : 'text-gray-400 hover:text-white'"
+++            >
+++              <span class="material-symbols text-[14px]">{{ t.icon }}</span>
+++              <span>{{ t.label }}</span>
+++            </button>
+++          </div>
+++        </div>
+++
+++        <!-- Controls: User Filter + Back Button + Refresh + Clear -->
+++        <div class="flex items-center gap-2 relative z-50">
+++          <!-- Back to All Users button -->
+++          <ui-btn v-if="selectedUserId" color="bg-primary/30 hover:bg-primary/50 text-sky-200 border border-primary/40" small @click="selectUser('')">
+++            <span class="material-symbols text-sm mr-1">arrow_back</span>
+++            All Users
+++          </ui-btn>
+++
+++          <!-- User Filter Dropdown -->
+++          <div class="w-48 relative">
+++            <ui-dropdown v-model="selectedUserId" small :items="userDropdownItems" @input="loadStats" />
+++          </div>
+++
+++          <!-- Refresh Button -->
+++          <ui-btn color="bg-primary" small :loading="loading" @click="loadStats">
+++            <span class="material-symbols text-sm mr-1">refresh</span>
+++            Refresh
+++          </ui-btn>
+++
+++          <!-- Clear Stats Button -->
+++          <ui-btn color="bg-error" small @click="showConfirmClear = true">
+++            <span class="material-symbols text-sm mr-1">delete</span>
+++            Clear
+++          </ui-btn>
+++        </div>
+++      </div>
+++
+++      <!-- Active Filter Banner (shows when user or date filter is applied) -->
+++      <div v-if="selectedUserId || selectedDate" class="flex flex-wrap items-center gap-2 bg-white/5 border border-white/10 rounded-lg px-3 py-2 mb-6 text-xs">
+++        <span class="text-gray-400 font-medium">Active Filters:</span>
+++
+++        <span v-if="selectedUserId" class="inline-flex items-center bg-primary/30 text-sky-200 border border-primary/40 px-2 py-0.5 rounded-full">
+++          <span class="material-symbols text-xs mr-1">person</span>
+++          User: <strong class="ml-1">{{ selectedUserName }}</strong>
+++          <button type="button" @click="selectUser('')" class="ml-1.5 text-gray-300 hover:text-white font-bold" title="Clear user filter">✕</button>
+++        </span>
+++
+++        <span v-if="selectedDate" class="inline-flex items-center bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 px-2 py-0.5 rounded-full">
+++          <span class="material-symbols text-xs mr-1">calendar_today</span>
+++          Date: <strong class="ml-1">{{ selectedDate }}</strong>
+++          <button type="button" @click="clearDateFilter" class="ml-1.5 text-gray-300 hover:text-white font-bold" title="Clear date filter">✕</button>
+++        </span>
+++
+++        <span class="text-gray-300 ml-auto flex items-center gap-1.5 font-medium">
+++          <span class="material-symbols text-sm text-sky-400">info</span>
+++          <span>Click any bar to filter by day, or click a user to view their activity</span>
+++        </span>
+++      </div>
+++
+++      <!-- SECTION A: High-Resolution 10-Minute Activity Waveform (Layout Option A) for "Live 48h (10m)" -->
+++      <div v-if="selectedRange === 'last48Hours'" class="mb-8">
+++        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-3">
+++          <div class="flex items-center flex-wrap gap-2">
+++            <h2 class="text-lg font-semibold flex items-center">
+++              <span class="material-symbols mr-2 text-accent">monitoring</span>
+++              Rolling 48-Hour Waveform (10-Minute Increments)
+++            </h2>
+++            <span v-if="waveformPeakMbps > 0" class="text-xs font-mono font-semibold text-emerald-400 bg-emerald-500/15 border border-emerald-500/30 px-2 py-0.5 rounded">
+++              Peak Burst: {{ waveformPeakMbps }} Mbps ({{ $bytesPretty(waveformPeakBytes) }} / 10m)
+++            </span>
+++          </div>
+++          <!-- Legend -->
+++          <div class="flex items-center gap-4 text-xs">
+++            <div class="flex items-center"><span class="w-3 h-3 rounded-sm bg-emerald-400 mr-1.5" /> Egress Waveform</div>
+++            <div class="flex items-center text-gray-400 font-mono text-[11px]">288 Intervals / 48 Hours</div>
+++          </div>
+++        </div>
+++
+++        <div v-if="loading" class="h-64 flex items-center justify-center bg-black/20 rounded-lg border border-white/5">
+++          <ui-loading-indicator />
+++        </div>
+++
+++        <div v-else-if="!waveform10m.length" class="h-64 flex flex-col items-center justify-center bg-black/20 rounded-lg border border-white/5 text-gray-400">
+++          <span class="material-symbols text-4xl mb-2 text-gray-500">query_stats</span>
+++          <p class="text-sm">No transfer records found in the last 48 hours</p>
+++        </div>
+++
+++        <!-- Smooth SVG Area/Line Waveform Canvas -->
+++        <div v-else class="bg-black/30 rounded-lg border border-white/5 p-4 relative overflow-hidden">
+++          <!-- Top Y-Axis Peak Label -->
+++          <div class="absolute top-3 left-4 text-[10px] font-mono text-gray-400 bg-black/60 px-1.5 py-0.5 rounded border border-white/10 z-10 pointer-events-none">
+++            Peak: {{ waveformPeakMbps }} Mbps ({{ $bytesPretty(waveformPeakBytes) }})
+++          </div>
+++
+++          <!-- Interactive Floating HUD Pill (Follows cursor) -->
+++          <div
+++            v-if="cursorPoint"
+++            class="absolute z-40 pointer-events-none bg-gray-950/95 border border-white/20 text-white rounded-lg p-2.5 text-xs shadow-2xl backdrop-blur-md transition-all duration-75 whitespace-nowrap"
+++            :style="{ left: `${Math.max(2, Math.min(78, (cursorPoint.x / 1000) * 100))}%`, top: '10px' }"
+++          >
+++            <div class="flex items-center justify-between border-b border-white/10 pb-1 mb-1">
+++              <span class="font-bold text-gray-200">{{ cursorPoint.pt.timeLabel }}</span>
+++              <span class="font-mono text-emerald-400 font-bold ml-2">~{{ cursorPoint.pt.mbps }} Mbps</span>
+++            </div>
+++            <p class="text-white font-semibold">10m Transfer: {{ $bytesPretty(cursorPoint.pt.bytesTotal) }}</p>
+++            <div class="text-[11px] text-gray-300 space-y-0.5 mt-1 border-t border-white/10 pt-1">
+++              <p class="text-sky-300 flex justify-between gap-3"><span>🌐 Internet:</span> <span class="font-mono">{{ $bytesPretty(cursorPoint.pt.bytesInternet) }}</span></p>
+++              <p class="text-amber-300 flex justify-between gap-3"><span>🏠 Local:</span> <span class="font-mono">{{ $bytesPretty(cursorPoint.pt.bytesLocal) }}</span></p>
+++              <p class="text-emerald-400 flex justify-between gap-3"><span>🎧 Streaming:</span> <span class="font-mono">{{ $bytesPretty(cursorPoint.pt.bytesStream) }}</span></p>
+++              <p class="text-purple-400 flex justify-between gap-3"><span>📥 Download:</span> <span class="font-mono">{{ $bytesPretty(cursorPoint.pt.bytesDownload) }}</span></p>
+++            </div>
+++            <p class="text-[10px] text-gray-400 pt-1 border-t border-white/10 mt-1">Requests: {{ cursorPoint.pt.requests }}</p>
+++          </div>
+++
+++          <!-- Responsive SVG Surface -->
+++          <svg
+++            ref="svgWaveform"
+++            viewBox="0 0 1000 240"
+++            class="w-full h-56 block cursor-crosshair"
+++            preserveAspectRatio="none"
+++            @mousemove="onSvgMouseMove"
+++            @mouseleave="cursorPoint = null"
+++          >
+++            <defs>
+++              <linearGradient id="waveGradient" x1="0%" y1="0%" x2="0%" y2="100%">
+++                <stop offset="0%" stop-color="#10b981" stop-opacity="0.45" />
+++                <stop offset="60%" stop-color="#06b6d4" stop-opacity="0.15" />
+++                <stop offset="100%" stop-color="#06b6d4" stop-opacity="0.0" />
+++              </linearGradient>
+++            </defs>
+++
+++            <!-- Horizontal Background Grid Lines -->
+++            <line x1="0" y1="25" x2="1000" y2="25" stroke="rgba(255,255,255,0.08)" stroke-dasharray="4,4" />
+++            <line x1="0" y1="115" x2="1000" y2="115" stroke="rgba(255,255,255,0.08)" stroke-dasharray="4,4" />
+++            <line x1="0" y1="205" x2="1000" y2="205" stroke="rgba(255,255,255,0.2)" />
+++
+++            <!-- Smooth SVG Area Fill -->
+++            <path :d="waveformSvgAreaPath" fill="url(#waveGradient)" />
+++
+++            <!-- Smooth SVG Curve Stroke -->
+++            <path :d="waveformSvgStrokePath" fill="none" stroke="#10b981" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round" />
+++
+++            <!-- Interactive Cursor Line & Indicator Point -->
+++            <template v-if="cursorPoint">
+++              <line :x1="cursorPoint.x" y1="20" :x2="cursorPoint.x" y2="205" stroke="#38bdf8" stroke-width="1.5" stroke-dasharray="3,3" />
+++              <circle :cx="cursorPoint.x" :cy="cursorPoint.y" r="4.5" fill="#10b981" stroke="#ffffff" stroke-width="2" />
+++            </template>
+++          </svg>
+++
+++          <!-- Time Axis Ticks (4 Ticks across 48 Hours) -->
+++          <div class="flex justify-between items-center text-[10px] text-gray-400 mt-2 px-1 font-mono">
+++            <span>-48 Hours</span>
+++            <span>-36 Hours</span>
+++            <span>-24 Hours</span>
+++            <span>-12 Hours</span>
+++            <span class="text-emerald-400 font-bold">Now (Live)</span>
+++          </div>
+++        </div>
+++      </div>
+++
+++      <!-- SECTION B: Daily Timeline Chart (Shown for all ranges except 48h) -->
+++      <div v-else class="mb-8">
+++        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-3">
+++          <h2 class="text-lg font-semibold flex items-center">
+++            <span class="material-symbols mr-2 text-accent">show_chart</span>
+++            Daily Transfer Timeline
+++            <span v-if="filteredTotalBytes" class="ml-2 text-xs font-mono font-normal text-gray-400">
+++              ({{ selectedTrafficTypeLabel }} Total: {{ $bytesPretty(filteredTotalBytes) }})
+++            </span>
+++            <span v-if="selectedDate" class="ml-2 text-xs font-semibold text-emerald-400 bg-emerald-500/20 px-2 py-0.5 rounded">
+++              Selected Day: {{ selectedDate }}
+++            </span>
+++          </h2>
+++          <!-- Legend -->
+++          <div class="flex items-center gap-4 text-xs">
+++            <div class="flex items-center"><span class="w-3 h-3 rounded-sm bg-emerald-500 mr-1.5" /> Streaming</div>
+++            <div class="flex items-center"><span class="w-3 h-3 rounded-sm bg-purple-500 mr-1.5" /> Downloads</div>
+++            <div class="flex items-center"><span class="w-3 h-3 rounded-sm bg-blue-500 mr-1.5" /> Other / API</div>
+++          </div>
+++        </div>
+++
+++        <div v-if="loading" class="h-64 flex items-center justify-center bg-black/20 rounded-lg border border-white/5">
+++          <ui-loading-indicator />
+++        </div>
+++
+++        <div v-else-if="!dailyChartData.length" class="h-64 flex flex-col items-center justify-center bg-black/20 rounded-lg border border-white/5 text-gray-400">
+++          <span class="material-symbols text-4xl mb-2 text-gray-500">query_stats</span>
+++          <p class="text-sm">No transfer records found for this period</p>
+++        </div>
+++
+++        <!-- Responsive Bar Chart -->
+++        <div v-else class="bg-black/30 rounded-lg border border-white/5 p-4 overflow-x-auto">
+++          <div class="relative h-64 flex items-end pt-8 pb-6 min-w-[500px]">
+++            <!-- Grid Lines -->
+++            <div class="absolute inset-x-0 top-8 bottom-6 flex flex-col justify-between pointer-events-none opacity-20">
+++              <div class="border-b border-white" />
+++              <div class="border-b border-white" />
+++              <div class="border-b border-white" />
+++              <div class="border-b border-white" />
+++            </div>
+++
+++            <!-- Top Y-Axis Label -->
+++            <div class="absolute top-2 left-2 text-[10px] font-mono text-gray-400 bg-black/60 px-1 rounded pointer-events-none">
+++              Max: {{ $bytesPretty(chartMaxBytes) }} ({{ selectedTrafficTypeLabel }})
+++            </div>
+++
+++            <!-- Floating Hover Tooltip: Positioned at top: 8px inside the chart container so it is NEVER clipped -->
+++            <div
+++              v-if="hoveredItem"
+++              class="absolute z-50 pointer-events-none flex flex-col bg-gray-950/95 border border-white/20 text-white rounded-lg p-3 text-xs shadow-2xl whitespace-nowrap min-w-[210px] backdrop-blur-md"
+++              :style="tooltipStyle"
+++            >
+++              <div class="flex items-center justify-between border-b border-white/10 pb-1.5 mb-1.5">
+++                <span class="font-bold text-gray-200 text-sm">{{ hoveredItem.date }}</span>
+++                <span v-if="selectedDate === hoveredItem.date" class="text-[10px] text-emerald-400 font-semibold bg-emerald-500/20 px-1.5 py-0.5 rounded">Selected</span>
+++              </div>
+++
+++              <!-- Highlight Active Traffic Filter prominently -->
+++              <div v-if="selectedTrafficType === 'internet'" class="mb-1.5 pb-1.5 border-b border-white/10">
+++                <p class="text-sky-300 font-bold text-sm flex items-center">
+++                  <span class="material-symbols text-sm mr-1">public</span>
+++                  Internet (WAN): {{ $bytesPretty(hoveredItem.bytesInternet) }}
+++                </p>
+++                <p v-if="hoveredItem.isLegacy" class="text-amber-300 text-[10px] mt-1 bg-amber-500/15 border border-amber-500/30 px-1.5 py-0.5 rounded">
+++                  ⚠️ Recorded prior to LAN/WAN tracking
+++                </p>
+++              </div>
+++              <div v-else-if="selectedTrafficType === 'local'" class="mb-1.5 pb-1.5 border-b border-white/10">
+++                <p class="text-amber-300 font-bold text-sm flex items-center">
+++                  <span class="material-symbols text-sm mr-1">home</span>
+++                  Local (LAN): {{ $bytesPretty(hoveredItem.bytesLocal) }}
+++                </p>
+++                <p v-if="hoveredItem.isLegacy" class="text-amber-300 text-[10px] mt-1 bg-amber-500/15 border border-amber-500/30 px-1.5 py-0.5 rounded">
+++                  ⚠️ Recorded prior to LAN/WAN tracking
+++                </p>
+++              </div>
+++              <div v-else class="mb-1.5 pb-1.5 border-b border-white/10">
+++                <p class="text-white font-bold text-sm">
+++                  Total Data: {{ $bytesPretty(hoveredItem.bytesTotal) }}
+++                </p>
+++              </div>
+++
+++              <!-- Category Breakdown -->
+++              <div class="space-y-0.5">
+++                <p class="text-emerald-400 flex justify-between"><span>Streaming:</span> <span class="font-mono">{{ $bytesPretty(hoveredItem.bytesStream) }}</span></p>
+++                <p class="text-purple-400 flex justify-between"><span>Download:</span> <span class="font-mono">{{ $bytesPretty(hoveredItem.bytesDownload) }}</span></p>
+++                <p class="text-blue-400 flex justify-between"><span>Other / API:</span> <span class="font-mono">{{ $bytesPretty(hoveredItem.bytesOther) }}</span></p>
+++              </div>
+++
+++              <!-- Network breakdown -->
+++              <div class="border-t border-white/10 pt-1.5 mt-1.5 space-y-0.5 text-[11px]">
+++                <p class="text-sky-300 flex justify-between"><span>🌐 Internet:</span> <span class="font-mono">{{ $bytesPretty(hoveredItem.bytesInternet) }}</span></p>
+++                <p class="text-amber-300 flex justify-between"><span>🏠 Local:</span> <span class="font-mono">{{ $bytesPretty(hoveredItem.bytesLocal) }}</span></p>
+++                <p class="font-bold text-white flex justify-between pt-0.5"><span>All Traffic:</span> <span class="font-mono">{{ $bytesPretty(hoveredItem.bytesTotal) }}</span></p>
+++              </div>
+++
+++              <!-- Footer: High-contrast, easily visible Requests + Click to filter -->
+++              <div class="border-t border-white/10 pt-1.5 mt-1.5 text-[11px] flex items-center justify-between">
+++                <span class="text-gray-300 font-medium">Requests: {{ hoveredItem.requests }}</span>
+++                <span class="inline-flex items-center gap-1 font-semibold text-emerald-400 bg-emerald-500/15 px-2 py-0.5 rounded border border-emerald-500/40 shadow-sm">
+++                  <span class="material-symbols text-[13px]">touch_app</span>
+++                  Click to filter
+++                </span>
+++              </div>
+++            </div>
+++
+++            <!-- Chart Bars -->
+++            <div class="w-full h-full flex items-end justify-between gap-1 z-10 px-2" @mouseleave="leaveItem">
+++              <div
+++                v-for="(item, index) in dailyChartData"
+++                :key="item.date"
+++                class="flex-1 h-full flex flex-col justify-end items-center cursor-pointer min-w-[12px] p-0.5 rounded transition-all duration-150"
+++                :class="{
+++                  'bg-white/10 ring-2 ring-accent ring-offset-2 ring-offset-black scale-105': selectedDate === item.date,
+++                  'scale-105': hoveredIndex === index
+++                }"
+++                @mouseenter="hoverItem(item, index)"
+++                @mouseleave="leaveItem"
+++                @click="selectDate(item.date)"
+++              >
+++                <!-- Stacked Bar (Height adjusted by selected traffic type) -->
+++                <div
+++                  class="w-full max-w-[28px] rounded-t flex flex-col-reverse overflow-hidden transition-all duration-150 group-hover:brightness-125"
+++                  :class="{ 'brightness-125': hoveredIndex === index }"
+++                  :style="{ height: `${Math.max(3, (getBarHeightBytes(item) / chartMaxBytes) * 100)}%` }"
+++                >
+++                  <template v-if="selectedTrafficType === 'internet'">
+++                    <div class="w-full h-full bg-sky-500" />
+++                  </template>
+++                  <template v-else-if="selectedTrafficType === 'local'">
+++                    <div class="w-full h-full bg-amber-500" />
+++                  </template>
+++                  <template v-else>
+++                    <div class="w-full bg-emerald-500" :style="{ height: `${(item.bytesStream / (item.bytesTotal || 1)) * 100}%` }" />
+++                    <div class="w-full bg-purple-500" :style="{ height: `${(item.bytesDownload / (item.bytesTotal || 1)) * 100}%` }" />
+++                    <div class="w-full bg-blue-500" :style="{ height: `${(item.bytesOther / (item.bytesTotal || 1)) * 100}%` }" />
+++                  </template>
+++                </div>
+++
+++                <!-- X Axis Date Label -->
+++                <p
+++                  class="text-[10px] mt-2 truncate w-full text-center transition-colors"
+++                  :class="selectedDate === item.date ? 'text-accent font-bold' : (hoveredIndex === index ? 'text-white' : 'text-gray-400')"
+++                >
+++                  {{ formatShortDate(item.date) }}
+++                </p>
+++              </div>
+++            </div>
+++          </div>
+++        </div>
+++      </div>
+++
+++      <!-- SECTION C: Approach 1: 24-Hour Time-of-Day Hourly Drill-Down (Shown when a single date is selected) -->
+++      <div v-if="selectedDate && hourlyData.length" class="mb-8">
+++        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-3">
+++          <div>
+++            <h2 class="text-lg font-semibold flex items-center">
+++              <span class="material-symbols mr-2 text-accent">schedule</span>
+++              Time-of-Day Hourly Activity for {{ selectedDate }}
+++            </h2>
+++            <p class="text-xs text-gray-400">Hourly timeline (00:00 – 23:00) showing the exact times of day when bandwidth was used</p>
+++          </div>
+++          <!-- Legend -->
+++          <div class="flex items-center gap-4 text-xs">
+++            <div class="flex items-center"><span class="w-3 h-3 rounded-sm bg-emerald-500 mr-1.5" /> Streaming</div>
+++            <div class="flex items-center"><span class="w-3 h-3 rounded-sm bg-purple-500 mr-1.5" /> Downloads</div>
+++            <div class="flex items-center"><span class="w-3 h-3 rounded-sm bg-blue-500 mr-1.5" /> Other / API</div>
+++          </div>
+++        </div>
+++
+++        <div class="bg-black/30 rounded-lg border border-white/5 p-4 overflow-x-auto">
+++          <div class="relative h-56 flex items-end pt-8 pb-6 min-w-[650px]">
+++            <!-- Grid Lines -->
+++            <div class="absolute inset-x-0 top-8 bottom-6 flex flex-col justify-between pointer-events-none opacity-20">
+++              <div class="border-b border-white" />
+++              <div class="border-b border-white" />
+++              <div class="border-b border-white" />
+++            </div>
+++
+++            <!-- Top Y-Axis Label -->
+++            <div class="absolute top-2 left-2 text-[10px] font-mono text-gray-400 bg-black/60 px-1 rounded pointer-events-none">
+++              Peak Hour: {{ $bytesPretty(hourlyChartMaxBytes) }}
+++            </div>
+++
+++            <!-- Floating Hover Tooltip for Hourly Chart -->
+++            <div
+++              v-if="hoveredHourlyItem"
+++              class="absolute z-50 pointer-events-none flex flex-col bg-gray-950/95 border border-white/20 text-white rounded-lg p-3 text-xs shadow-2xl whitespace-nowrap min-w-[200px] backdrop-blur-md"
+++              :style="hourlyTooltipStyle"
+++            >
+++              <div class="flex items-center justify-between border-b border-white/10 pb-1 mb-1">
+++                <span class="font-bold text-gray-200">{{ selectedDate }} {{ hoveredHourlyItem.label }}</span>
+++              </div>
+++              <p class="text-white font-bold text-sm">Hourly Total: {{ $bytesPretty(hoveredHourlyItem.bytesTotal) }}</p>
+++              <div class="text-[11px] text-gray-300 space-y-0.5 mt-1 border-t border-white/10 pt-1">
+++                <p class="text-sky-300 flex justify-between gap-3"><span>🌐 Internet:</span> <span class="font-mono">{{ $bytesPretty(hoveredHourlyItem.bytesInternet) }}</span></p>
+++                <p class="text-amber-300 flex justify-between gap-3"><span>🏠 Local:</span> <span class="font-mono">{{ $bytesPretty(hoveredHourlyItem.bytesLocal) }}</span></p>
+++                <p class="text-emerald-400 flex justify-between gap-3"><span>🎧 Stream:</span> <span class="font-mono">{{ $bytesPretty(hoveredHourlyItem.bytesStream) }}</span></p>
+++                <p class="text-purple-400 flex justify-between gap-3"><span>📥 Download:</span> <span class="font-mono">{{ $bytesPretty(hoveredHourlyItem.bytesDownload) }}</span></p>
+++              </div>
+++              <p class="text-[10px] text-gray-400 pt-1 border-t border-white/10 mt-1">Requests: {{ hoveredHourlyItem.requests }}</p>
+++            </div>
+++
+++            <!-- Hourly Bars (24 Columns) -->
+++            <div class="w-full h-full flex items-end justify-between gap-1 z-10 px-1" @mouseleave="leaveHourlyItem">
+++              <div
+++                v-for="(h, idx) in hourlyData"
+++                :key="h.hour"
+++                class="flex-1 h-full flex flex-col justify-end items-center cursor-pointer min-w-[10px] p-0.5 rounded transition-transform"
+++                :class="{ 'scale-105': hoveredHourlyIndex === idx }"
+++                @mouseenter="hoverHourly(h, idx)"
+++                @mouseleave="leaveHourlyItem"
+++              >
+++                <!-- Stacked Hourly Bar -->
+++                <div
+++                  class="w-full max-w-[22px] rounded-t flex flex-col-reverse overflow-hidden transition-all duration-150"
+++                  :class="{ 'brightness-125': hoveredHourlyIndex === idx }"
+++                  :style="{ height: `${Math.max(3, (getBarHeightBytes(h) / hourlyChartMaxBytes) * 100)}%` }"
+++                >
+++                  <template v-if="selectedTrafficType === 'internet'">
+++                    <div class="w-full h-full bg-sky-500" />
+++                  </template>
+++                  <template v-else-if="selectedTrafficType === 'local'">
+++                    <div class="w-full h-full bg-amber-500" />
+++                  </template>
+++                  <template v-else>
+++                    <div class="w-full bg-emerald-500" :style="{ height: `${(h.bytesStream / (h.bytesTotal || 1)) * 100}%` }" />
+++                    <div class="w-full bg-purple-500" :style="{ height: `${(h.bytesDownload / (h.bytesTotal || 1)) * 100}%` }" />
+++                    <div class="w-full bg-blue-500" :style="{ height: `${(h.bytesOther / (h.bytesTotal || 1)) * 100}%` }" />
+++                  </template>
+++                </div>
+++
+++                <!-- Hour Tick Label -->
+++                <p class="text-[9px] mt-2 truncate w-full text-center text-gray-400 font-mono">
+++                  {{ h.hour % 3 === 0 ? h.label : '' }}
+++                </p>
+++              </div>
+++            </div>
+++          </div>
+++        </div>
+++      </div>
+++
+++      <!-- Item / Book Activity Breakdown Table (Shown when a user is selected OR a date is clicked) -->
+++      <div v-if="selectedUserId" class="mb-8">
+++        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-3">
+++          <div>
+++            <h2 class="text-lg font-semibold flex items-center">
+++              <span class="material-symbols mr-2 text-accent">auto_stories</span>
+++              Book & Media Activity Breakdown for {{ selectedUserName }}
+++              <span v-if="selectedDate" class="ml-2 text-xs font-semibold text-emerald-400 bg-emerald-500/20 px-2 py-0.5 rounded">
+++                on {{ selectedDate }}
+++              </span>
+++            </h2>
+++            <p class="text-xs text-gray-400">
+++              Showing media streamed, downloaded, and transferred
+++              {{ selectedDate ? 'on ' + selectedDate : 'across ' + selectedRangeLabel }}
+++            </p>
+++          </div>
+++
+++          <div class="flex items-center gap-2">
+++            <ui-btn v-if="selectedDate" color="bg-white/10 hover:bg-white/20" small @click="clearDateFilter">
+++              <span class="material-symbols text-sm mr-1">close</span>
+++              Clear Date Filter
+++            </ui-btn>
+++            <ui-btn color="bg-primary" small @click="selectUser('')">
+++              <span class="material-symbols text-sm mr-1">arrow_back</span>
+++              Back to All Users
+++            </ui-btn>
+++          </div>
+++        </div>
+++
+++        <div class="bg-black/20 rounded-lg border border-white/5 overflow-hidden">
+++          <table class="w-full text-left text-sm">
+++            <thead class="bg-white/5 text-xs uppercase text-gray-400 font-semibold border-b border-white/10">
+++              <tr>
+++                <th class="py-3 px-4">Book / Media Item</th>
+++                <th class="py-3 px-4 text-center">Activity</th>
+++                <th class="py-3 px-4 text-right">Internet (WAN)</th>
+++                <th class="py-3 px-4 text-right">Local (LAN)</th>
+++                <th class="py-3 px-4 text-right font-bold text-white">Total Data</th>
+++                <th class="py-3 px-4 text-right hidden sm:table-cell">Requests</th>
+++                <th class="py-3 px-4 w-32">% of Activity</th>
+++              </tr>
+++            </thead>
+++            <tbody class="divide-y divide-white/5">
+++              <tr v-if="!itemBreakdown.length">
+++                <td colspan="7" class="text-center py-8 text-gray-400 text-sm">
+++                  <span class="material-symbols text-3xl mb-1 text-gray-500 block">hourglass_empty</span>
+++                  No individual book activity recorded for this period yet.
+++                  <p class="text-xs text-gray-500 mt-1">
+++                    Book & item-level tracking automatically records activity as audiobooks and files are streamed or downloaded.
+++                  </p>
+++                </td>
+++              </tr>
+++              <tr v-for="item in itemBreakdown" :key="item.libraryItemId" class="hover:bg-white/5 transition-colors">
+++                <td class="py-3 px-4">
+++                  <div class="flex items-center">
+++                    <span class="material-symbols text-xl mr-2.5" :class="getItemIconClass(item)">
+++                      {{ getItemIcon(item) }}
+++                    </span>
+++                    <div>
+++                      <p class="font-medium text-white">{{ item.itemName }}</p>
+++                      <p v-if="item.libraryItemId !== 'general'" class="text-[10px] text-gray-500 font-mono">
+++                        ID: {{ item.libraryItemId }}
+++                      </p>
+++                    </div>
+++                  </div>
+++                </td>
+++                <td class="py-3 px-4 text-center">
+++                  <div class="inline-flex flex-col items-center">
+++                    <span
+++                      class="text-[10px] px-2 py-0.5 rounded-full font-semibold uppercase tracking-wider"
+++                      :class="getCategoryBadgeClass(item.category)"
+++                      :title="getActivityTooltip(item)"
+++                    >
+++                      {{ item.category }}
+++                    </span>
+++                    <span
+++                      v-if="hasSecondaryActivity(item)"
+++                      class="text-[9px] text-gray-400 font-mono mt-0.5 cursor-help"
+++                      :title="getActivityTooltip(item)"
+++                    >
+++                      {{ getSecondaryActivityText(item) }}
+++                    </span>
+++                  </div>
+++                </td>
+++                <td class="py-3 px-4 text-right font-mono text-sky-400 font-medium">{{ $bytesPretty(item.bytesInternet) }}</td>
+++                <td class="py-3 px-4 text-right font-mono text-amber-300 font-medium">{{ $bytesPretty(item.bytesLocal) }}</td>
+++                <td class="py-3 px-4 text-right font-mono font-bold text-white">{{ $bytesPretty(item.bytesTotal) }}</td>
+++                <td class="py-3 px-4 text-right font-mono text-gray-300 hidden sm:table-cell">{{ item.requests }}</td>
+++                <td class="py-3 px-4">
+++                  <div class="flex items-center gap-2">
+++                    <div class="grow bg-white/10 rounded-full h-2 overflow-hidden">
+++                      <div class="bg-primary h-full rounded-full transition-all duration-300" :style="{ width: `${item.percentOfTotal}%` }" />
+++                    </div>
+++                    <span class="text-xs font-mono w-10 text-right text-gray-300">{{ item.percentOfTotal }}%</span>
+++                  </div>
+++                </td>
+++              </tr>
+++            </tbody>
+++          </table>
+++        </div>
+++      </div>
+++
+++      <!-- User Breakdown Table (Shown on All Users view) -->
+++      <div v-if="!selectedUserId">
+++        <div class="flex items-center justify-between mb-3">
+++          <div>
+++            <h2 class="text-lg font-semibold flex items-center">
+++              <span class="material-symbols mr-2 text-accent">group</span>
+++              Data Usage Breakdown by User
+++              <span v-if="selectedDate" class="ml-2 text-xs font-semibold text-emerald-400 bg-emerald-500/20 px-2 py-0.5 rounded">
+++                on {{ selectedDate }}
+++              </span>
+++            </h2>
+++            <p class="text-xs text-gray-400">Click any user row to view individual book & stream breakdowns</p>
+++          </div>
+++          <div class="flex items-center gap-2">
+++            <ui-btn v-if="selectedDate" color="bg-white/10 hover:bg-white/20" small @click="clearDateFilter">
+++              <span class="material-symbols text-sm mr-1">close</span>
+++              Clear Date Filter
+++            </ui-btn>
+++            <p class="text-xs text-gray-400">{{ userBreakdown.length }} Users</p>
+++          </div>
+++        </div>
+++
+++        <div class="bg-black/20 rounded-lg border border-white/5 overflow-hidden">
+++          <table class="w-full text-left text-sm">
+++            <thead class="bg-white/5 text-xs uppercase text-gray-400 font-semibold border-b border-white/10">
+++              <tr>
+++                <th class="py-3 px-4">User</th>
+++                <th class="py-3 px-4 text-right">Internet (WAN)</th>
+++                <th class="py-3 px-4 text-right">Local (LAN)</th>
+++                <th class="py-3 px-4 text-right hidden sm:table-cell">Streaming</th>
+++                <th class="py-3 px-4 text-right hidden sm:table-cell">Downloads</th>
+++                <th class="py-3 px-4 text-right font-bold text-white">Total</th>
+++                <th class="py-3 px-4 w-36">% of Total</th>
+++                <th class="py-3 px-2 w-10"></th>
+++              </tr>
+++            </thead>
+++            <tbody class="divide-y divide-white/5">
+++              <tr v-if="!userBreakdown.length">
+++                <td colspan="8" class="text-center py-8 text-gray-400 text-sm">No user data recorded for this time frame.</td>
+++              </tr>
+++              <tr
+++                v-for="user in userBreakdown"
+++                :key="user.userId"
+++                class="hover:bg-white/10 transition-colors cursor-pointer group"
+++                @click="selectUser(user.userId)"
+++                title="Click to view item & book activity for this user"
+++              >
+++                <td class="py-3 px-4">
+++                  <div class="flex items-center">
+++                    <span class="material-symbols text-xl mr-2 group-hover:scale-110 transition-transform" :class="user.userId === 'anonymous' ? 'text-gray-400' : 'text-sky-400'">
+++                      {{ user.userId === 'anonymous' ? 'public' : 'person' }}
+++                    </span>
+++                    <div>
+++                      <p class="font-medium text-white group-hover:text-sky-300 transition-colors flex items-center">
+++                        {{ user.username }}
+++                        <span class="material-symbols text-xs ml-1 opacity-0 group-hover:opacity-100 transition-opacity">open_in_new</span>
+++                      </p>
+++                      <p v-if="user.userId !== 'anonymous'" class="text-[10px] text-gray-500 font-mono">{{ user.userId }}</p>
+++                    </div>
+++                  </div>
+++                </td>
+++                <td class="py-3 px-4 text-right font-mono text-sky-400 font-medium">{{ $bytesPretty(user.bytesInternet) }}</td>
+++                <td class="py-3 px-4 text-right font-mono text-amber-300 font-medium">{{ $bytesPretty(user.bytesLocal) }}</td>
+++                <td class="py-3 px-4 text-right font-mono text-emerald-400 hidden sm:table-cell">{{ $bytesPretty(user.bytesStream) }}</td>
+++                <td class="py-3 px-4 text-right font-mono text-purple-400 hidden sm:table-cell">{{ $bytesPretty(user.bytesDownload) }}</td>
+++                <td class="py-3 px-4 text-right font-mono font-bold text-white">{{ $bytesPretty(user.bytesTotal) }}</td>
+++                <td class="py-3 px-4">
+++                  <div class="flex items-center gap-2">
+++                    <div class="grow bg-white/10 rounded-full h-2 overflow-hidden">
+++                      <div class="bg-primary h-full rounded-full transition-all duration-300" :style="{ width: `${user.percentOfTotal}%` }" />
+++                    </div>
+++                    <span class="text-xs font-mono w-10 text-right text-gray-300">{{ user.percentOfTotal }}%</span>
+++                  </div>
+++                </td>
+++                <td class="py-3 px-2 text-center text-gray-500 group-hover:text-white">
+++                  <span class="material-symbols text-sm">chevron_right</span>
+++                </td>
+++              </tr>
+++            </tbody>
+++          </table>
+++        </div>
+++      </div>
+++    </app-settings-content>
+++
+++    <!-- Confirm Clear Stats Modal -->
+++    <prompt-dialog v-model="showConfirmClear" :width="500">
+++      <div class="px-6 py-6 rounded-lg bg-bg shadow-xl border border-white/10">
+++        <h2 class="text-lg font-semibold text-error mb-2 flex items-center">
+++          <span class="material-symbols mr-2">delete_forever</span>
+++          Clear All Bandwidth Records?
+++        </h2>
+++        <p class="text-sm text-gray-300 mb-6">This will permanently erase all accumulated bandwidth and data transfer statistics across all users. This action cannot be undone.</p>
+++        <div class="flex justify-end gap-3">
+++          <ui-btn color="bg-primary" @click="showConfirmClear = false">Cancel</ui-btn>
+++          <ui-btn color="bg-error" :loading="clearing" @click="clearStats">Yes, Clear Stats</ui-btn>
+++        </div>
+++      </div>
+++    </prompt-dialog>
+++  </div>
+++</template>
+++
+++<script>
+++export default {
+++  asyncData({ store, redirect }) {
+++    if (!store.getters['user/getIsAdminOrUp']) {
+++      redirect('/')
+++    }
+++  },
+++  data() {
+++    return {
+++      loading: false,
+++      clearing: false,
+++      showConfirmClear: false,
+++      selectedRange: 'last7Days',
+++      selectedTrafficType: 'all',
+++      selectedUserId: '',
+++      selectedDate: null,
+++      hoveredItem: null,
+++      hoveredIndex: -1,
+++      hoveredHourlyItem: null,
+++      hoveredHourlyIndex: -1,
+++      cursorPoint: null,
+++      rangeOptions: [
+++        { label: 'Live 48h (10m)', value: 'last48Hours' },
+++        { label: 'Today', value: 'today' },
+++        { label: 'Last 7 Days', value: 'last7Days' },
+++        { label: 'Last 30 Days', value: 'last30Days' },
+++        { label: 'This Year', value: 'thisYear' },
+++        { label: 'All Time', value: 'all' }
+++      ],
+++      trafficTypeOptions: [
+++        { label: 'All Traffic', value: 'all', icon: 'traffic' },
+++        { label: 'Internet', value: 'internet', icon: 'public' },
+++        { label: 'Local LAN', value: 'local', icon: 'home' }
+++      ],
+++      summary: {
+++        today: { total: 0, stream: 0, download: 0, other: 0, local: 0, internet: 0, requests: 0 },
+++        last7Days: { total: 0, stream: 0, download: 0, other: 0, local: 0, internet: 0, requests: 0 },
+++        thisMonth: { total: 0, stream: 0, download: 0, other: 0, local: 0, internet: 0, requests: 0 },
+++        thisYear: { total: 0, stream: 0, download: 0, other: 0, local: 0, internet: 0, requests: 0 },
+++        allTime: { total: 0, stream: 0, download: 0, other: 0, local: 0, internet: 0, requests: 0 }
+++      },
+++      dailyChartData: [],
+++      userBreakdown: [],
+++      itemBreakdown: [],
+++      hourlyData: [],
+++      waveform10m: [],
+++      waveformPeakBytes: 0,
+++      waveformPeakMbps: 0,
+++      filteredTotalBytes: 0,
+++      allUsers: []
+++    }
+++  },
+++  computed: {
+++    serverSettings() {
+++      return this.$store.state.serverSettings || {}
+++    },
+++    isTrackingEnabled() {
+++      return !!this.serverSettings.enableBandwidthTracking
+++    },
+++    selectedUserName() {
+++      if (!this.selectedUserId) return ''
+++      if (this.selectedUserId === 'anonymous') return 'Anonymous / Public'
+++      const found = this.allUsers.find((u) => u.id === this.selectedUserId)
+++      return found?.username || this.selectedUserId
+++    },
+++    selectedRangeLabel() {
+++      const found = this.rangeOptions.find((r) => r.value === this.selectedRange)
+++      return found?.label || this.selectedRange
+++    },
+++    selectedTrafficTypeLabel() {
+++      if (this.selectedTrafficType === 'internet') return 'Internet (WAN)'
+++      if (this.selectedTrafficType === 'local') return 'Local (LAN)'
+++      return 'All Traffic'
+++    },
+++    userDropdownItems() {
+++      const items = [{ text: 'All Users', value: '' }]
+++      if (this.allUsers?.length) {
+++        this.allUsers.forEach((u) => {
+++          items.push({ text: u.username, value: u.id })
+++        })
+++      }
+++      items.push({ text: 'Anonymous / Public', value: 'anonymous' })
+++      return items
+++    },
+++    chartMaxBytes() {
+++      if (!this.dailyChartData.length) return 1
+++      const max = Math.max(...this.dailyChartData.map((d) => this.getBarHeightBytes(d)))
+++      return max > 0 ? max : 1
+++    },
+++    hourlyChartMaxBytes() {
+++      if (!this.hourlyData.length) return 1
+++      const max = Math.max(...this.hourlyData.map((h) => this.getBarHeightBytes(h)))
+++      return max > 0 ? max : 1
+++    },
+++    tooltipStyle() {
+++      if (!this.hoveredItem || this.hoveredIndex < 0) return {}
+++      const total = this.dailyChartData.length || 1
+++      const idx = this.hoveredIndex
+++      const style = { top: '8px' }
+++      if (idx <= 1) {
+++        const leftPercent = Math.max(1, (idx / total) * 100)
+++        style.left = `${leftPercent}%`
+++      } else if (idx >= total - 2) {
+++        const rightPercent = Math.max(1, ((total - 1 - idx) / total) * 100)
+++        style.right = `${rightPercent}%`
+++        style.left = 'auto'
+++      } else {
+++        const centerPercent = ((idx + 0.5) / total) * 100
+++        style.left = `${centerPercent}%`
+++        style.transform = 'translateX(-50%)'
+++      }
+++      return style
+++    },
+++    hourlyTooltipStyle() {
+++      if (!this.hoveredHourlyItem || this.hoveredHourlyIndex < 0) return {}
+++      const total = this.hourlyData.length || 1
+++      const idx = this.hoveredHourlyIndex
+++      const style = { top: '8px' }
+++      if (idx <= 2) {
+++        style.left = `${Math.max(1, (idx / total) * 100)}%`
+++      } else if (idx >= total - 3) {
+++        style.right = `${Math.max(1, ((total - 1 - idx) / total) * 100)}%`
+++        style.left = 'auto'
+++      } else {
+++        style.left = `${((idx + 0.5) / total) * 100}%`
+++        style.transform = 'translateX(-50%)'
+++      }
+++      return style
+++    },
+++    waveformPoints() {
+++      if (!this.waveform10m || !this.waveform10m.length) return []
+++      const maxVal = this.waveformPeakBytes || 1
+++      const count = this.waveform10m.length
+++      const width = 1000
+++      const height = 180
+++      const topOffset = 25
+++
+++      return this.waveform10m.map((pt, i) => {
+++        const x = (i / (count - 1 || 1)) * width
+++        let val = pt.bytesTotal
+++        if (this.selectedTrafficType === 'internet') val = pt.bytesInternet
+++        else if (this.selectedTrafficType === 'local') val = pt.bytesLocal
+++        const y = topOffset + height - Math.min(height, (val / maxVal) * height)
+++        return { x, y, pt, val }
+++      })
+++    },
+++    waveformSvgAreaPath() {
+++      if (!this.waveformPoints.length) return ''
+++      const pts = this.waveformPoints
+++      let d = `M ${pts[0].x} ${pts[0].y}`
+++      for (let i = 1; i < pts.length; i++) {
+++        d += ` L ${pts[i].x} ${pts[i].y}`
+++      }
+++      d += ` L ${pts[pts.length - 1].x} 205 L ${pts[0].x} 205 Z`
+++      return d
+++    },
+++    waveformSvgStrokePath() {
+++      if (!this.waveformPoints.length) return ''
+++      const pts = this.waveformPoints
+++      let d = `M ${pts[0].x} ${pts[0].y}`
+++      for (let i = 1; i < pts.length; i++) {
+++        d += ` L ${pts[i].x} ${pts[i].y}`
+++      }
+++      return d
+++    }
+++  },
+++  methods: {
+++    selectRange(range) {
+++      this.selectedRange = range
+++      this.selectedDate = null
+++      this.cursorPoint = null
+++      this.loadStats()
+++    },
+++    selectTrafficType(type) {
+++      this.selectedTrafficType = type
+++      this.loadStats()
+++    },
+++    selectUser(userId) {
+++      this.selectedUserId = userId
+++      this.loadStats()
+++    },
+++    selectDate(date) {
+++      if (this.selectedDate === date) {
+++        this.selectedDate = null
+++      } else {
+++        this.selectedDate = date
+++      }
+++      this.loadStats()
+++    },
+++    clearDateFilter() {
+++      this.selectedDate = null
+++      this.loadStats()
+++    },
+++    hoverItem(item, index) {
+++      this.hoveredItem = item
+++      this.hoveredIndex = index
+++    },
+++    leaveItem() {
+++      this.hoveredItem = null
+++      this.hoveredIndex = -1
+++    },
+++    hoverHourly(item, index) {
+++      this.hoveredHourlyItem = item
+++      this.hoveredHourlyIndex = index
+++    },
+++    leaveHourlyItem() {
+++      this.hoveredHourlyItem = null
+++      this.hoveredHourlyIndex = -1
+++    },
+++    onSvgMouseMove(event) {
+++      if (!this.waveformPoints.length) return
+++      const svg = this.$refs.svgWaveform
+++      if (!svg) return
+++      const rect = svg.getBoundingClientRect()
+++      const mouseX = event.clientX - rect.left
+++      const svgX = (mouseX / rect.width) * 1000
+++      const count = this.waveformPoints.length
+++      const index = Math.round((svgX / 1000) * (count - 1))
+++      const clampedIndex = Math.max(0, Math.min(count - 1, index))
+++      this.cursorPoint = this.waveformPoints[clampedIndex]
+++    },
+++    getBarHeightBytes(item) {
+++      if (this.selectedTrafficType === 'internet') {
+++        return item.bytesInternet || 0
+++      } else if (this.selectedTrafficType === 'local') {
+++        return item.bytesLocal || 0
+++      }
+++      return item.bytesTotal || 0
+++    },
+++    getItemIcon(item) {
+++      if (item.libraryItemId === 'general') return 'devices'
+++      if (item.libraryItemId === 'backup') return 'settings_backup_restore'
+++      if (item.libraryItemId === 'shared') return 'share'
+++      if (item.category === 'stream') return 'headphones'
+++      if (item.category === 'download') return 'download_for_offline'
+++      return 'book_2'
+++    },
+++    getItemIconClass(item) {
+++      if (item.libraryItemId === 'general') return 'text-gray-400'
+++      if (item.category === 'stream') return 'text-emerald-400'
+++      if (item.category === 'download') return 'text-purple-400'
+++      return 'text-sky-400'
+++    },
+++    getCategoryBadgeClass(category) {
+++      if (category === 'stream') return 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
+++      if (category === 'download') return 'bg-purple-500/20 text-purple-300 border border-purple-500/30'
+++      return 'bg-blue-500/20 text-blue-300 border border-blue-500/30'
+++    },
+++    hasSecondaryActivity(item) {
+++      if (!item) return false
+++      let count = 0
+++      if ((item.bytesStream || 0) > 0) count++
+++      if ((item.bytesDownload || 0) > 0) count++
+++      if ((item.bytesOther || 0) > 0) count++
+++      return count > 1
+++    },
+++    getSecondaryActivityText(item) {
+++      if (!item) return ''
+++      const parts = []
+++      if (item.category !== 'stream' && (item.bytesStream || 0) > 0) {
+++        parts.push(`+${this.$bytesPretty(item.bytesStream)} stream`)
+++      }
+++      if (item.category !== 'download' && (item.bytesDownload || 0) > 0) {
+++        parts.push(`+${this.$bytesPretty(item.bytesDownload)} dl`)
+++      }
+++      if (item.category !== 'other' && (item.bytesOther || 0) > 0) {
+++        parts.push(`+${this.$bytesPretty(item.bytesOther)} other`)
+++      }
+++      return parts.join(', ')
+++    },
+++    getActivityTooltip(item) {
+++      if (!item) return ''
+++      const parts = []
+++      if ((item.bytesStream || 0) > 0) parts.push(`Streaming: ${this.$bytesPretty(item.bytesStream)}`)
+++      if ((item.bytesDownload || 0) > 0) parts.push(`Downloads: ${this.$bytesPretty(item.bytesDownload)}`)
+++      if ((item.bytesOther || 0) > 0) parts.push(`Other (Covers/Meta): ${this.$bytesPretty(item.bytesOther)}`)
+++      return parts.join(' | ')
+++    },
+++    formatShortDate(dateStr) {
+++      if (!dateStr) return ''
+++      const parts = dateStr.split('-')
+++      if (parts.length === 3) {
+++        return `${parts[1]}/${parts[2]}`
+++      }
+++      return dateStr
+++    },
+++    async loadStats() {
+++      this.loading = true
+++      try {
+++        let url = `/api/stats/bandwidth?range=${this.selectedRange}`
+++        if (this.selectedUserId) {
+++          url += `&userId=${this.selectedUserId}`
+++        }
+++        if (this.selectedTrafficType && this.selectedTrafficType !== 'all') {
+++          url += `&trafficType=${this.selectedTrafficType}`
+++        }
+++        if (this.selectedDate) {
+++          url += `&date=${this.selectedDate}`
+++        }
+++        const data = await this.$axios.$get(url)
+++        if (data) {
+++          this.summary = data.summary || this.summary
+++          this.dailyChartData = data.daily || []
+++          this.userBreakdown = data.userBreakdown || []
+++          this.itemBreakdown = data.itemBreakdown || []
+++          this.hourlyData = data.hourly || []
+++          this.waveform10m = data.waveform10m || []
+++          this.waveformPeakBytes = data.waveformPeakBytes || 0
+++          this.waveformPeakMbps = data.waveformPeakMbps || 0
+++          this.filteredTotalBytes = data.rangeTotalBytes || 0
+++        }
+++      } catch (err) {
+++        console.error('Failed to load bandwidth stats:', err)
+++        this.$toast.error('Failed to load bandwidth stats')
+++      } finally {
+++        this.loading = false
+++      }
+++    },
+++    async loadUsers() {
+++      try {
+++        const users = await this.$axios.$get('/api/users')
+++        this.allUsers = users?.users || users || []
+++      } catch (err) {
+++        console.error('Failed to load users for filter:', err)
+++      }
+++    },
+++    async clearStats() {
+++      this.clearing = true
+++      try {
+++        await this.$axios.$delete('/api/stats/bandwidth')
+++        this.$toast.success('Bandwidth statistics cleared')
+++        this.showConfirmClear = false
+++        this.selectedDate = null
+++        this.hoveredItem = null
+++        this.hoveredIndex = -1
+++        this.hoveredHourlyItem = null
+++        this.hoveredHourlyIndex = -1
+++        this.cursorPoint = null
+++        await this.loadStats()
+++      } catch (err) {
+++        console.error('Failed to clear bandwidth stats:', err)
+++        this.$toast.error('Failed to clear bandwidth stats')
+++      } finally {
+++        this.clearing = false
+++      }
+++    }
+++  },
+++  mo
+\ No newline at end of file
 diff --git a/server/Database.js b/server/Database.js
 index 65c8d539..ea424b76 100644
 --- a/server/Database.js
@@ -1510,10 +2854,12 @@ index 32ed1973..fd05e8e1 100644
     * @param {RequestWithUser} req
 diff --git a/server/managers/BandwidthManager.js b/server/managers/BandwidthManager.js
 new file mode 100644
-index 00000000..68a0f959
+index 00000000..c73bc4aa
 --- /dev/null
 +++ b/server/managers/BandwidthManager.js
-@@ -0,0 +1,1098 @@
+@@ -0,0 +1,1304 @@
++const os = require('os')
++const axios = require('axios')
 +const { Op } = require('sequelize')
 +const Database = require('../Database')
 +const Logger = require('../Logger')
@@ -1521,27 +2867,34 @@ index 00000000..68a0f959
 +const requestIp = require('../libs/requestIp')
 +
 +/**
-+ * Check if IP address belongs to a private / local network
++ * Match IPv4 address against an IP or CIDR block (e.g. "192.168.1.0/24")
 + * @param {string} ip
++ * @param {string} cidr
 + * @returns {boolean}
 + */
-+function isLocalIp(ip) {
-+  if (!ip) return false
-+  if (ip.startsWith('::ffff:')) {
-+    ip = ip.substring(7)
++function ipInCidr(ip, cidr) {
++  if (!ip || !cidr) return false
++  const [range, bitsStr] = cidr.trim().split('/')
++  if (!range) return false
++
++  // Exact IP match if no mask bits specified
++  if (!bitsStr) {
++    return ip === range
 +  }
-+  if (ip === '127.0.0.1' || ip === '::1' || ip === 'localhost') return true
-+  // 10.0.0.0/8
-+  if (/^10\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(ip)) return true
-+  // 172.16.0.0/12 (172.16.0.0 - 172.31.255.255)
-+  if (/^172\.(1[6-9]|2\d|3[0-1])\.\d{1,3}\.\d{1,3}$/.test(ip)) return true
-+  // 192.168.0.0/16
-+  if (/^192\.168\.\d{1,3}\.\d{1,3}$/.test(ip)) return true
-+  // 169.254.0.0/16 (link-local)
-+  if (/^169\.254\.\d{1,3}\.\d{1,3}$/.test(ip)) return true
-+  // IPv6 local: fc00::/7, fe80::/10
-+  if (/^(fc|fd|fe80)/i.test(ip)) return true
-+  return false
++
++  const bits = parseInt(bitsStr, 10)
++  if (isNaN(bits) || bits < 0 || bits > 32) return false
++
++  const ipParts = ip.split('.').map(Number)
++  const rangeParts = range.split('.').map(Number)
++  if (ipParts.length !== 4 || rangeParts.length !== 4) return false
++  if (ipParts.some(isNaN) || rangeParts.some(isNaN)) return false
++
++  const ipNum = ((ipParts[0] << 24) | (ipParts[1] << 16) | (ipParts[2] << 8) | ipParts[3]) >>> 0
++  const rangeNum = ((rangeParts[0] << 24) | (rangeParts[1] << 16) | (rangeParts[2] << 8) | rangeParts[3]) >>> 0
++  const mask = bits === 0 ? 0 : (~0 << (32 - bits)) >>> 0
++
++  return (ipNum & mask) === (rangeNum & mask)
 +}
 +
 +class BandwidthManager {
@@ -1560,11 +2913,141 @@ index 00000000..68a0f959
 +    this.timeBuffer = new Map()
 +    /** @type {Map<string, string>} */
 +    this.itemTitleCache = new Map()
++
++    /** @type {Set<string>} Host machine interface IPs */
++    this.localInterfaceIps = new Set()
++    /** @type {Set<string>} Server's own public WAN IP(s) to correctly classify Hairpin NAT loopback from LAN */
++    this.serverPublicIps = new Set()
++
 +    this.flushInterval = null
++    this.publicIpRefreshInterval = null
++
++    this.initLocalInterfaces()
++  }
++
++  /**
++   * Enumerate host network interfaces
++   */
++  initLocalInterfaces() {
++    this.localInterfaceIps.clear()
++    try {
++      const interfaces = os.networkInterfaces()
++      for (const name in interfaces) {
++        for (const iface of interfaces[name]) {
++          if (iface.address) {
++            let addr = iface.address
++            if (addr.startsWith('::ffff:')) addr = addr.substring(7)
++            this.localInterfaceIps.add(addr.toLowerCase())
++          }
++        }
++      }
++      Logger.debug(`[BandwidthManager] Initialized ${this.localInterfaceIps.size} local host interface IPs`)
++    } catch (err) {
++      Logger.error('[BandwidthManager] Failed to enumerate host network interfaces:', err)
++    }
++  }
++
++  /**
++   * Auto-detect server public WAN IP via external lookup service
++   * This is essential for recognizing router Hairpin NAT (NAT Loopback) from devices on home Wi-Fi
++   * @returns {Promise<string|null>}
++   */
++  async fetchPublicIp() {
++    const endpoints = [
++      'https://api.ipify.org',
++      'https://api.my-ip.io/ip',
++      'https://ifconfig.me/ip',
++      'https://icanhazip.com'
++    ]
++
++    for (const endpoint of endpoints) {
++      try {
++        const res = await axios.get(endpoint, {
++          timeout: 5000,
++          headers: { 'User-Agent': 'audiobookshelf-bandwidth-manager' },
++          responseType: 'text'
++        })
++        const ip = (res.data || '').toString().trim()
++        if (ip && (/^(\d{1,3}\.){3}\d{1,3}$/.test(ip) || ip.includes(':'))) {
++          if (!this.serverPublicIps.has(ip)) {
++            this.serverPublicIps.add(ip)
++            Logger.info(`[BandwidthManager] Detected server public WAN IP: ${ip} (Hairpin NAT loopback traffic will be classified as Local LAN)`)
++          }
++          return ip
++        }
++      } catch {
++        // Try next endpoint
++      }
++    }
++    return null
++  }
++
++  /**
++   * Check if IP address belongs to local network (LAN), host loopback, or router Hairpin NAT loopback
++   * @param {string} ip
++   * @returns {boolean}
++   */
++  isLocalIp(ip) {
++    if (!ip) return false
++    if (ip.startsWith('::ffff:')) {
++      ip = ip.substring(7)
++    }
++    ip = ip.trim().toLowerCase()
++
++    // 1. Loopback
++    if (ip === '127.0.0.1' || ip === '::1' || ip === 'localhost') return true
++
++    // 2. Server's public WAN IP(s) - Hairpin NAT (NAT Loopback) from home Wi-Fi/LAN
++    if (this.serverPublicIps.has(ip)) return true
++
++    // 3. Host network interfaces
++    if (this.localInterfaceIps.has(ip)) return true
++
++    // 4. RFC 1918 Private IPv4:
++    // 10.0.0.0/8
++    if (/^10\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(ip)) return true
++    // 172.16.0.0/12 (172.16.0.0 - 172.31.255.255)
++    if (/^172\.(1[6-9]|2\d|3[0-1])\.\d{1,3}\.\d{1,3}$/.test(ip)) return true
++    // 192.168.0.0/16
++    if (/^192\.168\.\d{1,3}\.\d{1,3}$/.test(ip)) return true
++
++    // 5. RFC 6598: Carrier-Grade NAT (100.64.0.0/10: 100.64.0.0 - 100.127.255.255) used by Tailscale, NetBird & CGNAT
++    if (/^100\.(6[4-9]|[7-9]\d|1[0-1]\d|12[0-7])\.\d{1,3}\.\d{1,3}$/.test(ip)) return true
++
++    // 6. Link-local (169.254.0.0/16)
++    if (/^169\.254\.\d{1,3}\.\d{1,3}$/.test(ip)) return true
++
++    // 7. IPv6 local: Unique Local Addresses (fc00::/7) and Link-Local (fe80::/10)
++    if (/^(fc|fd|fe80)/i.test(ip)) return true
++
++    // 8. Custom user-configured local subnets / IPs
++    const customSubnets = global.ServerSettings?.bandwidthLocalSubnets
++    if (customSubnets && typeof customSubnets === 'string') {
++      const entries = customSubnets.split(/[,;\s]+/).map((s) => s.trim()).filter(Boolean)
++      for (const entry of entries) {
++        if (ipInCidr(ip, entry)) return true
++      }
++    }
++
++    return false
 +  }
 +
 +  async init() {
 +    Logger.info('[BandwidthManager] Initialized')
++
++    // Refresh local network interfaces and auto-detect server public WAN IP
++    this.initLocalInterfaces()
++    this.fetchPublicIp().catch((err) => {
++      Logger.debug(`[BandwidthManager] Note: Could not auto-detect public WAN IP on startup: ${err.message}`)
++    })
++
++    // Refresh public WAN IP every 6 hours in case of dynamic IP change
++    this.publicIpRefreshInterval = setInterval(() => {
++      this.fetchPublicIp().catch(() => {})
++    }, 6 * 3600 * 1000)
++    if (this.publicIpRefreshInterval.unref) {
++      this.publicIpRefreshInterval.unref()
++    }
 +
 +    // Ensure legacy SQLite columns exist
 +    await this.ensureColumns()
@@ -1619,6 +3102,10 @@ index 00000000..68a0f959
 +    if (this.flushInterval) {
 +      clearInterval(this.flushInterval)
 +      this.flushInterval = null
++    }
++    if (this.publicIpRefreshInterval) {
++      clearInterval(this.publicIpRefreshInterval)
++      this.publicIpRefreshInterval = null
 +    }
 +    await this.flush()
 +  }
@@ -1701,12 +3188,70 @@ index 00000000..68a0f959
 +      return { libraryItemId: itemId, itemName: 'Item ' + itemId.substring(0, 8) }
 +    }
 +
-+    // 5. Shared media links: /share/:slug or /public/share/:slug
-+    if (path.includes('/share/')) {
++    // 5. RSS Feeds: /feed/:slug/...
++    const feedMatch = path.match(/\/feed\/([^/]+)/)
++    if (feedMatch) {
++      const slug = feedMatch[1]
++      const cacheKey = `feed_${slug}`
++      if (this.itemTitleCache.has(cacheKey)) {
++        return { libraryItemId: cacheKey, itemName: this.itemTitleCache.get(cacheKey) }
++      }
++      try {
++        if (Database.feedModel) {
++          const feed = await Database.feedModel.findOne({
++            where: { slug },
++            attributes: ['id', 'entityId', 'entityType', 'title', 'userId']
++          })
++          if (feed) {
++            const title = feed.title ? `RSS: ${feed.title}` : 'RSS Feed'
++            this.itemTitleCache.set(cacheKey, title)
++            return { libraryItemId: feed.entityId || feed.id, itemName: title, userId: feed.userId }
++          }
++        }
++      } catch (err) {
++        Logger.debug(`[BandwidthManager] Failed to resolve feed title for ${slug}: ${err.message}`)
++      }
++      return { libraryItemId: cacheKey, itemName: `RSS Feed (${slug})` }
++    }
++
++    // 6. Shared media links: /share/:slug or /public/share/:slug
++    const shareMatch = path.match(/\/share\/([^/]+)/)
++    if (shareMatch) {
++      const slug = shareMatch[1]
++      const cacheKey = `share_${slug}`
++      if (this.itemTitleCache.has(cacheKey)) {
++        return { libraryItemId: cacheKey, itemName: this.itemTitleCache.get(cacheKey) }
++      }
++      try {
++        if (Database.mediaItemShareModel) {
++          const share = await Database.mediaItemShareModel.findOne({
++            where: { slug },
++            attributes: ['id', 'libraryItemId', 'userId']
++          })
++          if (share) {
++            let title = this.itemTitleCache.get(share.libraryItemId)
++            if (!title && Database.libraryItemModel) {
++              const item = await Database.libraryItemModel.findByPk(share.libraryItemId, {
++                attributes: ['id'],
++                include: [
++                  { model: Database.bookModel, attributes: ['title'] },
++                  { model: Database.podcastModel, attributes: ['title'] }
++                ]
++              })
++              title = item?.media?.title || item?.book?.title || item?.podcast?.title || 'Shared Media'
++              this.itemTitleCache.set(share.libraryItemId, title)
++            }
++            this.itemTitleCache.set(cacheKey, title || 'Shared Media')
++            return { libraryItemId: share.libraryItemId || cacheKey, itemName: title || 'Shared Media', userId: share.userId }
++          }
++        }
++      } catch (err) {
++        Logger.debug(`[BandwidthManager] Failed to resolve share info for ${slug}: ${err.message}`)
++      }
 +      return { libraryItemId: 'shared', itemName: 'Shared Media Link' }
 +    }
 +
-+    // 6. Backups
++    // 7. Backups
 +    if (path.includes('/backups/')) {
 +      return { libraryItemId: 'backup', itemName: 'Server Backup' }
 +    }
@@ -1856,36 +3401,41 @@ index 00000000..68a0f959
 +  }
 +
 +  /**
-+   * Determine traffic category based on request URL and query
++   * Determine traffic category based on request URL, query, headers, and response content-type
 +   *
 +   * @param {import('express').Request} req
++   * @param {import('express').Response} [res]
 +   * @returns {'stream'|'download'|'other'}
 +   */
-+  categorizeRequest(req) {
++  categorizeRequest(req, res = null) {
 +    const url = req.originalUrl || req.url || ''
 +    const path = req.path || ''
 +
-+    // Download: explicit downloads, ebooks, zip archives
++    // Download: explicit downloads, ebooks, zip archives, or attachment disposition
 +    if (
 +      url.includes('/download') ||
 +      url.includes('/ebook') ||
 +      req.query?.download === '1' ||
-+      req.query?.download === 'true'
++      req.query?.download === 'true' ||
++      res?.getHeader('content-disposition')?.includes('attachment')
 +    ) {
 +      return 'download'
 +    }
 +
-+    // Audio streaming: HLS, direct play, active playback session audio track chunks
++    // Audio streaming: HLS segments, direct play, session tracks, shared tracks, RSS feed episodes, or audio/* content
 +    if (
 +      path.startsWith('/hls') ||
 +      path.includes('/play') ||
 +      path.includes('/session') ||
-+      (path.includes('/file/') && !url.includes('/download'))
++      path.includes('/track') ||
++      (path.includes('/feed/') && path.includes('/item/')) ||
++      (path.includes('/file/') && !url.includes('/download')) ||
++      res?.getHeader('content-type')?.startsWith('audio/')
 +    ) {
 +      return 'stream'
 +    }
 +
-+    // General: covers, API JSON, static client assets, RSS feeds
++    // General: covers, API JSON, static client assets, RSS xml feeds
 +    return 'other'
 +  }
 +
@@ -1906,7 +3456,7 @@ index 00000000..68a0f959
 +
 +    // Identify client IP and determine if local network or internet
 +    const clientIp = requestIp.getClientIp(req)
-+    const isLocal = isLocalIp(clientIp)
++    const isLocal = this.isLocalIp(clientIp)
 +
 +    const onResponseEnd = async () => {
 +      if (recorded) return
@@ -1933,7 +3483,7 @@ index 00000000..68a0f959
 +        userId = itemInfo.userId
 +      }
 +
-+      const category = this.categorizeRequest(req)
++      const category = this.categorizeRequest(req, res)
 +      this.record(userId, category, bytesSent, isLocal, itemInfo)
 +    }
 +
@@ -3078,40 +4628,44 @@ index 00000000..e28898fd
 +
 +module.exports = BandwidthTimeStat
 diff --git a/server/objects/settings/ServerSettings.js b/server/objects/settings/ServerSettings.js
-index 0454161e..bd0e42b5 100644
+index 0454161e..d6f90d2e 100644
 --- a/server/objects/settings/ServerSettings.js
 +++ b/server/objects/settings/ServerSettings.js
-@@ -25,7 +25,8 @@ const PATCHABLE_SETTINGS_KEYS = new Set([
+@@ -25,7 +25,9 @@ const PATCHABLE_SETTINGS_KEYS = new Set([
    'timeFormat',
    'language',
    'chromecastEnabled',
 -  'sortingIgnorePrefix'
 +  'sortingIgnorePrefix',
-+  'enableBandwidthTracking'
++  'enableBandwidthTracking',
++  'bandwidthLocalSubnets'
  ])
  
  class ServerSettings {
-@@ -79,6 +80,7 @@ class ServerSettings {
+@@ -79,6 +81,8 @@ class ServerSettings {
      this.timeFormat = 'HH:mm'
      this.language = 'en-us'
      this.allowedOrigins = []
 +    this.enableBandwidthTracking = true
++    this.bandwidthLocalSubnets = ''
  
      this.logLevel = Logger.logLevel
  
-@@ -147,6 +149,7 @@ class ServerSettings {
+@@ -147,6 +151,8 @@ class ServerSettings {
      this.timeFormat = settings.timeFormat || 'HH:mm'
      this.language = settings.language || 'en-us'
      this.allowedOrigins = settings.allowedOrigins || []
 +    this.enableBandwidthTracking = settings.enableBandwidthTracking !== undefined ? !!settings.enableBandwidthTracking : true
++    this.bandwidthLocalSubnets = typeof settings.bandwidthLocalSubnets === 'string' ? settings.bandwidthLocalSubnets.trim() : ''
      this.logLevel = settings.logLevel || Logger.logLevel
      this.version = settings.version || null
      this.buildNumber = settings.buildNumber || 0 // Added v2.4.5
-@@ -259,6 +262,7 @@ class ServerSettings {
+@@ -259,6 +265,8 @@ class ServerSettings {
        timeFormat: this.timeFormat,
        language: this.language,
        allowedOrigins: this.allowedOrigins,
 +      enableBandwidthTracking: this.enableBandwidthTracking,
++      bandwidthLocalSubnets: this.bandwidthLocalSubnets,
        logLevel: this.logLevel,
        version: this.version,
        buildNumber: this.buildNumber,

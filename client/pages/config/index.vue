@@ -51,6 +51,18 @@
               </p>
             </ui-tooltip>
           </div>
+          <div v-if="newServerSettings.enableBandwidthTracking" class="w-80 ml-14 mb-2">
+            <ui-text-input-with-label
+              v-model="newServerSettings.bandwidthLocalSubnets"
+              label="Custom Local LAN Subnets / IPs"
+              placeholder="e.g. 192.168.1.0/24, 10.0.0.0/16"
+              :disabled="updatingServerSettings"
+              @blur="updateBandwidthLocalSubnets"
+            />
+            <p class="text-xs text-white/50 mt-1">
+              LAN subnets, host IPs &amp; router Hairpin NAT are auto-detected. Specify extra CIDRs or IPs separated by commas.
+            </p>
+          </div>
 
           <div class="pt-4">
             <h2 class="font-semibold">{{ $strings.HeaderSettingsScanner }}</h2>
@@ -346,6 +358,12 @@ export default {
       this.newServerSettings.allowedOrigins = validOrigins
       this.updateSettingsKey('allowedOrigins', validOrigins)
     },
+    updateBandwidthLocalSubnets() {
+      const val = (this.newServerSettings.bandwidthLocalSubnets || '').trim()
+      if (val !== (this.serverSettings?.bandwidthLocalSubnets || '').trim()) {
+        this.updateSettingsKey('bandwidthLocalSubnets', val)
+      }
+    },
     updateSettingsKey(key, val) {
       if (key === 'scannerDisableWatcher') {
         this.newServerSettings.scannerDisableWatcher = val
@@ -376,6 +394,7 @@ export default {
       this.newServerSettings = this.serverSettings ? { ...this.serverSettings } : {}
       this.newServerSettings.sortingPrefixes = [...(this.newServerSettings.sortingPrefixes || [])]
       this.newServerSettings.allowedOrigins = [...(this.newServerSettings.allowedOrigins || [])]
+      this.newServerSettings.bandwidthLocalSubnets = this.newServerSettings.bandwidthLocalSubnets || ''
       this.scannerEnableWatcher = !this.newServerSettings.scannerDisableWatcher
 
       this.homepageUseBookshelfView = this.newServerSettings.homeBookshelfView != this.$constants.BookshelfView.DETAIL

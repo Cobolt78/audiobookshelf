@@ -72,6 +72,14 @@ This document tracks all custom features, fixes, and architectural modifications
        - Replaced the constrained 900px form wrapper with an expanded responsive layout for the Bandwidth Stats dashboard (`configContentWide`).
        - Utilizes full available screen width to maximize horizontal resolution for the 48-hour 288-interval SVG waveform, evenly spaces the 5 KPI summary cards, and provides ample space for multi-column activity breakdown tables.
 
+    14. **Hairpin NAT Auto-Detection, Local Interface Enumeration & Comprehensive Traffic Classification**:
+        - **Hairpin NAT (NAT Loopback) Detection**: Auto-detects server public WAN IP (`fetchPublicIp`) with a 6-hour refresh schedule. Requests from clients within the local network looping through the router's public IP are now accurately identified as Local (LAN).
+        - **Host Network Interfaces**: Automatically enumerates all host adapter addresses (`os.networkInterfaces()`) to ensure traffic on any machine interface is recognized as local.
+        - **Carrier-Grade NAT & Mesh VPNs**: Added RFC 6598 support (`100.64.0.0/10`) for Tailscale, NetBird, and CGNAT environments.
+        - **Custom Local LAN Subnets Setting**: Added `bandwidthLocalSubnets` in Server Settings with CIDR bitmask evaluation and a dedicated configuration input in **Settings > General**.
+        - **Comprehensive Route & Audio Stream Categorization**: Added `res.getHeader('content-type')` audio fallback, explicit `/track` and `/feed/` streaming paths in `categorizeRequest(req, res)`, and automated RSS feed and shared link title resolution in `extractItemInfo(req)`.
+        - **Historical Data Correction**: Migrated historical records for Cobolt78 in `absdatabase.sqlite` on 2026-10-12 to accurately reflect local Wi-Fi downloads.
+
 ### Modified Files:
 * `server/models/BandwidthStat.js` (Sequelize model for daily user bandwidth stats)
 * `server/models/BandwidthItemStat.js` (Sequelize model for per-item and book bandwidth stats)
@@ -80,10 +88,10 @@ This document tracks all custom features, fixes, and architectural modifications
 * `server/managers/BandwidthManager.js` (In-memory buffering, request categorization, 10m/hourly buckets, auto-pruning, and stats querying)
 * `server/Database.js` (Registered BandwidthStat, BandwidthItemStat, BandwidthHourlyStat, and BandwidthTimeStat models and schema sync)
 * `server/Server.js` (Global middleware hook and shutdown flush for BandwidthManager)
-* `server/objects/settings/ServerSettings.js` (Added `enableBandwidthTracking` setting, patchable key, and serialization)
+* `server/objects/settings/ServerSettings.js` (Added `enableBandwidthTracking` and `bandwidthLocalSubnets` settings, patchable keys, and serialization)
 * `server/controllers/StatsController.js` (Added `getBandwidthStats` and `clearBandwidthStats` endpoints with trafficType & date filtering)
 * `server/routers/ApiRouter.js` (Mounted `/stats/bandwidth` GET and DELETE routes)
-* `client/pages/config/index.vue` (Added "Track Bandwidth & Data Usage" toggle switch under General Settings)
+* `client/pages/config/index.vue` (Added "Track Bandwidth & Data Usage" toggle and "Custom Local LAN Subnets / IPs" input in Settings > General)
 * `client/components/app/ConfigSideNav.vue` (Added "Bandwidth Stats" navigation link)
 * `client/pages/config.vue` (Mapped bandwidth page route title)
 * `client/pages/config/bandwidth.vue` (Bandwidth dashboard with item breakdown, clickable users, back button, date bar filtering, and adaptive tooltips)
@@ -124,13 +132,13 @@ git diff v2.37.1 > custom_changes.patch
 | `server/models/BandwidthItemStat.js` | Sequelize model and table definition for per-item/book bandwidth stats |
 | `server/models/BandwidthHourlyStat.js` | Sequelize model and table definition for 24-hour hourly bandwidth stats |
 | `server/models/BandwidthTimeStat.js` | Sequelize model and table definition for rolling 48-hour 10-minute bandwidth stats |
-| `server/managers/BandwidthManager.js` | In-memory buffering, request categorization, 10m/hourly buckets, auto-pruning, and stats querying |
+| `server/managers/BandwidthManager.js` | In-memory buffering, request categorization, 10m/hourly buckets, auto-pruning, public WAN IP detection, host interface enumeration, CIDR evaluation, and stats querying |
 | `server/Database.js` | Registered BandwidthStat, BandwidthItemStat, BandwidthHourlyStat & BandwidthTimeStat models and schema sync |
 | `server/Server.js` | Global middleware hook and shutdown flush for BandwidthManager |
-| `server/objects/settings/ServerSettings.js` | `enableBandwidthTracking` toggle setting |
+| `server/objects/settings/ServerSettings.js` | `enableBandwidthTracking` and `bandwidthLocalSubnets` settings |
 | `server/controllers/StatsController.js` | REST controller methods for bandwidth stats with trafficType and date params |
 | `server/routers/ApiRouter.js` | Route definitions for `/stats/bandwidth` |
-| `client/pages/config/index.vue` | UI toggle in Settings > General |
+| `client/pages/config/index.vue` | Bandwidth tracking toggle and custom local LAN subnets/IPs input in Settings > General |
 | `client/components/app/ConfigSideNav.vue` | Sidebar navigation link to Bandwidth Stats |
 | `client/pages/config.vue` | Route title mapper & full-width layout for bandwidth dashboard |
 | `client/pages/config/bandwidth.vue` | Responsive Bandwidth Stats dashboard with 48h SVG waveform, 24h hourly breakdown, item breakdown, clickable users, and date filters |
