@@ -38,6 +38,10 @@ class BandwidthManager {
     this.buffer = new Map()
     /** @type {Map<string, { userId: string, date: string, libraryItemId: string, itemName: string, category: string, bytesLocal: number, bytesInternet: number, bytesTotal: number, requests: number }>} */
     this.itemBuffer = new Map()
+    /** @type {Map<string, { userId: string, date: string, hour: number, bytesStream: number, bytesDownload: number, bytesOther: number, bytesLocal: number, bytesInternet: number, bytesTotal: number, requests: number }>} */
+    this.hourlyBuffer = new Map()
+    /** @type {Map<string, { userId: string, bucketTime: number, timeLabel: string, date: string, hour: number, minute: number, bytesStream: number, bytesDownload: number, bytesOther: number, bytesLocal: number, bytesInternet: number, bytesTotal: number, requests: number }>} */
+    this.timeBuffer = new Map()
     /** @type {Map<string, string>} */
     this.itemTitleCache = new Map()
     this.flushInterval = null
@@ -46,15 +50,29 @@ class BandwidthManager {
   async init() {
     Logger.info('[BandwidthManager] Initialized')
 
-    // Ensure bytesLocal and bytesInternet columns exist in SQLite if table was created before
+    // Ensure legacy SQLite columns exist
     await this.ensureColumns()
 
-    // Ensure bandwidthItemStats table exists
+    // Ensure models sync
     if (Database.bandwidthItemStatModel) {
       try {
         await Database.bandwidthItemStatModel.sync()
       } catch (err) {
         Logger.error('[BandwidthManager] Error syncing bandwidthItemStats table:', err)
+      }
+    }
+    if (Database.bandwidthHourlyStatModel) {
+      try {
+        await Database.bandwidthHourlyStatModel.sync()
+      } catch (err) {
+        Logger.error('[BandwidthManager] Error syncing bandwidthHourlyStats table:', err)
+      }
+    }
+    if (Database.bandwidthTimeStatModel) {
+      try {
+        await Database.bandwidthTimeStatModel.sync()
+      } catch (err) {
+        Logger.error('[BandwidthManager] Error syncing bandwidthTimeStats table:', err)
       }
     }
 
@@ -181,7 +199,7 @@ class BandwidthManager {
   }
 
   /**
-   * Record data transfer into in-memory buffer
+   * Record data transfer into in-memory buffers
    *
    * @param {string|null} userId
    * @param {'stream'|'download'|'other'} category
@@ -193,13 +211,19 @@ class BandwidthManager {
     if (!global.ServerSettings?.enableBandwidthTracking) return
     if (!bytes || bytes <= 0 || isNaN(bytes)) return
 
-    const date = dateAndTime.format(new Date(), 'YYYY-MM-DD')
+    const now = new Date()
+    const date = dateAndTime.format(now, 'YYYY-MM-DD')
+    const hour = now.getHours()
+    const minute = Math.floor(now.getMinutes() / 10) * 10
+    const bucketTime = Math.floor(now.getTime() / 600000) * 600000
+    const timeLabel = `${date} ${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`
     const uid = userId || 'anonymous'
-    const key = `${uid}_${date}`
 
-    let entry = this.buffer.get(key)
-    if (!entry) {
-      entry = {
+    // 1. Daily User Summary Buffer
+    const dailyKey = `${uid}_${date}`
+    let dailyEntry = this.buffer.get(dailyKey)
+    if (!dailyEntry) {
+      dailyEntry = {
         userId: uid,
         date: date,
         bytesStream: 0,
@@ -210,27 +234,20 @@ class BandwidthManager {
         bytesInternet: 0,
         requests: 0
       }
-      this.buffer.set(key, entry)
+      this.buffer.set(dailyKey, dailyEntry)
     }
 
-    if (category === 'stream') {
-      entry.bytesStream += bytes
-    } else if (category === 'download') {
-      entry.bytesDownload += bytes
-    } else {
-      entry.bytesOther += bytes
-    }
+    if (category === 'stream') dailyEntry.bytesStream += bytes
+    else if (category === 'download') dailyEntry.bytesDownload += bytes
+    else dailyEntry.bytesOther += bytes
 
-    if (isLocal) {
-      entry.bytesLocal += bytes
-    } else {
-      entry.bytesInternet += bytes
-    }
+    if (isLocal) dailyEntry.bytesLocal += bytes
+    else dailyEntry.bytesInternet += bytes
 
-    entry.bytesTotal += bytes
-    entry.requests += 1
+    dailyEntry.bytesTotal += bytes
+    dailyEntry.requests += 1
 
-    // Also record per-item statistics
+    // 2. Per-Item Statistics Buffer
     const libraryItemId = itemInfo?.libraryItemId || 'general'
     const itemName = itemInfo?.itemName || (libraryItemId === 'general' ? 'General / Web App' : 'Item ' + libraryItemId.substring(0, 8))
     const itemKey = `${uid}_${date}_${libraryItemId}_${category}`
@@ -255,13 +272,71 @@ class BandwidthManager {
       itemEntry.itemName = itemName
     }
 
-    if (isLocal) {
-      itemEntry.bytesLocal += bytes
-    } else {
-      itemEntry.bytesInternet += bytes
-    }
+    if (isLocal) itemEntry.bytesLocal += bytes
+    else itemEntry.bytesInternet += bytes
     itemEntry.bytesTotal += bytes
     itemEntry.requests += 1
+
+    // 3. Hourly Time-of-Day Buffer (Approach 1: 00:00 - 23:00)
+    const hourlyKey = `${uid}_${date}_${hour}`
+    let hourlyEntry = this.hourlyBuffer.get(hourlyKey)
+    if (!hourlyEntry) {
+      hourlyEntry = {
+        userId: uid,
+        date: date,
+        hour: hour,
+        bytesStream: 0,
+        bytesDownload: 0,
+        bytesOther: 0,
+        bytesLocal: 0,
+        bytesInternet: 0,
+        bytesTotal: 0,
+        requests: 0
+      }
+      this.hourlyBuffer.set(hourlyKey, hourlyEntry)
+    }
+
+    if (category === 'stream') hourlyEntry.bytesStream += bytes
+    else if (category === 'download') hourlyEntry.bytesDownload += bytes
+    else hourlyEntry.bytesOther += bytes
+
+    if (isLocal) hourlyEntry.bytesLocal += bytes
+    else hourlyEntry.bytesInternet += bytes
+
+    hourlyEntry.bytesTotal += bytes
+    hourlyEntry.requests += 1
+
+    // 4. Rolling 10-Minute High-Resolution Buffer (Approach 2: Last 48 Hours)
+    const timeKey = `${uid}_${timeLabel}`
+    let timeEntry = this.timeBuffer.get(timeKey)
+    if (!timeEntry) {
+      timeEntry = {
+        userId: uid,
+        bucketTime: bucketTime,
+        timeLabel: timeLabel,
+        date: date,
+        hour: hour,
+        minute: minute,
+        bytesStream: 0,
+        bytesDownload: 0,
+        bytesOther: 0,
+        bytesLocal: 0,
+        bytesInternet: 0,
+        bytesTotal: 0,
+        requests: 0
+      }
+      this.timeBuffer.set(timeKey, timeEntry)
+    }
+
+    if (category === 'stream') timeEntry.bytesStream += bytes
+    else if (category === 'download') timeEntry.bytesDownload += bytes
+    else timeEntry.bytesOther += bytes
+
+    if (isLocal) timeEntry.bytesLocal += bytes
+    else timeEntry.bytesInternet += bytes
+
+    timeEntry.bytesTotal += bytes
+    timeEntry.requests += 1
   }
 
   /**
@@ -353,22 +428,30 @@ class BandwidthManager {
   }
 
   /**
-   * Flush in-memory buffer into SQLite database using an atomic UPSERT transaction
+   * Flush in-memory buffers into SQLite database using atomic UPSERT transactions
    */
   async flush() {
-    if (this.buffer.size === 0 && this.itemBuffer.size === 0) return
+    if (this.buffer.size === 0 && this.itemBuffer.size === 0 && this.hourlyBuffer.size === 0 && this.timeBuffer.size === 0) return
     if (!Database.sequelize) return
 
     const currentBuffer = this.buffer
     const currentItemBuffer = this.itemBuffer
+    const currentHourlyBuffer = this.hourlyBuffer
+    const currentTimeBuffer = this.timeBuffer
+
     this.buffer = new Map()
     this.itemBuffer = new Map()
+    this.hourlyBuffer = new Map()
+    this.timeBuffer = new Map()
 
     const entries = Array.from(currentBuffer.values())
     const itemEntries = Array.from(currentItemBuffer.values())
+    const hourlyEntries = Array.from(currentHourlyBuffer.values())
+    const timeEntries = Array.from(currentTimeBuffer.values())
 
     try {
       await Database.sequelize.transaction(async (t) => {
+        // 1. Daily User Stats UPSERT
         for (const entry of entries) {
           await Database.sequelize.query(
             `INSERT INTO bandwidthStats (userId, date, bytesStream, bytesDownload, bytesOther, bytesTotal, bytesLocal, bytesInternet, requests, createdAt, updatedAt)
@@ -389,6 +472,7 @@ class BandwidthManager {
           )
         }
 
+        // 2. Per-Item Stats UPSERT
         for (const itemEntry of itemEntries) {
           await Database.sequelize.query(
             `INSERT INTO bandwidthItemStats (userId, date, libraryItemId, itemName, category, bytesLocal, bytesInternet, bytesTotal, requests, createdAt, updatedAt)
@@ -406,10 +490,62 @@ class BandwidthManager {
             }
           )
         }
+
+        // 3. Hourly Stats UPSERT
+        for (const hourlyEntry of hourlyEntries) {
+          await Database.sequelize.query(
+            `INSERT INTO bandwidthHourlyStats (userId, date, hour, bytesStream, bytesDownload, bytesOther, bytesLocal, bytesInternet, bytesTotal, requests, createdAt, updatedAt)
+             VALUES (:userId, :date, :hour, :bytesStream, :bytesDownload, :bytesOther, :bytesLocal, :bytesInternet, :bytesTotal, :requests, datetime('now'), datetime('now'))
+             ON CONFLICT(userId, date, hour) DO UPDATE SET
+               bytesStream = bytesStream + excluded.bytesStream,
+               bytesDownload = bytesDownload + excluded.bytesDownload,
+               bytesOther = bytesOther + excluded.bytesOther,
+               bytesLocal = bytesLocal + excluded.bytesLocal,
+               bytesInternet = bytesInternet + excluded.bytesInternet,
+               bytesTotal = bytesTotal + excluded.bytesTotal,
+               requests = requests + excluded.requests,
+               updatedAt = datetime('now');`,
+            {
+              replacements: hourlyEntry,
+              transaction: t
+            }
+          )
+        }
+
+        // 4. 10-Minute High-Res Stats UPSERT
+        for (const timeEntry of timeEntries) {
+          await Database.sequelize.query(
+            `INSERT INTO bandwidthTimeStats (userId, bucketTime, timeLabel, date, hour, minute, bytesStream, bytesDownload, bytesOther, bytesLocal, bytesInternet, bytesTotal, requests, createdAt, updatedAt)
+             VALUES (:userId, :bucketTime, :timeLabel, :date, :hour, :minute, :bytesStream, :bytesDownload, :bytesOther, :bytesLocal, :bytesInternet, :bytesTotal, :requests, datetime('now'), datetime('now'))
+             ON CONFLICT(userId, timeLabel) DO UPDATE SET
+               bytesStream = bytesStream + excluded.bytesStream,
+               bytesDownload = bytesDownload + excluded.bytesDownload,
+               bytesOther = bytesOther + excluded.bytesOther,
+               bytesLocal = bytesLocal + excluded.bytesLocal,
+               bytesInternet = bytesInternet + excluded.bytesInternet,
+               bytesTotal = bytesTotal + excluded.bytesTotal,
+               requests = requests + excluded.requests,
+               updatedAt = datetime('now');`,
+            {
+              replacements: timeEntry,
+              transaction: t
+            }
+          )
+        }
       })
+
+      // 5. Automatic Pruning: Purge 10-minute records older than 48 hours to maintain a hard ceiling on SQLite size
+      const cutoff48h = Date.now() - 48 * 3600 * 1000
+      if (Database.bandwidthTimeStatModel) {
+        await Database.bandwidthTimeStatModel.destroy({
+          where: {
+            bucketTime: { [Op.lt]: cutoff48h }
+          }
+        })
+      }
     } catch (err) {
-      Logger.error('[BandwidthManager] Failed to flush bandwidth buffer to DB, restoring buffer:', err)
-      // Merge entries back into buffer so data is not lost
+      Logger.error('[BandwidthManager] Failed to flush bandwidth buffer to DB, restoring buffers:', err)
+      // Merge entries back into buffers
       for (const entry of entries) {
         const key = `${entry.userId}_${entry.date}`
         const existing = this.buffer.get(key)
@@ -438,6 +574,38 @@ class BandwidthManager {
           this.itemBuffer.set(itemKey, itemEntry)
         }
       }
+
+      for (const hourlyEntry of hourlyEntries) {
+        const hourlyKey = `${hourlyEntry.userId}_${hourlyEntry.date}_${hourlyEntry.hour}`
+        const existingHourly = this.hourlyBuffer.get(hourlyKey)
+        if (existingHourly) {
+          existingHourly.bytesStream += hourlyEntry.bytesStream
+          existingHourly.bytesDownload += hourlyEntry.bytesDownload
+          existingHourly.bytesOther += hourlyEntry.bytesOther
+          existingHourly.bytesLocal += hourlyEntry.bytesLocal
+          existingHourly.bytesInternet += hourlyEntry.bytesInternet
+          existingHourly.bytesTotal += hourlyEntry.bytesTotal
+          existingHourly.requests += hourlyEntry.requests
+        } else {
+          this.hourlyBuffer.set(hourlyKey, hourlyEntry)
+        }
+      }
+
+      for (const timeEntry of timeEntries) {
+        const timeKey = `${timeEntry.userId}_${timeEntry.timeLabel}`
+        const existingTime = this.timeBuffer.get(timeKey)
+        if (existingTime) {
+          existingTime.bytesStream += timeEntry.bytesStream
+          existingTime.bytesDownload += timeEntry.bytesDownload
+          existingTime.bytesOther += timeEntry.bytesOther
+          existingTime.bytesLocal += timeEntry.bytesLocal
+          existingTime.bytesInternet += timeEntry.bytesInternet
+          existingTime.bytesTotal += timeEntry.bytesTotal
+          existingTime.requests += timeEntry.requests
+        } else {
+          this.timeBuffer.set(timeKey, timeEntry)
+        }
+      }
     }
   }
 
@@ -445,7 +613,7 @@ class BandwidthManager {
    * Fetch aggregated bandwidth stats
    *
    * @param {Object} [options]
-   * @param {string} [options.range] 'day' | 'week' | 'month' | 'year' | 'all'
+   * @param {string} [options.range] 'last48Hours' | 'day' | 'week' | 'month' | 'year' | 'all'
    * @param {string} [options.userId]
    * @param {string} [options.startDate]
    * @param {string} [options.endDate]
@@ -453,25 +621,24 @@ class BandwidthManager {
    * @param {string} [options.date]
    */
   async getStats(options = {}) {
-    // Flush current buffer first for live, up-to-the-second stats
+    // Flush current buffer first for live stats
     await this.flush()
 
     const now = new Date()
     const todayStr = dateAndTime.format(now, 'YYYY-MM-DD')
 
-    // Helper to format date offset
     const getPastDateStr = (daysAgo) => {
       const d = new Date()
       d.setDate(d.getDate() - daysAgo)
       return dateAndTime.format(d, 'YYYY-MM-DD')
     }
 
+    const twoDaysAgoStr = getPastDateStr(2)
     const sevenDaysAgoStr = getPastDateStr(6)
     const thirtyDaysAgoStr = getPastDateStr(29)
     const monthStartStr = `${todayStr.substring(0, 7)}-01`
     const yearStartStr = `${todayStr.substring(0, 4)}-01-01`
 
-    // Determine query range for time series
     let filterStart = null
     let filterEnd = options.endDate || todayStr
 
@@ -479,6 +646,10 @@ class BandwidthManager {
       filterStart = options.startDate
     } else {
       switch (options.range) {
+        case 'last48Hours':
+        case 'live48h':
+          filterStart = twoDaysAgoStr
+          break
         case 'day':
         case 'today':
           filterStart = todayStr
@@ -510,7 +681,7 @@ class BandwidthManager {
       order: [['date', 'ASC']]
     })
 
-    // Compute Summary KPIs (across all users or specific user)
+    // Compute Summary KPIs
     const summary = {
       today: { total: 0, stream: 0, download: 0, other: 0, local: 0, internet: 0, requests: 0 },
       last7Days: { total: 0, stream: 0, download: 0, other: 0, local: 0, internet: 0, requests: 0 },
@@ -589,11 +760,10 @@ class BandwidthManager {
 
     const daily = Array.from(dailyMap.values()).sort((a, b) => a.date.localeCompare(b.date))
 
-    // Aggregate by user (user breakdown for selected range)
+    // Aggregate by user
     const userMap = new Map()
     let rangeTotalBytes = 0
 
-    // Fetch user map for usernames
     const users = await Database.userModel.findAll()
     const usernameMap = new Map()
     for (const u of users) {
@@ -656,7 +826,6 @@ class BandwidthManager {
       if (options.userId) {
         itemWhere.userId = options.userId
       }
-      // If a specific single date is queried (e.g. clicking a date bar on the chart)
       if (options.date) {
         itemWhere.date = options.date
       } else if (filterStart && filterEnd) {
@@ -734,6 +903,139 @@ class BandwidthManager {
         })
     }
 
+    // Approach 1: 24-Hour Time-of-Day Hourly Breakdown for Selected Date
+    let hourly = []
+    if (options.date && Database.bandwidthHourlyStatModel) {
+      const hourlyWhere = { date: options.date }
+      if (options.userId) {
+        hourlyWhere.userId = options.userId
+      }
+      const hourlyRecords = await Database.bandwidthHourlyStatModel.findAll({
+        where: hourlyWhere,
+        order: [['hour', 'ASC']]
+      })
+
+      const hourlyMap = new Map()
+      for (let h = 0; h < 24; h++) {
+        hourlyMap.set(h, {
+          hour: h,
+          label: `${String(h).padStart(2, '0')}:00`,
+          bytesTotal: 0,
+          bytesStream: 0,
+          bytesDownload: 0,
+          bytesOther: 0,
+          bytesLocal: 0,
+          bytesInternet: 0,
+          requests: 0
+        })
+      }
+
+      for (const rec of hourlyRecords) {
+        const entry = hourlyMap.get(rec.hour)
+        if (entry) {
+          entry.bytesTotal += Number(rec.bytesTotal || 0)
+          entry.bytesStream += Number(rec.bytesStream || 0)
+          entry.bytesDownload += Number(rec.bytesDownload || 0)
+          entry.bytesOther += Number(rec.bytesOther || 0)
+          entry.bytesLocal += Number(rec.bytesLocal || 0)
+          entry.bytesInternet += Number(rec.bytesInternet || 0)
+          entry.requests += Number(rec.requests || 0)
+        }
+      }
+
+      hourly = Array.from(hourlyMap.values())
+    }
+
+    // Approach 2: Rolling 48-Hour 10-Minute Waveform
+    let waveform10m = []
+    let waveformPeakBytes = 0
+    let waveformPeakMbps = 0
+
+    if ((options.range === 'last48Hours' || options.range === 'live48h') && Database.bandwidthTimeStatModel) {
+      const cutoff48h = Math.floor((Date.now() - 48 * 3600 * 1000) / 600000) * 600000
+      const currentBucketTime = Math.floor(Date.now() / 600000) * 600000
+
+      const timeWhere = {
+        bucketTime: { [Op.gte]: cutoff48h }
+      }
+      if (options.userId) {
+        timeWhere.userId = options.userId
+      }
+
+      const timeRecords = await Database.bandwidthTimeStatModel.findAll({
+        where: timeWhere
+      })
+
+      // Aggregate records by bucketTime
+      const timeBucketMap = new Map()
+      for (const rec of timeRecords) {
+        let b = timeBucketMap.get(Number(rec.bucketTime))
+        if (!b) {
+          b = {
+            bytesTotal: 0,
+            bytesStream: 0,
+            bytesDownload: 0,
+            bytesOther: 0,
+            bytesLocal: 0,
+            bytesInternet: 0,
+            requests: 0
+          }
+          timeBucketMap.set(Number(rec.bucketTime), b)
+        }
+        b.bytesTotal += Number(rec.bytesTotal || 0)
+        b.bytesStream += Number(rec.bytesStream || 0)
+        b.bytesDownload += Number(rec.bytesDownload || 0)
+        b.bytesOther += Number(rec.bytesOther || 0)
+        b.bytesLocal += Number(rec.bytesLocal || 0)
+        b.bytesInternet += Number(rec.bytesInternet || 0)
+        b.requests += Number(rec.requests || 0)
+      }
+
+      // Generate continuous 10-minute buckets across 48 hours (exactly 288 data points)
+      for (let t = cutoff48h; t <= currentBucketTime; t += 600000) {
+        const d = new Date(t)
+        const dateStr = dateAndTime.format(d, 'YYYY-MM-DD')
+        const shortTime = `${String(d.getMonth() + 1).padStart(2, '0')}/${String(d.getDate()).padStart(2, '0')} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
+
+        const stat = timeBucketMap.get(t) || {
+          bytesTotal: 0,
+          bytesStream: 0,
+          bytesDownload: 0,
+          bytesOther: 0,
+          bytesLocal: 0,
+          bytesInternet: 0,
+          requests: 0
+        }
+
+        // 10 minutes = 600 seconds. Calculate average transfer speed in Mbps during this 10m window:
+        // (bytes * 8) / (600 * 1,000,000)
+        const mbpsRate = Number(((stat.bytesTotal * 8) / (600 * 1000 * 1000)).toFixed(2))
+
+        if (stat.bytesTotal > waveformPeakBytes) {
+          waveformPeakBytes = stat.bytesTotal
+        }
+        if (mbpsRate > waveformPeakMbps) {
+          waveformPeakMbps = mbpsRate
+        }
+
+        waveform10m.push({
+          bucketTime: t,
+          date: dateStr,
+          timeLabel: shortTime,
+          hour: d.getHours(),
+          minute: d.getMinutes(),
+          bytesTotal: stat.bytesTotal,
+          bytesInternet: stat.bytesInternet,
+          bytesLocal: stat.bytesLocal,
+          bytesStream: stat.bytesStream,
+          bytesDownload: stat.bytesDownload,
+          bytesOther: stat.bytesOther,
+          requests: stat.requests,
+          mbps: mbpsRate
+        })
+      }
+    }
+
     return {
       isEnabled: !!global.ServerSettings?.enableBandwidthTracking,
       range: options.range || 'all',
@@ -745,6 +1047,10 @@ class BandwidthManager {
       daily,
       userBreakdown,
       itemBreakdown,
+      hourly,
+      waveform10m,
+      waveformPeakBytes,
+      waveformPeakMbps,
       rangeTotalBytes
     }
   }
@@ -755,9 +1061,18 @@ class BandwidthManager {
   async clearStats() {
     this.buffer.clear()
     this.itemBuffer.clear()
+    this.hourlyBuffer.clear()
+    this.timeBuffer.clear()
+
     await Database.bandwidthStatModel.destroy({ where: {}, truncate: true })
     if (Database.bandwidthItemStatModel) {
       await Database.bandwidthItemStatModel.destroy({ where: {}, truncate: true })
+    }
+    if (Database.bandwidthHourlyStatModel) {
+      await Database.bandwidthHourlyStatModel.destroy({ where: {}, truncate: true })
+    }
+    if (Database.bandwidthTimeStatModel) {
+      await Database.bandwidthTimeStatModel.destroy({ where: {}, truncate: true })
     }
     Logger.info('[BandwidthManager] All bandwidth statistics cleared by admin')
     return true

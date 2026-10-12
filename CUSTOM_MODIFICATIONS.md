@@ -52,12 +52,26 @@ This document tracks all custom features, fixes, and architectural modifications
    10. **Streamlined Navigation & Clickable Users**:
       - Clicking any user in the "Data Usage Breakdown by User" table immediately selects and navigates to that user's detailed view.
       - Added a prominent "Back to All Users" button in the top toolbar and above the breakdown tables.
+   11. **Hybrid High-Resolution Drill-Down Architecture**:
+      - **Approach 1: 24-Hour Time-of-Day (Hourly) Breakdown**:
+        - Added `BandwidthHourlyStat` model and `bandwidthHourlyStats` table tracking hourly egress (`date`, `hour`, `bytesStream`, `bytesDownload`, `bytesOther`, `bytesLocal`, `bytesInternet`, `bytesTotal`, `requests`).
+        - When a single date is selected or filtered, an interactive 24-hour histogram (`00:00` to `23:00`) is rendered showing the exact hours of traffic spikes, request volume, and category distribution.
+      - **Approach 2: Rolling 48-Hour High-Resolution 10-Minute Area Waveform**:
+        - Added `BandwidthTimeStat` model and `bandwidthTimeStats` table capturing 10-minute intervals (`bucketTime`, `timeLabel`, `date`, `hour`, `minute`).
+        - **Automatic 48-Hour Pruning**: Prunes rows older than 48 hours on every periodic flush to cap table size at ~1,440 rows (~200 KB in SQLite) preventing long-term database bloat.
+        - **Smooth SVG Area/Line Waveform (Layout Option A)**: Built a lightweight native SVG area and line waveform covering 288 contiguous time buckets over 48 hours. Zero DOM overhead or heavy chart dependencies.
+        - **Interactive Crosshair HUD**: Moving mouse across the waveform displays a vertical crosshair guide and floating telemetry HUD pill showing exact time bucket, ~Mbps burst rate, MB transferred, WAN vs LAN, and category breakdown.
+      - **UI Contrast & Tooltip Fixes**:
+        - Anchored timeline and waveform tooltips cleanly at the top of the chart container to prevent popup cut-offs.
+        - Improved text contrast on interactive elements (e.g. 'Click to filter' highlighted with `text-emerald-400 bg-emerald-500/15`).
 
 ### Modified Files:
 * `server/models/BandwidthStat.js` (Sequelize model for daily user bandwidth stats)
 * `server/models/BandwidthItemStat.js` (Sequelize model for per-item and book bandwidth stats)
-* `server/managers/BandwidthManager.js` (In-memory buffering, request categorization, session attribution, and stats querying)
-* `server/Database.js` (Registered BandwidthStat and BandwidthItemStat models and schema sync)
+* `server/models/BandwidthHourlyStat.js` (Sequelize model for 24-hour hourly bandwidth stats)
+* `server/models/BandwidthTimeStat.js` (Sequelize model for rolling 48-hour 10-minute high-resolution bandwidth stats)
+* `server/managers/BandwidthManager.js` (In-memory buffering, request categorization, 10m/hourly buckets, auto-pruning, and stats querying)
+* `server/Database.js` (Registered BandwidthStat, BandwidthItemStat, BandwidthHourlyStat, and BandwidthTimeStat models and schema sync)
 * `server/Server.js` (Global middleware hook and shutdown flush for BandwidthManager)
 * `server/objects/settings/ServerSettings.js` (Added `enableBandwidthTracking` setting, patchable key, and serialization)
 * `server/controllers/StatsController.js` (Added `getBandwidthStats` and `clearBandwidthStats` endpoints with trafficType & date filtering)
@@ -101,8 +115,10 @@ git diff v2.37.1 > custom_changes.patch
 | `server/utils/queries/libraryItemsBookFilters.js` | Fixed series discovery filtering & removed single-item limit |
 | `server/models/BandwidthStat.js` | Sequelize model and table definition for user bandwidth stats |
 | `server/models/BandwidthItemStat.js` | Sequelize model and table definition for per-item/book bandwidth stats |
-| `server/managers/BandwidthManager.js` | In-memory buffering, request categorization, item extraction, and stats querying |
-| `server/Database.js` | Registered BandwidthStat & BandwidthItemStat models and schema sync |
+| `server/models/BandwidthHourlyStat.js` | Sequelize model and table definition for 24-hour hourly bandwidth stats |
+| `server/models/BandwidthTimeStat.js` | Sequelize model and table definition for rolling 48-hour 10-minute bandwidth stats |
+| `server/managers/BandwidthManager.js` | In-memory buffering, request categorization, 10m/hourly buckets, auto-pruning, and stats querying |
+| `server/Database.js` | Registered BandwidthStat, BandwidthItemStat, BandwidthHourlyStat & BandwidthTimeStat models and schema sync |
 | `server/Server.js` | Global middleware hook and shutdown flush for BandwidthManager |
 | `server/objects/settings/ServerSettings.js` | `enableBandwidthTracking` toggle setting |
 | `server/controllers/StatsController.js` | REST controller methods for bandwidth stats with trafficType and date params |
@@ -110,6 +126,6 @@ git diff v2.37.1 > custom_changes.patch
 | `client/pages/config/index.vue` | UI toggle in Settings > General |
 | `client/components/app/ConfigSideNav.vue` | Sidebar navigation link to Bandwidth Stats |
 | `client/pages/config.vue` | Route title mapper |
-| `client/pages/config/bandwidth.vue` | Responsive Bandwidth Stats dashboard with item breakdown, clickable users, and date filters |
+| `client/pages/config/bandwidth.vue` | Responsive Bandwidth Stats dashboard with 48h SVG waveform, 24h hourly breakdown, item breakdown, clickable users, and date filters |
 | `client/pages/config/users/_id/index.vue` | Data transferred stat on user profile card |
 | `custom_changes.patch` | Unified Git diff against upstream `v2.37.1` |

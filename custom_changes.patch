@@ -1,9 +1,9 @@
 diff --git a/CUSTOM_MODIFICATIONS.md b/CUSTOM_MODIFICATIONS.md
 new file mode 100644
-index 00000000..c5ef3279
+index 00000000..92abeeb4
 --- /dev/null
 +++ b/CUSTOM_MODIFICATIONS.md
-@@ -0,0 +1,115 @@
+@@ -0,0 +1,131 @@
 +# Audiobookshelf Custom Modifications (`v2.37.1-custom`)
 +
 +This document tracks all custom features, fixes, and architectural modifications made to Audiobookshelf.
@@ -58,12 +58,26 @@ index 00000000..c5ef3279
 +   10. **Streamlined Navigation & Clickable Users**:
 +      - Clicking any user in the "Data Usage Breakdown by User" table immediately selects and navigates to that user's detailed view.
 +      - Added a prominent "Back to All Users" button in the top toolbar and above the breakdown tables.
++   11. **Hybrid High-Resolution Drill-Down Architecture**:
++      - **Approach 1: 24-Hour Time-of-Day (Hourly) Breakdown**:
++        - Added `BandwidthHourlyStat` model and `bandwidthHourlyStats` table tracking hourly egress (`date`, `hour`, `bytesStream`, `bytesDownload`, `bytesOther`, `bytesLocal`, `bytesInternet`, `bytesTotal`, `requests`).
++        - When a single date is selected or filtered, an interactive 24-hour histogram (`00:00` to `23:00`) is rendered showing the exact hours of traffic spikes, request volume, and category distribution.
++      - **Approach 2: Rolling 48-Hour High-Resolution 10-Minute Area Waveform**:
++        - Added `BandwidthTimeStat` model and `bandwidthTimeStats` table capturing 10-minute intervals (`bucketTime`, `timeLabel`, `date`, `hour`, `minute`).
++        - **Automatic 48-Hour Pruning**: Prunes rows older than 48 hours on every periodic flush to cap table size at ~1,440 rows (~200 KB in SQLite) preventing long-term database bloat.
++        - **Smooth SVG Area/Line Waveform (Layout Option A)**: Built a lightweight native SVG area and line waveform covering 288 contiguous time buckets over 48 hours. Zero DOM overhead or heavy chart dependencies.
++        - **Interactive Crosshair HUD**: Moving mouse across the waveform displays a vertical crosshair guide and floating telemetry HUD pill showing exact time bucket, ~Mbps burst rate, MB transferred, WAN vs LAN, and category breakdown.
++      - **UI Contrast & Tooltip Fixes**:
++        - Anchored timeline and waveform tooltips cleanly at the top of the chart container to prevent popup cut-offs.
++        - Improved text contrast on interactive elements (e.g. 'Click to filter' highlighted with `text-emerald-400 bg-emerald-500/15`).
 +
 +### Modified Files:
 +* `server/models/BandwidthStat.js` (Sequelize model for daily user bandwidth stats)
 +* `server/models/BandwidthItemStat.js` (Sequelize model for per-item and book bandwidth stats)
-+* `server/managers/BandwidthManager.js` (In-memory buffering, request categorization, session attribution, and stats querying)
-+* `server/Database.js` (Registered BandwidthStat and BandwidthItemStat models and schema sync)
++* `server/models/BandwidthHourlyStat.js` (Sequelize model for 24-hour hourly bandwidth stats)
++* `server/models/BandwidthTimeStat.js` (Sequelize model for rolling 48-hour 10-minute high-resolution bandwidth stats)
++* `server/managers/BandwidthManager.js` (In-memory buffering, request categorization, 10m/hourly buckets, auto-pruning, and stats querying)
++* `server/Database.js` (Registered BandwidthStat, BandwidthItemStat, BandwidthHourlyStat, and BandwidthTimeStat models and schema sync)
 +* `server/Server.js` (Global middleware hook and shutdown flush for BandwidthManager)
 +* `server/objects/settings/ServerSettings.js` (Added `enableBandwidthTracking` setting, patchable key, and serialization)
 +* `server/controllers/StatsController.js` (Added `getBandwidthStats` and `clearBandwidthStats` endpoints with trafficType & date filtering)
@@ -107,8 +121,10 @@ index 00000000..c5ef3279
 +| `server/utils/queries/libraryItemsBookFilters.js` | Fixed series discovery filtering & removed single-item limit |
 +| `server/models/BandwidthStat.js` | Sequelize model and table definition for user bandwidth stats |
 +| `server/models/BandwidthItemStat.js` | Sequelize model and table definition for per-item/book bandwidth stats |
-+| `server/managers/BandwidthManager.js` | In-memory buffering, request categorization, item extraction, and stats querying |
-+| `server/Database.js` | Registered BandwidthStat & BandwidthItemStat models and schema sync |
++| `server/models/BandwidthHourlyStat.js` | Sequelize model and table definition for 24-hour hourly bandwidth stats |
++| `server/models/BandwidthTimeStat.js` | Sequelize model and table definition for rolling 48-hour 10-minute bandwidth stats |
++| `server/managers/BandwidthManager.js` | In-memory buffering, request categorization, 10m/hourly buckets, auto-pruning, and stats querying |
++| `server/Database.js` | Registered BandwidthStat, BandwidthItemStat, BandwidthHourlyStat & BandwidthTimeStat models and schema sync |
 +| `server/Server.js` | Global middleware hook and shutdown flush for BandwidthManager |
 +| `server/objects/settings/ServerSettings.js` | `enableBandwidthTracking` toggle setting |
 +| `server/controllers/StatsController.js` | REST controller methods for bandwidth stats with trafficType and date params |
@@ -116,7 +132,7 @@ index 00000000..c5ef3279
 +| `client/pages/config/index.vue` | UI toggle in Settings > General |
 +| `client/components/app/ConfigSideNav.vue` | Sidebar navigation link to Bandwidth Stats |
 +| `client/pages/config.vue` | Route title mapper |
-+| `client/pages/config/bandwidth.vue` | Responsive Bandwidth Stats dashboard with item breakdown, clickable users, and date filters |
++| `client/pages/config/bandwidth.vue` | Responsive Bandwidth Stats dashboard with 48h SVG waveform, 24h hourly breakdown, item breakdown, clickable users, and date filters |
 +| `client/pages/config/users/_id/index.vue` | Data transferred stat on user profile card |
 +| `custom_changes.patch` | Unified Git diff against upstream `v2.37.1` |
 diff --git a/client/components/app/ConfigSideNav.vue b/client/components/app/ConfigSideNav.vue
@@ -149,10 +165,10 @@ index c4fe2446..f42bc13d 100644
          else if (pageName === 'api-keys') return this.$strings.HeaderApiKeys
 diff --git a/client/pages/config/bandwidth.vue b/client/pages/config/bandwidth.vue
 new file mode 100644
-index 00000000..4a1defa6
+index 00000000..08b1a6bd
 --- /dev/null
 +++ b/client/pages/config/bandwidth.vue
-@@ -0,0 +1,741 @@
+@@ -0,0 +1,1035 @@
 +<template>
 +  <div class="w-full">
 +    <!-- Notice if tracking is disabled -->
@@ -249,16 +265,31 @@ index 00000000..4a1defa6
 +      <!-- Filters & Toolbar (Stacking context relative z-50 prevents chart clipping) -->
 +      <div class="relative z-50 flex flex-col md:flex-row md:items-center justify-between gap-3 border-b border-white/10 pb-4 mb-4">
 +        <div class="flex flex-wrap items-center gap-2">
-+          <!-- Range Buttons -->
++          <!-- Range Buttons: Includes Live 48h (10m) high-res mode -->
 +          <div class="inline-flex rounded-md shadow-sm bg-black/40 p-1 border border-white/10">
-+            <button v-for="r in rangeOptions" :key="r.value" type="button" @click="selectRange(r.value)" class="px-3 py-1 text-xs font-medium rounded transition-colors" :class="selectedRange === r.value ? 'bg-primary text-white shadow' : 'text-gray-400 hover:text-white'">
++            <button
++              v-for="r in rangeOptions"
++              :key="r.value"
++              type="button"
++              @click="selectRange(r.value)"
++              class="px-3 py-1 text-xs font-medium rounded transition-colors flex items-center gap-1"
++              :class="selectedRange === r.value ? 'bg-primary text-white shadow' : 'text-gray-400 hover:text-white'"
++            >
++              <span v-if="r.value === 'last48Hours'" class="material-symbols text-[13px] text-emerald-400">show_chart</span>
 +              {{ r.label }}
 +            </button>
 +          </div>
 +
 +          <!-- Traffic Type Filter (All / Internet WAN / Local LAN) -->
 +          <div class="inline-flex rounded-md shadow-sm bg-black/40 p-1 border border-white/10">
-+            <button v-for="t in trafficTypeOptions" :key="t.value" type="button" @click="selectTrafficType(t.value)" class="px-2.5 py-1 text-xs font-medium rounded transition-colors flex items-center gap-1" :class="selectedTrafficType === t.value ? 'bg-primary text-white shadow' : 'text-gray-400 hover:text-white'">
++            <button
++              v-for="t in trafficTypeOptions"
++              :key="t.value"
++              type="button"
++              @click="selectTrafficType(t.value)"
++              class="px-2.5 py-1 text-xs font-medium rounded transition-colors flex items-center gap-1"
++              :class="selectedTrafficType === t.value ? 'bg-primary text-white shadow' : 'text-gray-400 hover:text-white'"
++            >
 +              <span class="material-symbols text-[14px]">{{ t.icon }}</span>
 +              <span>{{ t.label }}</span>
 +            </button>
@@ -267,7 +298,7 @@ index 00000000..4a1defa6
 +
 +        <!-- Controls: User Filter + Back Button + Refresh + Clear -->
 +        <div class="flex items-center gap-2 relative z-50">
-+          <!-- Back to All Users button (Prominent toolbar button when user is filtered) -->
++          <!-- Back to All Users button -->
 +          <ui-btn v-if="selectedUserId" color="bg-primary/30 hover:bg-primary/50 text-sky-200 border border-primary/40" small @click="selectUser('')">
 +            <span class="material-symbols text-sm mr-1">arrow_back</span>
 +            All Users
@@ -314,8 +345,109 @@ index 00000000..4a1defa6
 +        </span>
 +      </div>
 +
-+      <!-- Timeline Chart Section -->
-+      <div class="mb-8">
++      <!-- SECTION A: High-Resolution 10-Minute Activity Waveform (Layout Option A) for "Live 48h (10m)" -->
++      <div v-if="selectedRange === 'last48Hours'" class="mb-8">
++        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-3">
++          <div class="flex items-center flex-wrap gap-2">
++            <h2 class="text-lg font-semibold flex items-center">
++              <span class="material-symbols mr-2 text-accent">monitoring</span>
++              Rolling 48-Hour Waveform (10-Minute Increments)
++            </h2>
++            <span v-if="waveformPeakMbps > 0" class="text-xs font-mono font-semibold text-emerald-400 bg-emerald-500/15 border border-emerald-500/30 px-2 py-0.5 rounded">
++              Peak Burst: {{ waveformPeakMbps }} Mbps ({{ $bytesPretty(waveformPeakBytes) }} / 10m)
++            </span>
++          </div>
++          <!-- Legend -->
++          <div class="flex items-center gap-4 text-xs">
++            <div class="flex items-center"><span class="w-3 h-3 rounded-sm bg-emerald-400 mr-1.5" /> Egress Waveform</div>
++            <div class="flex items-center text-gray-400 font-mono text-[11px]">288 Intervals / 48 Hours</div>
++          </div>
++        </div>
++
++        <div v-if="loading" class="h-64 flex items-center justify-center bg-black/20 rounded-lg border border-white/5">
++          <ui-loading-indicator />
++        </div>
++
++        <div v-else-if="!waveform10m.length" class="h-64 flex flex-col items-center justify-center bg-black/20 rounded-lg border border-white/5 text-gray-400">
++          <span class="material-symbols text-4xl mb-2 text-gray-500">query_stats</span>
++          <p class="text-sm">No transfer records found in the last 48 hours</p>
++        </div>
++
++        <!-- Smooth SVG Area/Line Waveform Canvas -->
++        <div v-else class="bg-black/30 rounded-lg border border-white/5 p-4 relative overflow-hidden">
++          <!-- Top Y-Axis Peak Label -->
++          <div class="absolute top-3 left-4 text-[10px] font-mono text-gray-400 bg-black/60 px-1.5 py-0.5 rounded border border-white/10 z-10 pointer-events-none">
++            Peak: {{ waveformPeakMbps }} Mbps ({{ $bytesPretty(waveformPeakBytes) }})
++          </div>
++
++          <!-- Interactive Floating HUD Pill (Follows cursor) -->
++          <div
++            v-if="cursorPoint"
++            class="absolute z-40 pointer-events-none bg-gray-950/95 border border-white/20 text-white rounded-lg p-2.5 text-xs shadow-2xl backdrop-blur-md transition-all duration-75 whitespace-nowrap"
++            :style="{ left: `${Math.max(2, Math.min(78, (cursorPoint.x / 1000) * 100))}%`, top: '10px' }"
++          >
++            <div class="flex items-center justify-between border-b border-white/10 pb-1 mb-1">
++              <span class="font-bold text-gray-200">{{ cursorPoint.pt.timeLabel }}</span>
++              <span class="font-mono text-emerald-400 font-bold ml-2">~{{ cursorPoint.pt.mbps }} Mbps</span>
++            </div>
++            <p class="text-white font-semibold">10m Transfer: {{ $bytesPretty(cursorPoint.pt.bytesTotal) }}</p>
++            <div class="text-[11px] text-gray-300 space-y-0.5 mt-1 border-t border-white/10 pt-1">
++              <p class="text-sky-300 flex justify-between gap-3"><span>🌐 Internet:</span> <span class="font-mono">{{ $bytesPretty(cursorPoint.pt.bytesInternet) }}</span></p>
++              <p class="text-amber-300 flex justify-between gap-3"><span>🏠 Local:</span> <span class="font-mono">{{ $bytesPretty(cursorPoint.pt.bytesLocal) }}</span></p>
++              <p class="text-emerald-400 flex justify-between gap-3"><span>🎧 Streaming:</span> <span class="font-mono">{{ $bytesPretty(cursorPoint.pt.bytesStream) }}</span></p>
++              <p class="text-purple-400 flex justify-between gap-3"><span>📥 Download:</span> <span class="font-mono">{{ $bytesPretty(cursorPoint.pt.bytesDownload) }}</span></p>
++            </div>
++            <p class="text-[10px] text-gray-400 pt-1 border-t border-white/10 mt-1">Requests: {{ cursorPoint.pt.requests }}</p>
++          </div>
++
++          <!-- Responsive SVG Surface -->
++          <svg
++            ref="svgWaveform"
++            viewBox="0 0 1000 240"
++            class="w-full h-56 block cursor-crosshair"
++            preserveAspectRatio="none"
++            @mousemove="onSvgMouseMove"
++            @mouseleave="cursorPoint = null"
++          >
++            <defs>
++              <linearGradient id="waveGradient" x1="0%" y1="0%" x2="0%" y2="100%">
++                <stop offset="0%" stop-color="#10b981" stop-opacity="0.45" />
++                <stop offset="60%" stop-color="#06b6d4" stop-opacity="0.15" />
++                <stop offset="100%" stop-color="#06b6d4" stop-opacity="0.0" />
++              </linearGradient>
++            </defs>
++
++            <!-- Horizontal Background Grid Lines -->
++            <line x1="0" y1="25" x2="1000" y2="25" stroke="rgba(255,255,255,0.08)" stroke-dasharray="4,4" />
++            <line x1="0" y1="115" x2="1000" y2="115" stroke="rgba(255,255,255,0.08)" stroke-dasharray="4,4" />
++            <line x1="0" y1="205" x2="1000" y2="205" stroke="rgba(255,255,255,0.2)" />
++
++            <!-- Smooth SVG Area Fill -->
++            <path :d="waveformSvgAreaPath" fill="url(#waveGradient)" />
++
++            <!-- Smooth SVG Curve Stroke -->
++            <path :d="waveformSvgStrokePath" fill="none" stroke="#10b981" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round" />
++
++            <!-- Interactive Cursor Line & Indicator Point -->
++            <template v-if="cursorPoint">
++              <line :x1="cursorPoint.x" y1="20" :x2="cursorPoint.x" y2="205" stroke="#38bdf8" stroke-width="1.5" stroke-dasharray="3,3" />
++              <circle :cx="cursorPoint.x" :cy="cursorPoint.y" r="4.5" fill="#10b981" stroke="#ffffff" stroke-width="2" />
++            </template>
++          </svg>
++
++          <!-- Time Axis Ticks (4 Ticks across 48 Hours) -->
++          <div class="flex justify-between items-center text-[10px] text-gray-400 mt-2 px-1 font-mono">
++            <span>-48 Hours</span>
++            <span>-36 Hours</span>
++            <span>-24 Hours</span>
++            <span>-12 Hours</span>
++            <span class="text-emerald-400 font-bold">Now (Live)</span>
++          </div>
++        </div>
++      </div>
++
++      <!-- SECTION B: Daily Timeline Chart (Shown for all ranges except 48h) -->
++      <div v-else class="mb-8">
 +        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-3">
 +          <h2 class="text-lg font-semibold flex items-center">
 +            <span class="material-symbols mr-2 text-accent">show_chart</span>
@@ -459,6 +591,96 @@ index 00000000..4a1defa6
 +                  :class="selectedDate === item.date ? 'text-accent font-bold' : (hoveredIndex === index ? 'text-white' : 'text-gray-400')"
 +                >
 +                  {{ formatShortDate(item.date) }}
++                </p>
++              </div>
++            </div>
++          </div>
++        </div>
++      </div>
++
++      <!-- SECTION C: Approach 1: 24-Hour Time-of-Day Hourly Drill-Down (Shown when a single date is selected) -->
++      <div v-if="selectedDate && hourlyData.length" class="mb-8">
++        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-3">
++          <div>
++            <h2 class="text-lg font-semibold flex items-center">
++              <span class="material-symbols mr-2 text-accent">schedule</span>
++              Time-of-Day Hourly Activity for {{ selectedDate }}
++            </h2>
++            <p class="text-xs text-gray-400">Hourly timeline (00:00 – 23:00) showing the exact times of day when bandwidth was used</p>
++          </div>
++          <!-- Legend -->
++          <div class="flex items-center gap-4 text-xs">
++            <div class="flex items-center"><span class="w-3 h-3 rounded-sm bg-emerald-500 mr-1.5" /> Streaming</div>
++            <div class="flex items-center"><span class="w-3 h-3 rounded-sm bg-purple-500 mr-1.5" /> Downloads</div>
++            <div class="flex items-center"><span class="w-3 h-3 rounded-sm bg-blue-500 mr-1.5" /> Other / API</div>
++          </div>
++        </div>
++
++        <div class="bg-black/30 rounded-lg border border-white/5 p-4 overflow-x-auto">
++          <div class="relative h-56 flex items-end pt-8 pb-6 min-w-[650px]">
++            <!-- Grid Lines -->
++            <div class="absolute inset-x-0 top-8 bottom-6 flex flex-col justify-between pointer-events-none opacity-20">
++              <div class="border-b border-white" />
++              <div class="border-b border-white" />
++              <div class="border-b border-white" />
++            </div>
++
++            <!-- Top Y-Axis Label -->
++            <div class="absolute top-2 left-2 text-[10px] font-mono text-gray-400 bg-black/60 px-1 rounded pointer-events-none">
++              Peak Hour: {{ $bytesPretty(hourlyChartMaxBytes) }}
++            </div>
++
++            <!-- Floating Hover Tooltip for Hourly Chart -->
++            <div
++              v-if="hoveredHourlyItem"
++              class="absolute z-50 pointer-events-none flex flex-col bg-gray-950/95 border border-white/20 text-white rounded-lg p-3 text-xs shadow-2xl whitespace-nowrap min-w-[200px] backdrop-blur-md"
++              :style="hourlyTooltipStyle"
++            >
++              <div class="flex items-center justify-between border-b border-white/10 pb-1 mb-1">
++                <span class="font-bold text-gray-200">{{ selectedDate }} {{ hoveredHourlyItem.label }}</span>
++              </div>
++              <p class="text-white font-bold text-sm">Hourly Total: {{ $bytesPretty(hoveredHourlyItem.bytesTotal) }}</p>
++              <div class="text-[11px] text-gray-300 space-y-0.5 mt-1 border-t border-white/10 pt-1">
++                <p class="text-sky-300 flex justify-between gap-3"><span>🌐 Internet:</span> <span class="font-mono">{{ $bytesPretty(hoveredHourlyItem.bytesInternet) }}</span></p>
++                <p class="text-amber-300 flex justify-between gap-3"><span>🏠 Local:</span> <span class="font-mono">{{ $bytesPretty(hoveredHourlyItem.bytesLocal) }}</span></p>
++                <p class="text-emerald-400 flex justify-between gap-3"><span>🎧 Stream:</span> <span class="font-mono">{{ $bytesPretty(hoveredHourlyItem.bytesStream) }}</span></p>
++                <p class="text-purple-400 flex justify-between gap-3"><span>📥 Download:</span> <span class="font-mono">{{ $bytesPretty(hoveredHourlyItem.bytesDownload) }}</span></p>
++              </div>
++              <p class="text-[10px] text-gray-400 pt-1 border-t border-white/10 mt-1">Requests: {{ hoveredHourlyItem.requests }}</p>
++            </div>
++
++            <!-- Hourly Bars (24 Columns) -->
++            <div class="w-full h-full flex items-end justify-between gap-1 z-10 px-1" @mouseleave="leaveHourlyItem">
++              <div
++                v-for="(h, idx) in hourlyData"
++                :key="h.hour"
++                class="flex-1 h-full flex flex-col justify-end items-center cursor-pointer min-w-[10px] p-0.5 rounded transition-transform"
++                :class="{ 'scale-105': hoveredHourlyIndex === idx }"
++                @mouseenter="hoverHourly(h, idx)"
++                @mouseleave="leaveHourlyItem"
++              >
++                <!-- Stacked Hourly Bar -->
++                <div
++                  class="w-full max-w-[22px] rounded-t flex flex-col-reverse overflow-hidden transition-all duration-150"
++                  :class="{ 'brightness-125': hoveredHourlyIndex === idx }"
++                  :style="{ height: `${Math.max(3, (getBarHeightBytes(h) / hourlyChartMaxBytes) * 100)}%` }"
++                >
++                  <template v-if="selectedTrafficType === 'internet'">
++                    <div class="w-full h-full bg-sky-500" />
++                  </template>
++                  <template v-else-if="selectedTrafficType === 'local'">
++                    <div class="w-full h-full bg-amber-500" />
++                  </template>
++                  <template v-else>
++                    <div class="w-full bg-emerald-500" :style="{ height: `${(h.bytesStream / (h.bytesTotal || 1)) * 100}%` }" />
++                    <div class="w-full bg-purple-500" :style="{ height: `${(h.bytesDownload / (h.bytesTotal || 1)) * 100}%` }" />
++                    <div class="w-full bg-blue-500" :style="{ height: `${(h.bytesOther / (h.bytesTotal || 1)) * 100}%` }" />
++                  </template>
++                </div>
++
++                <!-- Hour Tick Label -->
++                <p class="text-[9px] mt-2 truncate w-full text-center text-gray-400 font-mono">
++                  {{ h.hour % 3 === 0 ? h.label : '' }}
 +                </p>
 +              </div>
 +            </div>
@@ -677,7 +899,11 @@ index 00000000..4a1defa6
 +      selectedDate: null,
 +      hoveredItem: null,
 +      hoveredIndex: -1,
++      hoveredHourlyItem: null,
++      hoveredHourlyIndex: -1,
++      cursorPoint: null,
 +      rangeOptions: [
++        { label: 'Live 48h (10m)', value: 'last48Hours' },
 +        { label: 'Today', value: 'today' },
 +        { label: 'Last 7 Days', value: 'last7Days' },
 +        { label: 'Last 30 Days', value: 'last30Days' },
@@ -699,6 +925,10 @@ index 00000000..4a1defa6
 +      dailyChartData: [],
 +      userBreakdown: [],
 +      itemBreakdown: [],
++      hourlyData: [],
++      waveform10m: [],
++      waveformPeakBytes: 0,
++      waveformPeakMbps: 0,
 +      filteredTotalBytes: 0,
 +      allUsers: []
 +    }
@@ -740,15 +970,16 @@ index 00000000..4a1defa6
 +      const max = Math.max(...this.dailyChartData.map((d) => this.getBarHeightBytes(d)))
 +      return max > 0 ? max : 1
 +    },
++    hourlyChartMaxBytes() {
++      if (!this.hourlyData.length) return 1
++      const max = Math.max(...this.hourlyData.map((h) => this.getBarHeightBytes(h)))
++      return max > 0 ? max : 1
++    },
 +    tooltipStyle() {
 +      if (!this.hoveredItem || this.hoveredIndex < 0) return {}
 +      const total = this.dailyChartData.length || 1
 +      const idx = this.hoveredIndex
-+
-+      const style = {
-+        top: '8px'
-+      }
-+
++      const style = { top: '8px' }
 +      if (idx <= 1) {
 +        const leftPercent = Math.max(1, (idx / total) * 100)
 +        style.left = `${leftPercent}%`
@@ -761,14 +992,66 @@ index 00000000..4a1defa6
 +        style.left = `${centerPercent}%`
 +        style.transform = 'translateX(-50%)'
 +      }
-+
 +      return style
++    },
++    hourlyTooltipStyle() {
++      if (!this.hoveredHourlyItem || this.hoveredHourlyIndex < 0) return {}
++      const total = this.hourlyData.length || 1
++      const idx = this.hoveredHourlyIndex
++      const style = { top: '8px' }
++      if (idx <= 2) {
++        style.left = `${Math.max(1, (idx / total) * 100)}%`
++      } else if (idx >= total - 3) {
++        style.right = `${Math.max(1, ((total - 1 - idx) / total) * 100)}%`
++        style.left = 'auto'
++      } else {
++        style.left = `${((idx + 0.5) / total) * 100}%`
++        style.transform = 'translateX(-50%)'
++      }
++      return style
++    },
++    waveformPoints() {
++      if (!this.waveform10m || !this.waveform10m.length) return []
++      const maxVal = this.waveformPeakBytes || 1
++      const count = this.waveform10m.length
++      const width = 1000
++      const height = 180
++      const topOffset = 25
++
++      return this.waveform10m.map((pt, i) => {
++        const x = (i / (count - 1 || 1)) * width
++        let val = pt.bytesTotal
++        if (this.selectedTrafficType === 'internet') val = pt.bytesInternet
++        else if (this.selectedTrafficType === 'local') val = pt.bytesLocal
++        const y = topOffset + height - Math.min(height, (val / maxVal) * height)
++        return { x, y, pt, val }
++      })
++    },
++    waveformSvgAreaPath() {
++      if (!this.waveformPoints.length) return ''
++      const pts = this.waveformPoints
++      let d = `M ${pts[0].x} ${pts[0].y}`
++      for (let i = 1; i < pts.length; i++) {
++        d += ` L ${pts[i].x} ${pts[i].y}`
++      }
++      d += ` L ${pts[pts.length - 1].x} 205 L ${pts[0].x} 205 Z`
++      return d
++    },
++    waveformSvgStrokePath() {
++      if (!this.waveformPoints.length) return ''
++      const pts = this.waveformPoints
++      let d = `M ${pts[0].x} ${pts[0].y}`
++      for (let i = 1; i < pts.length; i++) {
++        d += ` L ${pts[i].x} ${pts[i].y}`
++      }
++      return d
 +    }
 +  },
 +  methods: {
 +    selectRange(range) {
 +      this.selectedRange = range
 +      this.selectedDate = null
++      this.cursorPoint = null
 +      this.loadStats()
 +    },
 +    selectTrafficType(type) {
@@ -798,6 +1081,26 @@ index 00000000..4a1defa6
 +    leaveItem() {
 +      this.hoveredItem = null
 +      this.hoveredIndex = -1
++    },
++    hoverHourly(item, index) {
++      this.hoveredHourlyItem = item
++      this.hoveredHourlyIndex = index
++    },
++    leaveHourlyItem() {
++      this.hoveredHourlyItem = null
++      this.hoveredHourlyIndex = -1
++    },
++    onSvgMouseMove(event) {
++      if (!this.waveformPoints.length) return
++      const svg = this.$refs.svgWaveform
++      if (!svg) return
++      const rect = svg.getBoundingClientRect()
++      const mouseX = event.clientX - rect.left
++      const svgX = (mouseX / rect.width) * 1000
++      const count = this.waveformPoints.length
++      const index = Math.round((svgX / 1000) * (count - 1))
++      const clampedIndex = Math.max(0, Math.min(count - 1, index))
++      this.cursorPoint = this.waveformPoints[clampedIndex]
 +    },
 +    getBarHeightBytes(item) {
 +      if (this.selectedTrafficType === 'internet') {
@@ -853,6 +1156,10 @@ index 00000000..4a1defa6
 +          this.dailyChartData = data.daily || []
 +          this.userBreakdown = data.userBreakdown || []
 +          this.itemBreakdown = data.itemBreakdown || []
++          this.hourlyData = data.hourly || []
++          this.waveform10m = data.waveform10m || []
++          this.waveformPeakBytes = data.waveformPeakBytes || 0
++          this.waveformPeakMbps = data.waveformPeakMbps || 0
 +          this.filteredTotalBytes = data.rangeTotalBytes || 0
 +        }
 +      } catch (err) {
@@ -879,6 +1186,9 @@ index 00000000..4a1defa6
 +        this.selectedDate = null
 +        this.hoveredItem = null
 +        this.hoveredIndex = -1
++        this.hoveredHourlyItem = null
++        this.hoveredHourlyIndex = -1
++        this.cursorPoint = null
 +        await this.loadStats()
 +      } catch (err) {
 +        console.error('Failed to clear bandwidth stats:', err)
@@ -952,10 +1262,10 @@ index 34a0fc86..bde60640 100644
      }
    },
 diff --git a/server/Database.js b/server/Database.js
-index 65c8d539..2bbed9e2 100644
+index 65c8d539..ea424b76 100644
 --- a/server/Database.js
 +++ b/server/Database.js
-@@ -157,6 +157,16 @@ class Database {
+@@ -157,6 +157,26 @@ class Database {
      return this.models.device
    }
  
@@ -969,15 +1279,27 @@ index 65c8d539..2bbed9e2 100644
 +    return this.models.bandwidthItemStat
 +  }
 +
++  /** @type {typeof import('./models/BandwidthHourlyStat')} */
++  get bandwidthHourlyStatModel() {
++    return this.models.bandwidthHourlyStat
++  }
++
++  /** @type {typeof import('./models/BandwidthTimeStat')} */
++  get bandwidthTimeStatModel() {
++    return this.models.bandwidthTimeStat
++  }
++
    /**
     * Check if db file exists
     * @returns {boolean}
-@@ -340,6 +350,8 @@ class Database {
+@@ -340,6 +360,10 @@ class Database {
      require('./models/Setting').init(this.sequelize)
      require('./models/CustomMetadataProvider').init(this.sequelize)
      require('./models/MediaItemShare').init(this.sequelize)
 +    require('./models/BandwidthStat').init(this.sequelize)
 +    require('./models/BandwidthItemStat').init(this.sequelize)
++    require('./models/BandwidthHourlyStat').init(this.sequelize)
++    require('./models/BandwidthTimeStat').init(this.sequelize)
  
      return this.sequelize.sync({ force, alter: false })
    }
@@ -1101,10 +1423,10 @@ index 32ed1973..fd05e8e1 100644
     * @param {RequestWithUser} req
 diff --git a/server/managers/BandwidthManager.js b/server/managers/BandwidthManager.js
 new file mode 100644
-index 00000000..dde61686
+index 00000000..608488a4
 --- /dev/null
 +++ b/server/managers/BandwidthManager.js
-@@ -0,0 +1,767 @@
+@@ -0,0 +1,1082 @@
 +const { Op } = require('sequelize')
 +const Database = require('../Database')
 +const Logger = require('../Logger')
@@ -1145,6 +1467,10 @@ index 00000000..dde61686
 +    this.buffer = new Map()
 +    /** @type {Map<string, { userId: string, date: string, libraryItemId: string, itemName: string, category: string, bytesLocal: number, bytesInternet: number, bytesTotal: number, requests: number }>} */
 +    this.itemBuffer = new Map()
++    /** @type {Map<string, { userId: string, date: string, hour: number, bytesStream: number, bytesDownload: number, bytesOther: number, bytesLocal: number, bytesInternet: number, bytesTotal: number, requests: number }>} */
++    this.hourlyBuffer = new Map()
++    /** @type {Map<string, { userId: string, bucketTime: number, timeLabel: string, date: string, hour: number, minute: number, bytesStream: number, bytesDownload: number, bytesOther: number, bytesLocal: number, bytesInternet: number, bytesTotal: number, requests: number }>} */
++    this.timeBuffer = new Map()
 +    /** @type {Map<string, string>} */
 +    this.itemTitleCache = new Map()
 +    this.flushInterval = null
@@ -1153,15 +1479,29 @@ index 00000000..dde61686
 +  async init() {
 +    Logger.info('[BandwidthManager] Initialized')
 +
-+    // Ensure bytesLocal and bytesInternet columns exist in SQLite if table was created before
++    // Ensure legacy SQLite columns exist
 +    await this.ensureColumns()
 +
-+    // Ensure bandwidthItemStats table exists
++    // Ensure models sync
 +    if (Database.bandwidthItemStatModel) {
 +      try {
 +        await Database.bandwidthItemStatModel.sync()
 +      } catch (err) {
 +        Logger.error('[BandwidthManager] Error syncing bandwidthItemStats table:', err)
++      }
++    }
++    if (Database.bandwidthHourlyStatModel) {
++      try {
++        await Database.bandwidthHourlyStatModel.sync()
++      } catch (err) {
++        Logger.error('[BandwidthManager] Error syncing bandwidthHourlyStats table:', err)
++      }
++    }
++    if (Database.bandwidthTimeStatModel) {
++      try {
++        await Database.bandwidthTimeStatModel.sync()
++      } catch (err) {
++        Logger.error('[BandwidthManager] Error syncing bandwidthTimeStats table:', err)
 +      }
 +    }
 +
@@ -1288,7 +1628,7 @@ index 00000000..dde61686
 +  }
 +
 +  /**
-+   * Record data transfer into in-memory buffer
++   * Record data transfer into in-memory buffers
 +   *
 +   * @param {string|null} userId
 +   * @param {'stream'|'download'|'other'} category
@@ -1300,13 +1640,19 @@ index 00000000..dde61686
 +    if (!global.ServerSettings?.enableBandwidthTracking) return
 +    if (!bytes || bytes <= 0 || isNaN(bytes)) return
 +
-+    const date = dateAndTime.format(new Date(), 'YYYY-MM-DD')
++    const now = new Date()
++    const date = dateAndTime.format(now, 'YYYY-MM-DD')
++    const hour = now.getHours()
++    const minute = Math.floor(now.getMinutes() / 10) * 10
++    const bucketTime = Math.floor(now.getTime() / 600000) * 600000
++    const timeLabel = `${date} ${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`
 +    const uid = userId || 'anonymous'
-+    const key = `${uid}_${date}`
 +
-+    let entry = this.buffer.get(key)
-+    if (!entry) {
-+      entry = {
++    // 1. Daily User Summary Buffer
++    const dailyKey = `${uid}_${date}`
++    let dailyEntry = this.buffer.get(dailyKey)
++    if (!dailyEntry) {
++      dailyEntry = {
 +        userId: uid,
 +        date: date,
 +        bytesStream: 0,
@@ -1317,27 +1663,20 @@ index 00000000..dde61686
 +        bytesInternet: 0,
 +        requests: 0
 +      }
-+      this.buffer.set(key, entry)
++      this.buffer.set(dailyKey, dailyEntry)
 +    }
 +
-+    if (category === 'stream') {
-+      entry.bytesStream += bytes
-+    } else if (category === 'download') {
-+      entry.bytesDownload += bytes
-+    } else {
-+      entry.bytesOther += bytes
-+    }
++    if (category === 'stream') dailyEntry.bytesStream += bytes
++    else if (category === 'download') dailyEntry.bytesDownload += bytes
++    else dailyEntry.bytesOther += bytes
 +
-+    if (isLocal) {
-+      entry.bytesLocal += bytes
-+    } else {
-+      entry.bytesInternet += bytes
-+    }
++    if (isLocal) dailyEntry.bytesLocal += bytes
++    else dailyEntry.bytesInternet += bytes
 +
-+    entry.bytesTotal += bytes
-+    entry.requests += 1
++    dailyEntry.bytesTotal += bytes
++    dailyEntry.requests += 1
 +
-+    // Also record per-item statistics
++    // 2. Per-Item Statistics Buffer
 +    const libraryItemId = itemInfo?.libraryItemId || 'general'
 +    const itemName = itemInfo?.itemName || (libraryItemId === 'general' ? 'General / Web App' : 'Item ' + libraryItemId.substring(0, 8))
 +    const itemKey = `${uid}_${date}_${libraryItemId}_${category}`
@@ -1362,13 +1701,71 @@ index 00000000..dde61686
 +      itemEntry.itemName = itemName
 +    }
 +
-+    if (isLocal) {
-+      itemEntry.bytesLocal += bytes
-+    } else {
-+      itemEntry.bytesInternet += bytes
-+    }
++    if (isLocal) itemEntry.bytesLocal += bytes
++    else itemEntry.bytesInternet += bytes
 +    itemEntry.bytesTotal += bytes
 +    itemEntry.requests += 1
++
++    // 3. Hourly Time-of-Day Buffer (Approach 1: 00:00 - 23:00)
++    const hourlyKey = `${uid}_${date}_${hour}`
++    let hourlyEntry = this.hourlyBuffer.get(hourlyKey)
++    if (!hourlyEntry) {
++      hourlyEntry = {
++        userId: uid,
++        date: date,
++        hour: hour,
++        bytesStream: 0,
++        bytesDownload: 0,
++        bytesOther: 0,
++        bytesLocal: 0,
++        bytesInternet: 0,
++        bytesTotal: 0,
++        requests: 0
++      }
++      this.hourlyBuffer.set(hourlyKey, hourlyEntry)
++    }
++
++    if (category === 'stream') hourlyEntry.bytesStream += bytes
++    else if (category === 'download') hourlyEntry.bytesDownload += bytes
++    else hourlyEntry.bytesOther += bytes
++
++    if (isLocal) hourlyEntry.bytesLocal += bytes
++    else hourlyEntry.bytesInternet += bytes
++
++    hourlyEntry.bytesTotal += bytes
++    hourlyEntry.requests += 1
++
++    // 4. Rolling 10-Minute High-Resolution Buffer (Approach 2: Last 48 Hours)
++    const timeKey = `${uid}_${timeLabel}`
++    let timeEntry = this.timeBuffer.get(timeKey)
++    if (!timeEntry) {
++      timeEntry = {
++        userId: uid,
++        bucketTime: bucketTime,
++        timeLabel: timeLabel,
++        date: date,
++        hour: hour,
++        minute: minute,
++        bytesStream: 0,
++        bytesDownload: 0,
++        bytesOther: 0,
++        bytesLocal: 0,
++        bytesInternet: 0,
++        bytesTotal: 0,
++        requests: 0
++      }
++      this.timeBuffer.set(timeKey, timeEntry)
++    }
++
++    if (category === 'stream') timeEntry.bytesStream += bytes
++    else if (category === 'download') timeEntry.bytesDownload += bytes
++    else timeEntry.bytesOther += bytes
++
++    if (isLocal) timeEntry.bytesLocal += bytes
++    else timeEntry.bytesInternet += bytes
++
++    timeEntry.bytesTotal += bytes
++    timeEntry.requests += 1
 +  }
 +
 +  /**
@@ -1460,22 +1857,30 @@ index 00000000..dde61686
 +  }
 +
 +  /**
-+   * Flush in-memory buffer into SQLite database using an atomic UPSERT transaction
++   * Flush in-memory buffers into SQLite database using atomic UPSERT transactions
 +   */
 +  async flush() {
-+    if (this.buffer.size === 0 && this.itemBuffer.size === 0) return
++    if (this.buffer.size === 0 && this.itemBuffer.size === 0 && this.hourlyBuffer.size === 0 && this.timeBuffer.size === 0) return
 +    if (!Database.sequelize) return
 +
 +    const currentBuffer = this.buffer
 +    const currentItemBuffer = this.itemBuffer
++    const currentHourlyBuffer = this.hourlyBuffer
++    const currentTimeBuffer = this.timeBuffer
++
 +    this.buffer = new Map()
 +    this.itemBuffer = new Map()
++    this.hourlyBuffer = new Map()
++    this.timeBuffer = new Map()
 +
 +    const entries = Array.from(currentBuffer.values())
 +    const itemEntries = Array.from(currentItemBuffer.values())
++    const hourlyEntries = Array.from(currentHourlyBuffer.values())
++    const timeEntries = Array.from(currentTimeBuffer.values())
 +
 +    try {
 +      await Database.sequelize.transaction(async (t) => {
++        // 1. Daily User Stats UPSERT
 +        for (const entry of entries) {
 +          await Database.sequelize.query(
 +            `INSERT INTO bandwidthStats (userId, date, bytesStream, bytesDownload, bytesOther, bytesTotal, bytesLocal, bytesInternet, requests, createdAt, updatedAt)
@@ -1496,6 +1901,7 @@ index 00000000..dde61686
 +          )
 +        }
 +
++        // 2. Per-Item Stats UPSERT
 +        for (const itemEntry of itemEntries) {
 +          await Database.sequelize.query(
 +            `INSERT INTO bandwidthItemStats (userId, date, libraryItemId, itemName, category, bytesLocal, bytesInternet, bytesTotal, requests, createdAt, updatedAt)
@@ -1513,10 +1919,62 @@ index 00000000..dde61686
 +            }
 +          )
 +        }
++
++        // 3. Hourly Stats UPSERT
++        for (const hourlyEntry of hourlyEntries) {
++          await Database.sequelize.query(
++            `INSERT INTO bandwidthHourlyStats (userId, date, hour, bytesStream, bytesDownload, bytesOther, bytesLocal, bytesInternet, bytesTotal, requests, createdAt, updatedAt)
++             VALUES (:userId, :date, :hour, :bytesStream, :bytesDownload, :bytesOther, :bytesLocal, :bytesInternet, :bytesTotal, :requests, datetime('now'), datetime('now'))
++             ON CONFLICT(userId, date, hour) DO UPDATE SET
++               bytesStream = bytesStream + excluded.bytesStream,
++               bytesDownload = bytesDownload + excluded.bytesDownload,
++               bytesOther = bytesOther + excluded.bytesOther,
++               bytesLocal = bytesLocal + excluded.bytesLocal,
++               bytesInternet = bytesInternet + excluded.bytesInternet,
++               bytesTotal = bytesTotal + excluded.bytesTotal,
++               requests = requests + excluded.requests,
++               updatedAt = datetime('now');`,
++            {
++              replacements: hourlyEntry,
++              transaction: t
++            }
++          )
++        }
++
++        // 4. 10-Minute High-Res Stats UPSERT
++        for (const timeEntry of timeEntries) {
++          await Database.sequelize.query(
++            `INSERT INTO bandwidthTimeStats (userId, bucketTime, timeLabel, date, hour, minute, bytesStream, bytesDownload, bytesOther, bytesLocal, bytesInternet, bytesTotal, requests, createdAt, updatedAt)
++             VALUES (:userId, :bucketTime, :timeLabel, :date, :hour, :minute, :bytesStream, :bytesDownload, :bytesOther, :bytesLocal, :bytesInternet, :bytesTotal, :requests, datetime('now'), datetime('now'))
++             ON CONFLICT(userId, timeLabel) DO UPDATE SET
++               bytesStream = bytesStream + excluded.bytesStream,
++               bytesDownload = bytesDownload + excluded.bytesDownload,
++               bytesOther = bytesOther + excluded.bytesOther,
++               bytesLocal = bytesLocal + excluded.bytesLocal,
++               bytesInternet = bytesInternet + excluded.bytesInternet,
++               bytesTotal = bytesTotal + excluded.bytesTotal,
++               requests = requests + excluded.requests,
++               updatedAt = datetime('now');`,
++            {
++              replacements: timeEntry,
++              transaction: t
++            }
++          )
++        }
 +      })
++
++      // 5. Automatic Pruning: Purge 10-minute records older than 48 hours to maintain a hard ceiling on SQLite size
++      const cutoff48h = Date.now() - 48 * 3600 * 1000
++      if (Database.bandwidthTimeStatModel) {
++        await Database.bandwidthTimeStatModel.destroy({
++          where: {
++            bucketTime: { [Op.lt]: cutoff48h }
++          }
++        })
++      }
 +    } catch (err) {
-+      Logger.error('[BandwidthManager] Failed to flush bandwidth buffer to DB, restoring buffer:', err)
-+      // Merge entries back into buffer so data is not lost
++      Logger.error('[BandwidthManager] Failed to flush bandwidth buffer to DB, restoring buffers:', err)
++      // Merge entries back into buffers
 +      for (const entry of entries) {
 +        const key = `${entry.userId}_${entry.date}`
 +        const existing = this.buffer.get(key)
@@ -1545,6 +2003,38 @@ index 00000000..dde61686
 +          this.itemBuffer.set(itemKey, itemEntry)
 +        }
 +      }
++
++      for (const hourlyEntry of hourlyEntries) {
++        const hourlyKey = `${hourlyEntry.userId}_${hourlyEntry.date}_${hourlyEntry.hour}`
++        const existingHourly = this.hourlyBuffer.get(hourlyKey)
++        if (existingHourly) {
++          existingHourly.bytesStream += hourlyEntry.bytesStream
++          existingHourly.bytesDownload += hourlyEntry.bytesDownload
++          existingHourly.bytesOther += hourlyEntry.bytesOther
++          existingHourly.bytesLocal += hourlyEntry.bytesLocal
++          existingHourly.bytesInternet += hourlyEntry.bytesInternet
++          existingHourly.bytesTotal += hourlyEntry.bytesTotal
++          existingHourly.requests += hourlyEntry.requests
++        } else {
++          this.hourlyBuffer.set(hourlyKey, hourlyEntry)
++        }
++      }
++
++      for (const timeEntry of timeEntries) {
++        const timeKey = `${timeEntry.userId}_${timeEntry.timeLabel}`
++        const existingTime = this.timeBuffer.get(timeKey)
++        if (existingTime) {
++          existingTime.bytesStream += timeEntry.bytesStream
++          existingTime.bytesDownload += timeEntry.bytesDownload
++          existingTime.bytesOther += timeEntry.bytesOther
++          existingTime.bytesLocal += timeEntry.bytesLocal
++          existingTime.bytesInternet += timeEntry.bytesInternet
++          existingTime.bytesTotal += timeEntry.bytesTotal
++          existingTime.requests += timeEntry.requests
++        } else {
++          this.timeBuffer.set(timeKey, timeEntry)
++        }
++      }
 +    }
 +  }
 +
@@ -1552,7 +2042,7 @@ index 00000000..dde61686
 +   * Fetch aggregated bandwidth stats
 +   *
 +   * @param {Object} [options]
-+   * @param {string} [options.range] 'day' | 'week' | 'month' | 'year' | 'all'
++   * @param {string} [options.range] 'last48Hours' | 'day' | 'week' | 'month' | 'year' | 'all'
 +   * @param {string} [options.userId]
 +   * @param {string} [options.startDate]
 +   * @param {string} [options.endDate]
@@ -1560,25 +2050,24 @@ index 00000000..dde61686
 +   * @param {string} [options.date]
 +   */
 +  async getStats(options = {}) {
-+    // Flush current buffer first for live, up-to-the-second stats
++    // Flush current buffer first for live stats
 +    await this.flush()
 +
 +    const now = new Date()
 +    const todayStr = dateAndTime.format(now, 'YYYY-MM-DD')
 +
-+    // Helper to format date offset
 +    const getPastDateStr = (daysAgo) => {
 +      const d = new Date()
 +      d.setDate(d.getDate() - daysAgo)
 +      return dateAndTime.format(d, 'YYYY-MM-DD')
 +    }
 +
++    const twoDaysAgoStr = getPastDateStr(2)
 +    const sevenDaysAgoStr = getPastDateStr(6)
 +    const thirtyDaysAgoStr = getPastDateStr(29)
 +    const monthStartStr = `${todayStr.substring(0, 7)}-01`
 +    const yearStartStr = `${todayStr.substring(0, 4)}-01-01`
 +
-+    // Determine query range for time series
 +    let filterStart = null
 +    let filterEnd = options.endDate || todayStr
 +
@@ -1586,6 +2075,10 @@ index 00000000..dde61686
 +      filterStart = options.startDate
 +    } else {
 +      switch (options.range) {
++        case 'last48Hours':
++        case 'live48h':
++          filterStart = twoDaysAgoStr
++          break
 +        case 'day':
 +        case 'today':
 +          filterStart = todayStr
@@ -1617,7 +2110,7 @@ index 00000000..dde61686
 +      order: [['date', 'ASC']]
 +    })
 +
-+    // Compute Summary KPIs (across all users or specific user)
++    // Compute Summary KPIs
 +    const summary = {
 +      today: { total: 0, stream: 0, download: 0, other: 0, local: 0, internet: 0, requests: 0 },
 +      last7Days: { total: 0, stream: 0, download: 0, other: 0, local: 0, internet: 0, requests: 0 },
@@ -1696,11 +2189,10 @@ index 00000000..dde61686
 +
 +    const daily = Array.from(dailyMap.values()).sort((a, b) => a.date.localeCompare(b.date))
 +
-+    // Aggregate by user (user breakdown for selected range)
++    // Aggregate by user
 +    const userMap = new Map()
 +    let rangeTotalBytes = 0
 +
-+    // Fetch user map for usernames
 +    const users = await Database.userModel.findAll()
 +    const usernameMap = new Map()
 +    for (const u of users) {
@@ -1763,7 +2255,6 @@ index 00000000..dde61686
 +      if (options.userId) {
 +        itemWhere.userId = options.userId
 +      }
-+      // If a specific single date is queried (e.g. clicking a date bar on the chart)
 +      if (options.date) {
 +        itemWhere.date = options.date
 +      } else if (filterStart && filterEnd) {
@@ -1841,6 +2332,139 @@ index 00000000..dde61686
 +        })
 +    }
 +
++    // Approach 1: 24-Hour Time-of-Day Hourly Breakdown for Selected Date
++    let hourly = []
++    if (options.date && Database.bandwidthHourlyStatModel) {
++      const hourlyWhere = { date: options.date }
++      if (options.userId) {
++        hourlyWhere.userId = options.userId
++      }
++      const hourlyRecords = await Database.bandwidthHourlyStatModel.findAll({
++        where: hourlyWhere,
++        order: [['hour', 'ASC']]
++      })
++
++      const hourlyMap = new Map()
++      for (let h = 0; h < 24; h++) {
++        hourlyMap.set(h, {
++          hour: h,
++          label: `${String(h).padStart(2, '0')}:00`,
++          bytesTotal: 0,
++          bytesStream: 0,
++          bytesDownload: 0,
++          bytesOther: 0,
++          bytesLocal: 0,
++          bytesInternet: 0,
++          requests: 0
++        })
++      }
++
++      for (const rec of hourlyRecords) {
++        const entry = hourlyMap.get(rec.hour)
++        if (entry) {
++          entry.bytesTotal += Number(rec.bytesTotal || 0)
++          entry.bytesStream += Number(rec.bytesStream || 0)
++          entry.bytesDownload += Number(rec.bytesDownload || 0)
++          entry.bytesOther += Number(rec.bytesOther || 0)
++          entry.bytesLocal += Number(rec.bytesLocal || 0)
++          entry.bytesInternet += Number(rec.bytesInternet || 0)
++          entry.requests += Number(rec.requests || 0)
++        }
++      }
++
++      hourly = Array.from(hourlyMap.values())
++    }
++
++    // Approach 2: Rolling 48-Hour 10-Minute Waveform
++    let waveform10m = []
++    let waveformPeakBytes = 0
++    let waveformPeakMbps = 0
++
++    if ((options.range === 'last48Hours' || options.range === 'live48h') && Database.bandwidthTimeStatModel) {
++      const cutoff48h = Math.floor((Date.now() - 48 * 3600 * 1000) / 600000) * 600000
++      const currentBucketTime = Math.floor(Date.now() / 600000) * 600000
++
++      const timeWhere = {
++        bucketTime: { [Op.gte]: cutoff48h }
++      }
++      if (options.userId) {
++        timeWhere.userId = options.userId
++      }
++
++      const timeRecords = await Database.bandwidthTimeStatModel.findAll({
++        where: timeWhere
++      })
++
++      // Aggregate records by bucketTime
++      const timeBucketMap = new Map()
++      for (const rec of timeRecords) {
++        let b = timeBucketMap.get(Number(rec.bucketTime))
++        if (!b) {
++          b = {
++            bytesTotal: 0,
++            bytesStream: 0,
++            bytesDownload: 0,
++            bytesOther: 0,
++            bytesLocal: 0,
++            bytesInternet: 0,
++            requests: 0
++          }
++          timeBucketMap.set(Number(rec.bucketTime), b)
++        }
++        b.bytesTotal += Number(rec.bytesTotal || 0)
++        b.bytesStream += Number(rec.bytesStream || 0)
++        b.bytesDownload += Number(rec.bytesDownload || 0)
++        b.bytesOther += Number(rec.bytesOther || 0)
++        b.bytesLocal += Number(rec.bytesLocal || 0)
++        b.bytesInternet += Number(rec.bytesInternet || 0)
++        b.requests += Number(rec.requests || 0)
++      }
++
++      // Generate continuous 10-minute buckets across 48 hours (exactly 288 data points)
++      for (let t = cutoff48h; t <= currentBucketTime; t += 600000) {
++        const d = new Date(t)
++        const dateStr = dateAndTime.format(d, 'YYYY-MM-DD')
++        const shortTime = `${String(d.getMonth() + 1).padStart(2, '0')}/${String(d.getDate()).padStart(2, '0')} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
++
++        const stat = timeBucketMap.get(t) || {
++          bytesTotal: 0,
++          bytesStream: 0,
++          bytesDownload: 0,
++          bytesOther: 0,
++          bytesLocal: 0,
++          bytesInternet: 0,
++          requests: 0
++        }
++
++        // 10 minutes = 600 seconds. Calculate average transfer speed in Mbps during this 10m window:
++        // (bytes * 8) / (600 * 1,000,000)
++        const mbpsRate = Number(((stat.bytesTotal * 8) / (600 * 1000 * 1000)).toFixed(2))
++
++        if (stat.bytesTotal > waveformPeakBytes) {
++          waveformPeakBytes = stat.bytesTotal
++        }
++        if (mbpsRate > waveformPeakMbps) {
++          waveformPeakMbps = mbpsRate
++        }
++
++        waveform10m.push({
++          bucketTime: t,
++          date: dateStr,
++          timeLabel: shortTime,
++          hour: d.getHours(),
++          minute: d.getMinutes(),
++          bytesTotal: stat.bytesTotal,
++          bytesInternet: stat.bytesInternet,
++          bytesLocal: stat.bytesLocal,
++          bytesStream: stat.bytesStream,
++          bytesDownload: stat.bytesDownload,
++          bytesOther: stat.bytesOther,
++          requests: stat.requests,
++          mbps: mbpsRate
++        })
++      }
++    }
++
 +    return {
 +      isEnabled: !!global.ServerSettings?.enableBandwidthTracking,
 +      range: options.range || 'all',
@@ -1852,6 +2476,10 @@ index 00000000..dde61686
 +      daily,
 +      userBreakdown,
 +      itemBreakdown,
++      hourly,
++      waveform10m,
++      waveformPeakBytes,
++      waveformPeakMbps,
 +      rangeTotalBytes
 +    }
 +  }
@@ -1862,9 +2490,18 @@ index 00000000..dde61686
 +  async clearStats() {
 +    this.buffer.clear()
 +    this.itemBuffer.clear()
++    this.hourlyBuffer.clear()
++    this.timeBuffer.clear()
++
 +    await Database.bandwidthStatModel.destroy({ where: {}, truncate: true })
 +    if (Database.bandwidthItemStatModel) {
 +      await Database.bandwidthItemStatModel.destroy({ where: {}, truncate: true })
++    }
++    if (Database.bandwidthHourlyStatModel) {
++      await Database.bandwidthHourlyStatModel.destroy({ where: {}, truncate: true })
++    }
++    if (Database.bandwidthTimeStatModel) {
++      await Database.bandwidthTimeStatModel.destroy({ where: {}, truncate: true })
 +    }
 +    Logger.info('[BandwidthManager] All bandwidth statistics cleared by admin')
 +    return true
@@ -1872,6 +2509,121 @@ index 00000000..dde61686
 +}
 +
 +module.exports = BandwidthManager
+diff --git a/server/models/BandwidthHourlyStat.js b/server/models/BandwidthHourlyStat.js
+new file mode 100644
+index 00000000..d1894eb4
+--- /dev/null
++++ b/server/models/BandwidthHourlyStat.js
+@@ -0,0 +1,109 @@
++const { DataTypes, Model } = require('sequelize')
++
++class BandwidthHourlyStat extends Model {
++  constructor(values, options) {
++    super(values, options)
++
++    /** @type {number} */
++    this.id
++    /** @type {string} */
++    this.userId
++    /** @type {string} */
++    this.date
++    /** @type {number} */
++    this.hour
++    /** @type {number} */
++    this.bytesStream
++    /** @type {number} */
++    this.bytesDownload
++    /** @type {number} */
++    this.bytesOther
++    /** @type {number} */
++    this.bytesLocal
++    /** @type {number} */
++    this.bytesInternet
++    /** @type {number} */
++    this.bytesTotal
++    /** @type {number} */
++    this.requests
++    /** @type {Date} */
++    this.createdAt
++    /** @type {Date} */
++    this.updatedAt
++  }
++
++  /**
++   * Initialize model
++   * @param {import('../Database').sequelize} sequelize
++   */
++  static init(sequelize) {
++    super.init(
++      {
++        id: {
++          type: DataTypes.INTEGER,
++          primaryKey: true,
++          autoIncrement: true
++        },
++        userId: {
++          type: DataTypes.STRING,
++          allowNull: false,
++          defaultValue: 'anonymous'
++        },
++        date: {
++          type: DataTypes.STRING,
++          allowNull: false
++        },
++        hour: {
++          type: DataTypes.INTEGER,
++          allowNull: false
++        },
++        bytesStream: {
++          type: DataTypes.BIGINT,
++          defaultValue: 0
++        },
++        bytesDownload: {
++          type: DataTypes.BIGINT,
++          defaultValue: 0
++        },
++        bytesOther: {
++          type: DataTypes.BIGINT,
++          defaultValue: 0
++        },
++        bytesLocal: {
++          type: DataTypes.BIGINT,
++          defaultValue: 0
++        },
++        bytesInternet: {
++          type: DataTypes.BIGINT,
++          defaultValue: 0
++        },
++        bytesTotal: {
++          type: DataTypes.BIGINT,
++          defaultValue: 0
++        },
++        requests: {
++          type: DataTypes.INTEGER,
++          defaultValue: 0
++        }
++      },
++      {
++        sequelize,
++        modelName: 'bandwidthHourlyStat',
++        indexes: [
++          {
++            unique: true,
++            fields: ['userId', 'date', 'hour']
++          },
++          {
++            fields: ['date', 'hour']
++          },
++          {
++            fields: ['date']
++          }
++        ]
++      }
++    )
++  }
++}
++
++module.exports = BandwidthHourlyStat
 diff --git a/server/models/BandwidthItemStat.js b/server/models/BandwidthItemStat.js
 new file mode 100644
 index 00000000..d4533b47
@@ -2089,6 +2841,139 @@ index 00000000..fddf8a1c
 +}
 +
 +module.exports = BandwidthStat
+diff --git a/server/models/BandwidthTimeStat.js b/server/models/BandwidthTimeStat.js
+new file mode 100644
+index 00000000..e28898fd
+--- /dev/null
++++ b/server/models/BandwidthTimeStat.js
+@@ -0,0 +1,127 @@
++const { DataTypes, Model } = require('sequelize')
++
++class BandwidthTimeStat extends Model {
++  constructor(values, options) {
++    super(values, options)
++
++    /** @type {number} */
++    this.id
++    /** @type {string} */
++    this.userId
++    /** @type {number} */
++    this.bucketTime
++    /** @type {string} */
++    this.timeLabel
++    /** @type {string} */
++    this.date
++    /** @type {number} */
++    this.hour
++    /** @type {number} */
++    this.minute
++    /** @type {number} */
++    this.bytesStream
++    /** @type {number} */
++    this.bytesDownload
++    /** @type {number} */
++    this.bytesOther
++    /** @type {number} */
++    this.bytesLocal
++    /** @type {number} */
++    this.bytesInternet
++    /** @type {number} */
++    this.bytesTotal
++    /** @type {number} */
++    this.requests
++    /** @type {Date} */
++    this.createdAt
++    /** @type {Date} */
++    this.updatedAt
++  }
++
++  /**
++   * Initialize model
++   * @param {import('../Database').sequelize} sequelize
++   */
++  static init(sequelize) {
++    super.init(
++      {
++        id: {
++          type: DataTypes.INTEGER,
++          primaryKey: true,
++          autoIncrement: true
++        },
++        userId: {
++          type: DataTypes.STRING,
++          allowNull: false,
++          defaultValue: 'anonymous'
++        },
++        bucketTime: {
++          type: DataTypes.BIGINT,
++          allowNull: false
++        },
++        timeLabel: {
++          type: DataTypes.STRING,
++          allowNull: false
++        },
++        date: {
++          type: DataTypes.STRING,
++          allowNull: false
++        },
++        hour: {
++          type: DataTypes.INTEGER,
++          allowNull: false
++        },
++        minute: {
++          type: DataTypes.INTEGER,
++          allowNull: false
++        },
++        bytesStream: {
++          type: DataTypes.BIGINT,
++          defaultValue: 0
++        },
++        bytesDownload: {
++          type: DataTypes.BIGINT,
++          defaultValue: 0
++        },
++        bytesOther: {
++          type: DataTypes.BIGINT,
++          defaultValue: 0
++        },
++        bytesLocal: {
++          type: DataTypes.BIGINT,
++          defaultValue: 0
++        },
++        bytesInternet: {
++          type: DataTypes.BIGINT,
++          defaultValue: 0
++        },
++        bytesTotal: {
++          type: DataTypes.BIGINT,
++          defaultValue: 0
++        },
++        requests: {
++          type: DataTypes.INTEGER,
++          defaultValue: 0
++        }
++      },
++      {
++        sequelize,
++        modelName: 'bandwidthTimeStat',
++        indexes: [
++          {
++            unique: true,
++            fields: ['userId', 'timeLabel']
++          },
++          {
++            fields: ['bucketTime']
++          },
++          {
++            fields: ['date', 'hour']
++          }
++        ]
++      }
++    )
++  }
++}
++
++module.exports = BandwidthTimeStat
 diff --git a/server/objects/settings/ServerSettings.js b/server/objects/settings/ServerSettings.js
 index 0454161e..bd0e42b5 100644
 --- a/server/objects/settings/ServerSettings.js

@@ -167,6 +167,16 @@ class Database {
     return this.models.bandwidthItemStat
   }
 
+  /** @type {typeof import('./models/BandwidthHourlyStat')} */
+  get bandwidthHourlyStatModel() {
+    return this.models.bandwidthHourlyStat
+  }
+
+  /** @type {typeof import('./models/BandwidthTimeStat')} */
+  get bandwidthTimeStatModel() {
+    return this.models.bandwidthTimeStat
+  }
+
   /**
    * Check if db file exists
    * @returns {boolean}
@@ -352,6 +362,8 @@ class Database {
     require('./models/MediaItemShare').init(this.sequelize)
     require('./models/BandwidthStat').init(this.sequelize)
     require('./models/BandwidthItemStat').init(this.sequelize)
+    require('./models/BandwidthHourlyStat').init(this.sequelize)
+    require('./models/BandwidthTimeStat').init(this.sequelize)
 
     return this.sequelize.sync({ force, alter: false })
   }
