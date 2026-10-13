@@ -1,7 +1,7 @@
 <template>
   <div ref="wrapper" class="relative" v-click-outside="clickOutside">
     <div class="relative h-7">
-      <button type="button" class="relative w-full h-full bg-bg border border-gray-500 hover:border-gray-400 rounded-sm shadow-xs pl-3 pr-3 py-0 text-left focus:outline-hidden sm:text-sm cursor-pointer" aria-haspopup="menu" :aria-expanded="showMenu" @click.prevent="showMenu = !showMenu">
+      <button type="button" :title="selectedText" class="relative w-full h-full bg-bg border border-gray-500 hover:border-gray-400 rounded-sm shadow-xs pl-3 pr-7 py-0 text-left focus:outline-hidden sm:text-sm cursor-pointer" aria-haspopup="menu" :aria-expanded="showMenu" @click.prevent="showMenu = !showMenu">
         <span class="flex items-center justify-between">
           <span class="block truncate text-xs" :class="!selectedText ? 'text-gray-300' : ''">{{ selectedText }}</span>
         </span>
@@ -16,7 +16,7 @@
       </button>
     </div>
 
-    <div v-show="showMenu" class="absolute z-10 mt-1 w-full bg-bg border border-black-200 shadow-lg rounded-md py-1 ring-1 ring-black/5 overflow-auto focus:outline-hidden text-sm libraryFilterMenu">
+    <div v-show="showMenu" class="absolute z-10 mt-1 min-w-full w-max max-w-xs bg-bg border border-black-200 shadow-lg rounded-md py-1 ring-1 ring-black/5 overflow-auto focus:outline-hidden text-sm libraryFilterMenu">
       <ul v-show="!sublist" class="h-full w-full" role="menu">
         <template v-for="item in selectItems">
           <li :key="item.value" class="select-none relative py-2 pr-9 cursor-pointer hover:bg-white/5" :class="isItemActive(item) ? 'bg-white/5 text-yellow-400' : 'text-gray-200 hover:text-white'" role="menuitem" :aria-haspopup="item.sublist ? '' : 'menu'" @click="clickedOption(item)">
@@ -110,6 +110,16 @@ export default {
           value: 'all'
         },
         {
+          text: this.$strings.LabelSeriesHasMissing || 'Series with Missing Books',
+          value: 'missing-books',
+          sublist: false
+        },
+        {
+          text: this.$strings.LabelSeriesHasUpcoming || 'Series with Upcoming Releases',
+          value: 'upcoming-books',
+          sublist: false
+        },
+        {
           text: this.$strings.LabelGenre,
           textPlural: this.$strings.LabelGenres,
           value: 'genres',
@@ -148,18 +158,6 @@ export default {
         {
           text: this.$strings.LabelSeriesProgress,
           value: 'progress',
-          sublist: true
-        },
-        {
-          text: this.$strings.LabelMissingBooks || 'Missing Books',
-          textPlural: this.$strings.LabelMissingBooks || 'Missing Books',
-          value: 'missing-books',
-          sublist: true
-        },
-        {
-          text: this.$strings.LabelSeriesCompletion || 'Completion',
-          textPlural: this.$strings.LabelSeriesCompletion || 'Completion',
-          value: 'completion',
           sublist: true
         }
       ]
@@ -335,6 +333,12 @@ export default {
     },
     selectedText() {
       if (!this.selected) return ''
+      if (this.selected === 'missing-books' || this.selected === 'completion.has-missing' || this.selected?.startsWith('missing-books')) {
+        return this.$strings.LabelSeriesHasMissing || 'Series with Missing Books'
+      }
+      if (this.selected === 'upcoming-books' || this.selected === 'completion.has-upcoming' || this.selected?.startsWith('upcoming-books')) {
+        return this.$strings.LabelSeriesHasUpcoming || 'Series with Upcoming Releases'
+      }
       const parts = this.selected.split('.')
       const filterName = this.selectItems.find((i) => i.value === parts[0])
       let filterValue = null
@@ -447,30 +451,6 @@ export default {
         }
       ]
     },
-    missingBooks() {
-      return [
-        {
-          id: 'missing-count',
-          name: this.$strings.LabelSortByMissingCount || 'By Missing Book Count'
-        },
-        {
-          id: 'title',
-          name: this.$strings.LabelSortByTitle || 'By Title / Alphabetical'
-        },
-        {
-          id: 'added-at',
-          name: this.$strings.LabelSortByDateAdded || 'By Date Added'
-        },
-        {
-          id: 'last-book-added',
-          name: this.$strings.LabelSortByLastBookAdded || 'By Last Book Added'
-        },
-        {
-          id: 'all',
-          name: this.$strings.LabelAllMissingBooks || 'All Series with Missing Books'
-        }
-      ]
-    },
     tracks() {
       return [
         {
@@ -568,8 +548,7 @@ export default {
       ]
     },
     sublistItems() {
-      const list = this.sublist === 'missing-books' ? this.missingBooks : (this[this.sublist] || [])
-      const sublistItems = list.map((item) => {
+      const sublistItems = (this[this.sublist] || []).map((item) => {
         if (typeof item === 'string') {
           return {
             text: item,
@@ -600,6 +579,8 @@ export default {
   methods: {
     isItemActive(item) {
       if (item.value === this.selected) return true
+      if (item.value === 'missing-books' && (this.selected === 'completion.has-missing' || this.selected?.startsWith('missing-books'))) return true
+      if (item.value === 'upcoming-books' && (this.selected === 'completion.has-upcoming' || this.selected?.startsWith('upcoming-books'))) return true
       if (this.selectedItemSublist && item.value === this.selectedItemSublist) return true
       return false
     },

@@ -66,10 +66,10 @@
         <controls-library-sort-select v-if="isLibraryPage && !isBatchSelecting" v-model="settings.orderBy" :descending.sync="settings.orderDesc" class="w-36 sm:w-44 md:w-48 h-7.5 ml-1 sm:ml-4" @change="updateOrder" />
 
         <!-- series filter select -->
-        <controls-library-filter-select v-if="isSeriesPage && !isBatchSelecting" v-model="settings.seriesFilterBy" is-series class="w-36 sm:w-44 md:w-48 h-7.5 ml-1 sm:ml-4" @change="updateSeriesFilter" />
+        <controls-library-filter-select v-if="isSeriesPage && !isBatchSelecting" v-model="settings.seriesFilterBy" is-series class="w-36 sm:w-44 md:w-56 lg:w-60 h-7.5 ml-1 sm:ml-4" @change="updateSeriesFilter" />
 
         <!-- series sort select -->
-        <controls-sort-select v-if="isSeriesPage && !isBatchSelecting" v-model="settings.seriesSortBy" :descending.sync="settings.seriesSortDesc" :items="seriesSortItems" class="w-36 sm:w-44 md:w-48 h-7.5 ml-1 sm:ml-4" @change="updateSeriesSort" />
+        <controls-sort-select v-if="isSeriesPage && !isBatchSelecting" v-model="settings.seriesSortBy" :descending.sync="settings.seriesSortDesc" :items="seriesSortItems" class="w-36 sm:w-44 md:w-56 lg:w-60 h-7.5 ml-1 sm:ml-4" @change="updateSeriesSort" />
 
         <!-- Dedicated Audible Scraper button on Series page -->
         <template v-if="isSeriesPage && isBookLibrary && userCanUpdate && !isBatchSelecting">
@@ -259,7 +259,7 @@ export default {
           value: 'name'
         },
         {
-          text: this.$strings.LabelNumberOfBooks,
+          text: this.$strings.LabelBooksOwned || 'Books Owned',
           value: 'numBooks'
         },
         {
@@ -279,7 +279,7 @@ export default {
           value: 'totalDuration'
         },
         {
-          text: this.$strings.LabelMissingBooks || 'Missing Books',
+          text: this.$strings.LabelMissingBooksCount || 'Missing Books Count',
           value: 'missingBooks'
         },
         {
@@ -743,22 +743,6 @@ export default {
       this.saveSettings()
     },
     updateSeriesFilter() {
-      if (this.settings.seriesFilterBy?.startsWith('missing-books.')) {
-        const sub = this.settings.seriesFilterBy.split('.')[1]
-        if (sub === 'missing-count') {
-          this.settings.seriesSortBy = 'missingBooks'
-          this.settings.seriesSortDesc = true
-        } else if (sub === 'title') {
-          this.settings.seriesSortBy = 'name'
-          this.settings.seriesSortDesc = false
-        } else if (sub === 'added-at') {
-          this.settings.seriesSortBy = 'addedAt'
-          this.settings.seriesSortDesc = true
-        } else if (sub === 'last-book-added') {
-          this.settings.seriesSortBy = 'lastBookAdded'
-          this.settings.seriesSortDesc = true
-        }
-      }
       this.saveSettings()
     },
     updateCollapseSeries() {

@@ -34,7 +34,7 @@ module.exports = {
     let filterValue = null
     let filterGroup = null
     if (filterBy) {
-      const searchGroups = ['genres', 'tags', 'authors', 'progress', 'narrators', 'publishers', 'languages', 'completion', 'missing-books']
+      const searchGroups = ['genres', 'tags', 'authors', 'progress', 'narrators', 'publishers', 'languages', 'completion', 'missing-books', 'upcoming-books']
       const group = searchGroups.find((_group) => filterBy.startsWith(_group + '.'))
       filterGroup = group || filterBy
       filterValue = group ? this.decode(filterBy.replace(`${group}.`, '')) : null
@@ -96,22 +96,21 @@ module.exports = {
         attrQuery = 'SELECT count(*) FROM books b, bookSeries bs LEFT OUTER JOIN mediaProgresses mp ON mp.mediaItemId = b.id AND mp.userId = :userId WHERE bs.seriesId = series.id AND bs.bookId = b.id AND (mp.currentTime > 0 OR mp.ebookProgress > 0) AND mp.isFinished = 0'
         userPermissionBookWhere.replacements.userId = user.id
       }
-    } else if (filterGroup === 'completion' || filterGroup === 'missing-books') {
-      const rawVal = filterBy ? filterBy.replace(/^(completion|missing-books)\./, '') : ''
-      const val = (filterValue === 'has-missing' || rawVal === 'has-missing' || filterGroup === 'missing-books') ? 'has-missing'
-        : (filterValue === 'complete' || rawVal === 'complete') ? 'complete'
-        : (filterValue === 'has-upcoming' || rawVal === 'has-upcoming') ? 'has-upcoming'
-        : filterValue
+    } else if (filterGroup === 'completion' || filterGroup === 'missing-books' || filterGroup === 'upcoming-books' || filterBy === 'missing-books' || filterBy === 'upcoming-books') {
+      const rawVal = filterBy ? filterBy.replace(/^(completion|missing-books|upcoming-books)\./, '') : ''
+      const isMissing = filterGroup === 'missing-books' || filterBy === 'missing-books' || filterValue === 'has-missing' || rawVal === 'has-missing'
+      const isUpcoming = filterGroup === 'upcoming-books' || filterBy === 'upcoming-books' || filterValue === 'has-upcoming' || rawVal === 'has-upcoming'
+      const isComplete = filterValue === 'complete' || rawVal === 'complete'
 
-      if (val === 'has-missing' || filterGroup === 'missing-books') {
+      if (isMissing) {
         const missingQuery = "SELECT count(*) FROM seriesProviderEntries spe WHERE spe.seriesId = series.id AND spe.entryType = 'missing'"
         seriesWhere.push(Sequelize.where(Sequelize.literal(`(${missingQuery})`), { [Sequelize.Op.gt]: 0 }))
-      } else if (val === 'complete') {
+      } else if (isComplete) {
         const missingQuery = "SELECT count(*) FROM seriesProviderEntries spe WHERE spe.seriesId = series.id AND spe.entryType = 'missing'"
         const scannedQuery = "SELECT count(*) FROM seriesProviderEntries spe WHERE spe.seriesId = series.id"
         seriesWhere.push(Sequelize.where(Sequelize.literal(`(${missingQuery})`), 0))
         seriesWhere.push(Sequelize.where(Sequelize.literal(`(${scannedQuery})`), { [Sequelize.Op.gt]: 0 }))
-      } else if (val === 'has-upcoming') {
+      } else if (isUpcoming) {
         const upcomingQuery = "SELECT count(*) FROM seriesProviderEntries spe WHERE spe.seriesId = series.id AND spe.entryType = 'upcoming'"
         seriesWhere.push(Sequelize.where(Sequelize.literal(`(${upcomingQuery})`), { [Sequelize.Op.gt]: 0 }))
       }

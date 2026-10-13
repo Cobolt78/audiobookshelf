@@ -181,6 +181,22 @@ describe('Series Provider Endpoints & Completion Filters', () => {
       expect(result.series[0].name).to.equal('Red Rising')
     })
 
+    it('filters series with missing books using direct missing-books filter', async () => {
+      const result = await seriesFilters.getFilteredSeries(
+        library,
+        user,
+        'missing-books',
+        'name',
+        false,
+        [],
+        10,
+        0
+      )
+
+      expect(result.series).to.have.lengthOf(1)
+      expect(result.series[0].name).to.equal('The Stormlight Archive')
+    })
+
     it('filters series with missing books using missing-books.missing-count', async () => {
       const result = await seriesFilters.getFilteredSeries(
         library,
