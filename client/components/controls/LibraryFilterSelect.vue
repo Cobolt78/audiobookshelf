@@ -149,6 +149,12 @@ export default {
           text: this.$strings.LabelSeriesProgress,
           value: 'progress',
           sublist: true
+        },
+        {
+          text: this.$strings.LabelSeriesCompletion || 'Completion',
+          textPlural: this.$strings.LabelSeriesCompletion || 'Completion',
+          value: 'completion',
+          sublist: true
         }
       ]
     },
@@ -350,6 +356,9 @@ export default {
         } else if (parts[0] === 'missing') {
           const item = this.missing.find((m) => m.id == decoded)
           if (item) filterValue = item.name
+        } else if (parts[0] === 'completion') {
+          const item = this.completion.find((c) => c.id == decoded)
+          if (item) filterValue = item.name
         } else {
           filterValue = decoded
         }
@@ -405,6 +414,22 @@ export default {
         {
           id: 'not-finished',
           name: this.$strings.LabelNotFinished
+        }
+      ]
+    },
+    completion() {
+      return [
+        {
+          id: 'has-missing',
+          name: this.$strings.LabelSeriesHasMissing || 'Has Missing Books'
+        },
+        {
+          id: 'complete',
+          name: this.$strings.LabelSeriesComplete || 'Complete Series'
+        },
+        {
+          id: 'has-upcoming',
+          name: this.$strings.LabelSeriesHasUpcoming || 'Has Upcoming Releases'
         }
       ]
     },

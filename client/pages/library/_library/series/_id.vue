@@ -1,7 +1,11 @@
 <template>
   <div class="page" :class="streamLibraryItem ? 'streaming' : ''">
     <app-book-shelf-toolbar :selected-series="series" />
-    <app-lazy-bookshelf page="series-books" :series-id="seriesId" />
+    <app-lazy-bookshelf page="series-books" :series-id="seriesId">
+      <template #bottom>
+        <widgets-series-provider-entries :series-id="seriesId" :series-name="series ? series.name : ''" :library-id="libraryId" />
+      </template>
+    </app-lazy-bookshelf>
   </div>
 </template>
 
@@ -29,7 +33,8 @@ export default {
 
     return {
       series,
-      seriesId: params.id
+      seriesId: params.id,
+      libraryId: library.id
     }
   },
   data() {

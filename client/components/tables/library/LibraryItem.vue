@@ -82,6 +82,11 @@ export default {
           action: 'match-books',
           value: 'match-books'
         })
+        items.push({
+          text: this.$strings.ButtonAudibleScan || 'Audible Scan',
+          action: 'audible-scan',
+          value: 'audible-scan'
+        })
       }
       items.push({
         text: this.$strings.ButtonDelete,
@@ -105,8 +110,19 @@ export default {
         this.scan(true)
       } else if (action === 'match-books') {
         this.matchAll()
+      } else if (action === 'audible-scan') {
+        this.scanAudible()
       } else if (action === 'delete') {
         this.deleteClick()
+      }
+    },
+    async scanAudible() {
+      try {
+        await this.$axios.$post(`/api/libraries/${this.library.id}/series-provider/scan`)
+        this.$toast.info(this.$strings.ToastAudibleScanStarted || 'Audible series scan started')
+      } catch (err) {
+        console.error('Failed to start Audible scan', err)
+        this.$toast.error(err.response?.data?.error || this.$strings.ToastAudibleScanFailed || 'Failed to start Audible scan')
       }
     },
     showMenu() {

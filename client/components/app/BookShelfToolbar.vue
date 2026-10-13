@@ -71,6 +71,26 @@
         <!-- series sort select -->
         <controls-sort-select v-if="isSeriesPage && !isBatchSelecting" v-model="settings.seriesSortBy" :descending.sync="settings.seriesSortDesc" :items="seriesSortItems" class="w-36 sm:w-44 md:w-48 h-7.5 ml-1 sm:ml-4" @change="updateSeriesSort" />
 
+        <!-- Dedicated Audible Scraper button on Series page -->
+        <template v-if="isSeriesPage && isBookLibrary && userCanUpdate && !isBatchSelecting">
+          <div v-if="isAudibleScanning" class="flex items-center ml-2 sm:ml-4">
+            <ui-btn small color="bg-warning" :loading="true" class="h-7.5 text-xs" @click="cancelAudibleScan">
+              {{ audibleScanProgressText || $strings.ButtonScanningAudible || 'Scanning Audible...' }}
+            </ui-btn>
+            <ui-tooltip text="Cancel Audible Scan" direction="bottom">
+              <ui-icon-btn icon="close" :size="7" class="ml-1 text-xs" @click="cancelAudibleScan" />
+            </ui-tooltip>
+          </div>
+          <div v-else class="flex items-center ml-2 sm:ml-4">
+            <ui-tooltip :text="lastAudibleScanTooltip" direction="bottom">
+              <ui-btn small color="bg-primary" class="h-7.5 text-xs flex items-center" :loading="startingAudibleScan" @click="startAudibleScan">
+                <span class="material-symbols text-sm mr-1">bolt</span>
+                {{ $strings.ButtonAudibleScan || 'Audible Scan' }}
+              </ui-btn>
+            </ui-tooltip>
+          </div>
+        </template>
+
         <!-- issues page remove all button -->
         <ui-btn v-if="isIssuesFilter && userCanDelete && !isBatchSelecting" :loading="processingIssues" color="bg-error" small class="ml-4" @click="removeAllIssues">{{ $strings.ButtonRemoveAll }} {{ $formatNumber(numShowing) }} {{ entityName }}</ui-btn>
 
@@ -120,7 +140,11 @@ export default {
       totalEntities: 0,
       processingSeries: false,
       processingIssues: false,
-      processingAuthors: false
+      processingAuthors: false,
+      isAudibleScanning: false,
+      audibleScanProgressText: null,
+      startingAudibleScan: false,
+      localLastScanSummary: null
     }
   },
   computed: {
@@ -180,10 +204,43 @@ export default {
           value: 'totalDuration'
         },
         {
+          text: this.$strings.LabelMissingBooks || 'Missing Books Count',
+          value: 'missingBooks'
+        },
+        {
+          text: this.$strings.LabelUpcomingDate || 'Upcoming Release Date',
+          value: 'upcomingDate'
+        },
+        {
           text: this.$strings.LabelRandomly,
           value: 'random'
         }
       ]
+    },
+    currentLibrary() {
+      return this.$store.getters['libraries/getCurrentLibrary']
+    },
+    lastAudibleScanSummary() {
+      return this.localLastScanSummary || this.currentLibrary?.settings?.seriesScraperLastScan || null
+    },
+    lastAudibleScanTooltip() {
+      if (this.isAudibleScanning) {
+        return this.audibleScanProgressText || this.$strings.ButtonScanningAudible || 'Scanning Audible...'
+      }
+      const summary = this.lastAudibleScanSummary
+      if (!summary || !summary.scannedAt) {
+        return 'Audible Scraper: Not scanned yet. Click to scan all series for upcoming releases and missing books.'
+      }
+      const timeStr = new Date(summary.scannedAt).toLocaleDateString(undefined, {
+        month: 'short',
+        day: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit'
+      })
+      const upcoming = summary.upcomingFound ?? 0
+      const missing = summary.missingFound ?? 0
+      const checked = summary.seriesChecked ?? 0
+      return `Last Audible scan: ${timeStr} • ${checked} series checked (${upcoming} upcoming, ${missing} missing). Click to scan again.`
     },
     authorSortItems() {
       return [
@@ -615,6 +672,76 @@ export default {
         console.log('RSS Feed Closed', data)
         this.selectedSeries.rssFeed = null
       }
+    },
+    async checkAudibleScanStatus() {
+      if (!this.currentLibraryId || !this.isBookLibrary) return
+      try {
+        const res = await this.$axios.$get(`/api/libraries/${this.currentLibraryId}/series-provider/status`)
+        if (res) {
+          this.isAudibleScanning = !!res.isRunning
+          if (res.lastScan) {
+            this.localLastScanSummary = res.lastScan
+          }
+          if (res.isRunning && res.current && res.total) {
+            this.audibleScanProgressText = `Scanning: ${res.seriesName || ''} (${res.current}/${res.total})`
+          }
+        }
+      } catch (err) {
+        console.error('Failed to fetch series-provider status', err)
+      }
+    },
+    async startAudibleScan() {
+      if (this.startingAudibleScan || this.isAudibleScanning) return
+      this.startingAudibleScan = true
+      try {
+        const res = await this.$axios.$post(`/api/libraries/${this.currentLibraryId}/series-provider/scan`)
+        if (res?.success) {
+          this.isAudibleScanning = true
+          this.audibleScanProgressText = 'Starting Audible scan...'
+          this.$toast.info(this.$strings.ToastAudibleScanStarted || 'Audible series scan started')
+        }
+      } catch (err) {
+        console.error('Failed to start Audible scan', err)
+        this.$toast.error(err.response?.data?.error || this.$strings.ToastAudibleScanFailed || 'Failed to start Audible scan')
+      } finally {
+        this.startingAudibleScan = false
+      }
+    },
+    async cancelAudibleScan() {
+      try {
+        await this.$axios.$post(`/api/libraries/${this.currentLibraryId}/series-provider/cancel`)
+        this.isAudibleScanning = false
+        this.audibleScanProgressText = null
+        this.$toast.info(this.$strings.ToastAudibleScanCancelled || 'Audible series scan cancelled')
+      } catch (err) {
+        console.error('Failed to cancel Audible scan', err)
+      }
+    },
+    onSeriesProviderScanProgress(data) {
+      if (data?.libraryId === this.currentLibraryId) {
+        this.isAudibleScanning = true
+        this.audibleScanProgressText = `Audible: ${data.seriesName || ''} (${data.current}/${data.total})`
+      }
+    },
+    onSeriesProviderScanCompleted(data) {
+      if (data?.libraryId === this.currentLibraryId) {
+        this.isAudibleScanning = false
+        this.audibleScanProgressText = null
+        if (data.scanSummary) {
+          this.localLastScanSummary = data.scanSummary
+          const upcoming = data.scanSummary.upcomingFound || 0
+          const missing = data.scanSummary.missingFound || 0
+          this.$toast.success(this.$getString('ToastAudibleScanCompleted', [upcoming, missing]))
+        }
+        this.$eventBus.$emit('refresh-bookshelf')
+      }
+    },
+    onSeriesProviderScanFailed(data) {
+      if (data?.libraryId === this.currentLibraryId) {
+        this.isAudibleScanning = false
+        this.audibleScanProgressText = null
+        this.$toast.error(data.error || this.$strings.ToastAudibleScanFailed || 'Audible scan failed')
+      }
     }
   },
   mounted() {
@@ -623,12 +750,19 @@ export default {
     this.$eventBus.$on('bookshelf-total-entities', this.setBookshelfTotalEntities)
     this.$root.socket.on('rss_feed_open', this.rssFeedOpen)
     this.$root.socket.on('rss_feed_closed', this.rssFeedClosed)
+    this.$root.socket.on('series_provider_scan_progress', this.onSeriesProviderScanProgress)
+    this.$root.socket.on('series_provider_scan_completed', this.onSeriesProviderScanCompleted)
+    this.$root.socket.on('series_provider_scan_failed', this.onSeriesProviderScanFailed)
+    this.checkAudibleScanStatus()
   },
   beforeDestroy() {
     this.$eventBus.$off('user-settings', this.settingsUpdated)
     this.$eventBus.$off('bookshelf-total-entities', this.setBookshelfTotalEntities)
     this.$root.socket.off('rss_feed_open', this.rssFeedOpen)
     this.$root.socket.off('rss_feed_closed', this.rssFeedClosed)
+    this.$root.socket.off('series_provider_scan_progress', this.onSeriesProviderScanProgress)
+    this.$root.socket.off('series_provider_scan_completed', this.onSeriesProviderScanCompleted)
+    this.$root.socket.off('series_provider_scan_failed', this.onSeriesProviderScanFailed)
   }
 }
 </script>

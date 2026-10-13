@@ -33,6 +33,10 @@
       </div>
     </div>
 
+    <div v-if="page === 'series-books'" class="w-full relative z-30">
+      <slot name="bottom" />
+    </div>
+
     <widgets-cover-size-widget class="fixed right-4 z-50" :style="{ bottom: streamLibraryItem ? '181px' : '16px' }" />
   </div>
 </template>

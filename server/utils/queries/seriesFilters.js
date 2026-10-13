@@ -140,7 +140,10 @@ module.exports = {
 
     const order = []
     let seriesAttributes = {
-      include: []
+      include: [
+        [Sequelize.literal("(SELECT count(*) FROM seriesProviderEntries spe WHERE spe.seriesId = series.id AND spe.entryType = 'missing')"), 'missingBooksCount'],
+        [Sequelize.literal("(SELECT count(*) FROM seriesProviderEntries spe WHERE spe.seriesId = series.id AND spe.entryType = 'upcoming')"), 'upcomingBooksCount']
+      ]
     }
 
     // Handle sort order
@@ -166,7 +169,6 @@ module.exports = {
       seriesAttributes.include.push([Sequelize.literal('(SELECT MAX(b.updatedAt) FROM books b, bookSeries bs WHERE bs.seriesId = series.id AND b.id = bs.bookId)'), 'mostRecentBookUpdated'])
       order.push(['mostRecentBookUpdated', dir])
     } else if (sortBy === 'missingBooks') {
-      seriesAttributes.include.push([Sequelize.literal("(SELECT count(*) FROM seriesProviderEntries spe WHERE spe.seriesId = series.id AND spe.entryType = 'missing')"), 'missingBooksCount'])
       order.push(['missingBooksCount', dir])
     } else if (sortBy === 'upcomingDate') {
       seriesAttributes.include.push([Sequelize.literal("(SELECT min(spe.releaseDate) FROM seriesProviderEntries spe WHERE spe.seriesId = series.id AND spe.entryType = 'upcoming')"), 'earliestUpcomingDate'])
@@ -219,6 +221,13 @@ module.exports = {
 
       if (s.feeds?.length) {
         oldSeries.rssFeed = s.feeds[0].toOldJSONMinified()
+      }
+
+      if (s.dataValues.missingBooksCount !== undefined) {
+        oldSeries.missingBooksCount = Number(s.dataValues.missingBooksCount) || 0
+      }
+      if (s.dataValues.upcomingBooksCount !== undefined) {
+        oldSeries.upcomingBooksCount = Number(s.dataValues.upcomingBooksCount) || 0
       }
 
       // TODO: Sort books by sequence in query

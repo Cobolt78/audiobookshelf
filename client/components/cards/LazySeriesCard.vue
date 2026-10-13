@@ -10,6 +10,17 @@
         <p :style="{ fontSize: 0.8 + 'em' }" role="status" :aria-label="$strings.LabelNumberOfBooks">{{ books.length }}</p>
       </div>
 
+      <!-- Missing books badge -->
+      <div v-if="missingBooksCount > 0" class="absolute rounded-lg bg-red-600/90 box-shadow-md z-20 flex items-center px-1.5 py-0.5" :style="{ top: 0.375 + 'em', left: 0.375 + 'em' }">
+        <span class="material-symbols text-xs mr-0.5 text-white">error_outline</span>
+        <p :style="{ fontSize: 0.75 + 'em' }" class="text-white font-medium">{{ missingBooksCount }} missing</p>
+      </div>
+      <!-- Upcoming releases badge -->
+      <div v-else-if="upcomingBooksCount > 0" class="absolute rounded-lg bg-amber-600/90 box-shadow-md z-20 flex items-center px-1.5 py-0.5" :style="{ top: 0.375 + 'em', left: 0.375 + 'em' }">
+        <span class="material-symbols text-xs mr-0.5 text-white">calendar_month</span>
+        <p :style="{ fontSize: 0.75 + 'em' }" class="text-white font-medium">{{ upcomingBooksCount }} upcoming</p>
+      </div>
+
       <div cy-id="seriesProgressBar" v-if="seriesPercentInProgress > 0" class="absolute bottom-0 left-0 h-1e shadow-xs max-w-full z-10 rounded-b w-full box-shadow-progressbar" :class="isSeriesFinished ? 'bg-success' : 'bg-yellow-400'" :style="{ width: seriesPercentInProgress * 100 + '%' }" />
 
       <div cy-id="hoveringDisplayTitle" v-if="hasValidCovers" aria-hidden="true" class="bg-black/60 absolute top-0 left-0 w-full h-full flex items-center justify-center text-center transition-opacity" :class="isHovering ? '' : 'opacity-0'" :style="{ padding: '1em' }">
@@ -105,9 +116,19 @@ export default {
         case 'lastBookAdded':
           const lastBookAdded = Math.max(...this.books.map((x) => x.addedAt), 0)
           return `${this.$strings.LabelLastBookAdded} ${this.$formatDate(lastBookAdded, this.dateFormat)}`
+        case 'missingBooks':
+          return `${this.missingBooksCount} missing`
+        case 'upcomingDate':
+          return this.upcomingBooksCount > 0 ? `${this.upcomingBooksCount} upcoming` : null
         default:
           return null
       }
+    },
+    missingBooksCount() {
+      return this.series?.missingBooksCount || 0
+    },
+    upcomingBooksCount() {
+      return this.series?.upcomingBooksCount || 0
     },
     books() {
       return this.series?.books || []
