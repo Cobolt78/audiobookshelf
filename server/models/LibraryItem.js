@@ -381,10 +381,11 @@ class LibraryItem extends Model {
     Logger.debug(`Loaded ${itemsInProgressPayload.items.length} of ${itemsInProgressPayload.count} items for "Continue Listening/Reading" in ${((Date.now() - fullStart) / 1000).toFixed(2)}s`)
 
     if (library.isBook) {
-      const [continueSeriesResult, mostRecentResult, seriesMostRecentResult, discoverResult, mediaFinishedResult, newestAuthorsResult] = await Promise.all([
+      const [continueSeriesResult, mostRecentResult, seriesMostRecentResult, seriesWithUpcomingResult, discoverResult, mediaFinishedResult, newestAuthorsResult] = await Promise.all([
         timed(() => libraryFilters.getLibraryItemsContinueSeries(library, user, include, limit)),
         timed(() => libraryFilters.getLibraryItemsMostRecentlyAdded(library, user, include, limit)),
         timed(() => libraryFilters.getSeriesMostRecentlyAdded(library, user, include, 5)),
+        timed(() => libraryFilters.getSeriesWithUpcomingReleases(library, user, include, 10)),
         timed(() => libraryFilters.getLibraryItemsToDiscover(library, user, include, limit)),
         timed(() => libraryFilters.getMediaFinished(library, user, include, limit)),
         timed(() => libraryFilters.getNewestAuthors(library, user, limit))
@@ -431,6 +432,20 @@ class LibraryItem extends Model {
         })
       }
       Logger.debug(`Loaded ${seriesMostRecentPayload.series.length} of ${seriesMostRecentPayload.count} series for "Recent Series" in ${seriesMostRecentResult.elapsedSeconds}s`)
+
+      const seriesWithUpcomingPayload = seriesWithUpcomingResult.payload
+      // "Upcoming in Series" shelf
+      if (seriesWithUpcomingPayload.series.length) {
+        shelves.push({
+          id: 'upcoming-series',
+          label: 'Upcoming in Series',
+          labelStringKey: 'LabelUpcomingSeries',
+          type: 'series',
+          entities: seriesWithUpcomingPayload.series,
+          total: seriesWithUpcomingPayload.count
+        })
+      }
+      Logger.debug(`Loaded ${seriesWithUpcomingPayload.series.length} of ${seriesWithUpcomingPayload.count} series for "Upcoming in Series" in ${seriesWithUpcomingResult.elapsedSeconds}s`)
 
       const discoverLibraryItemsPayload = discoverResult.payload
       // "Discover" shelf

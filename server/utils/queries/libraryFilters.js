@@ -323,6 +323,95 @@ module.exports = {
   },
 
   /**
+   * Get series that have upcoming releases for home shelf
+   * @param {import('../../models/Library')} library
+   * @param {import('../../models/User')} user
+   * @param {string[]} include
+   * @param {number} limit
+   * @returns {Promise<{ series:any[], count:number }>}
+   */
+  async getSeriesWithUpcomingReleases(library, user, include, limit) {
+    if (!library.isBook) return { series: [], count: 0 }
+
+    const seriesIncludes = []
+    if (include.includes('rssfeed')) {
+      seriesIncludes.push({
+        model: Database.feedModel
+      })
+    }
+
+    const userPermissionBookWhere = libraryItemsBookFilters.getUserPermissionBookWhereQuery(user)
+
+    const seriesWhere = [
+      {
+        libraryId: library.id,
+        id: {
+          [Sequelize.Op.in]: Sequelize.literal("(SELECT DISTINCT seriesId FROM seriesProviderEntries WHERE entryType = 'upcoming')")
+        }
+      }
+    ]
+
+    const { rows: series, count } = await Database.seriesModel.findAndCountAll({
+      where: seriesWhere,
+      limit,
+      offset: 0,
+      distinct: true,
+      subQuery: false,
+      replacements: userPermissionBookWhere.replacements,
+      include: [
+        {
+          model: Database.bookSeriesModel,
+          include: {
+            model: Database.bookModel,
+            where: userPermissionBookWhere.bookWhere,
+            include: {
+              model: Database.libraryItemModel
+            }
+          },
+          separate: true
+        },
+        ...seriesIncludes
+      ],
+      order: [['name', 'ASC']]
+    })
+
+    const allOldSeries = []
+    for (const s of series) {
+      const oldSeries = s.toOldJSON()
+
+      if (s.feeds?.length) {
+        oldSeries.rssFeed = s.feeds[0].toOldJSONMinified()
+      }
+
+      s.bookSeries.sort((a, b) => {
+        if (!a.sequence) return 1
+        if (!b.sequence) return -1
+        return a.sequence.localeCompare(b.sequence, undefined, {
+          numeric: true,
+          sensitivity: 'base'
+        })
+      })
+      oldSeries.books = s.bookSeries
+        .map((bs) => {
+          const libraryItem = bs.book?.libraryItem
+          if (!libraryItem) return null
+          delete bs.book.libraryItem
+          bs.book.authors = []
+          bs.book.series = []
+          libraryItem.media = bs.book
+          return libraryItem.toOldJSONMinified()
+        })
+        .filter((b) => b)
+      allOldSeries.push(oldSeries)
+    }
+
+    return {
+      series: allOldSeries,
+      count
+    }
+  },
+
+  /**
    * Get most recently created authors for "Newest Authors" shelf
    * Author must be linked to at least 1 book
    *

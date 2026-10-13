@@ -592,6 +592,7 @@
   "LabelSeriesHasUpcoming": "Has Upcoming Releases",
   "LabelSeriesName": "Series Name",
   "LabelSeriesProgress": "Series Progress",
+  "LabelUpcomingSeries": "Upcoming in Series",
   "LabelServerLogLevel": "Server Log Level",
   "LabelServerYearReview": "Server Year in Review ({0})",
   "LabelSetEbookAsPrimary": "Set as primary",
