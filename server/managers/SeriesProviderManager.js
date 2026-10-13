@@ -32,7 +32,12 @@ class SeriesProviderManager {
     const lastScan = library?.settings?.seriesScraperLastScan || null
     return {
       isScanning: !!active,
+      isRunning: !!active,
       progress: active ? { current: active.current, total: active.total, seriesName: active.seriesName } : null,
+      current: active?.current || 0,
+      total: active?.total || 0,
+      seriesName: active?.seriesName || '',
+      quick: !!active?.quick,
       lastScan
     }
   }

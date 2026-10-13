@@ -73,12 +73,33 @@
 
         <!-- Dedicated Audible Scraper button on Series page -->
         <template v-if="isSeriesPage && isBookLibrary && userCanUpdate && !isBatchSelecting">
-          <div v-if="isAudibleScanning" class="flex items-center ml-2 sm:ml-4">
-            <ui-btn small color="bg-warning" :loading="true" class="h-7.5 text-xs" @click="cancelAudibleScan">
-              {{ audibleScanProgressText || $strings.ButtonScanningAudible || 'Scanning Audible...' }}
-            </ui-btn>
+          <div v-if="isAudibleScanning" class="relative inline-flex items-center ml-2 sm:ml-4">
+            <ui-tooltip :text="audibleScanTooltip" direction="bottom">
+              <div class="h-7.5 relative flex items-center bg-gray-900 border border-amber-500/70 rounded-l-md overflow-hidden shadow-xs select-none">
+                <!-- Progress bar fill -->
+                <div
+                  class="absolute left-0 top-0 bottom-0 bg-amber-600/50 transition-all duration-300"
+                  :style="{ width: `${audibleScanPercent}%` }"
+                />
+
+                <!-- Text & Spinner -->
+                <div class="relative z-10 flex items-center px-3 space-x-2 text-xs font-medium text-white whitespace-nowrap">
+                  <span class="material-symbols text-sm text-amber-400 animate-spin shrink-0">progress_activity</span>
+                  <span>{{ audibleScanProgressLabel }}</span>
+                  <span v-if="audibleScanTotal > 0" class="text-amber-300 font-mono text-[11px] font-semibold">({{ audibleScanPercent }}%)</span>
+                </div>
+              </div>
+            </ui-tooltip>
+
             <ui-tooltip text="Cancel Audible Scan" direction="bottom">
-              <ui-icon-btn icon="close" :size="7" class="ml-1 text-xs" @click="cancelAudibleScan" />
+              <button
+                type="button"
+                class="h-7.5 w-7 bg-amber-600/80 hover:bg-red-600 text-white rounded-r-md border border-l-0 border-amber-500/70 flex items-center justify-center focus:outline-hidden cursor-pointer shadow-xs transition-colors shrink-0"
+                aria-label="Cancel Audible Scan"
+                @click.stop.prevent="cancelAudibleScan"
+              >
+                <span class="material-symbols text-base">close</span>
+              </button>
             </ui-tooltip>
           </div>
           <div v-else class="relative inline-flex items-center ml-2 sm:ml-4" v-click-outside="clickOutsideAudibleScanMenu">
@@ -192,7 +213,10 @@ export default {
       processingIssues: false,
       processingAuthors: false,
       isAudibleScanning: false,
-      audibleScanProgressText: null,
+      audibleScanCurrent: 0,
+      audibleScanTotal: 0,
+      audibleScanSeriesName: '',
+      audibleScanIsQuick: false,
       startingAudibleScan: false,
       localLastScanSummary: null,
       showAudibleScanMenu: false
@@ -274,9 +298,31 @@ export default {
     lastAudibleScanSummary() {
       return this.localLastScanSummary || this.currentLibrary?.settings?.seriesScraperLastScan || null
     },
+    audibleScanPercent() {
+      if (!this.audibleScanTotal || this.audibleScanTotal <= 0) return 0
+      const pct = Math.round((this.audibleScanCurrent / this.audibleScanTotal) * 100)
+      return Math.min(100, Math.max(0, pct))
+    },
+    audibleScanProgressLabel() {
+      if (this.audibleScanTotal > 0) {
+        const cur = this.$formatNumber ? this.$formatNumber(this.audibleScanCurrent) : this.audibleScanCurrent
+        const tot = this.$formatNumber ? this.$formatNumber(this.audibleScanTotal) : this.audibleScanTotal
+        return `${cur} of ${tot} series scanned`
+      }
+      return this.startingAudibleScan ? 'Starting Audible scan...' : 'Audible scan in progress...'
+    },
+    audibleScanTooltip() {
+      if (this.audibleScanTotal > 0) {
+        const cur = this.$formatNumber ? this.$formatNumber(this.audibleScanCurrent) : this.audibleScanCurrent
+        const tot = this.$formatNumber ? this.$formatNumber(this.audibleScanTotal) : this.audibleScanTotal
+        const namePart = this.audibleScanSeriesName ? ` • Current: "${this.audibleScanSeriesName}"` : ''
+        return `Scanning series ${cur} of ${tot} (${this.audibleScanPercent}%)${namePart}. Click ✕ to cancel.`
+      }
+      return 'Audible scan in progress. Click ✕ to cancel.'
+    },
     lastAudibleScanTooltip() {
       if (this.isAudibleScanning) {
-        return this.audibleScanProgressText || this.$strings.ButtonScanningAudible || 'Scanning Audible...'
+        return this.audibleScanTooltip
       }
       const summary = this.lastAudibleScanSummary
       if (!summary || !summary.scannedAt) {
@@ -742,12 +788,15 @@ export default {
       try {
         const res = await this.$axios.$get(`/api/libraries/${this.currentLibraryId}/series-provider/status`)
         if (res) {
-          this.isAudibleScanning = !!res.isRunning
+          this.isAudibleScanning = !!(res.isScanning || res.isRunning)
           if (res.lastScan) {
             this.localLastScanSummary = res.lastScan
           }
-          if (res.isRunning && res.current && res.total) {
-            this.audibleScanProgressText = `Scanning: ${res.seriesName || ''} (${res.current}/${res.total})`
+          if (this.isAudibleScanning) {
+            this.audibleScanCurrent = res.current || res.progress?.current || 0
+            this.audibleScanTotal = res.total || res.progress?.total || 0
+            this.audibleScanSeriesName = res.seriesName || res.progress?.seriesName || ''
+            this.audibleScanIsQuick = Boolean(res.quick)
           }
         }
       } catch (err) {
@@ -771,11 +820,14 @@ export default {
     async startAudibleScan(quick = true) {
       if (this.startingAudibleScan || this.isAudibleScanning) return
       this.startingAudibleScan = true
+      this.audibleScanCurrent = 0
+      this.audibleScanTotal = 0
+      this.audibleScanSeriesName = ''
+      this.audibleScanIsQuick = Boolean(quick)
       try {
         const res = await this.$axios.$post(`/api/libraries/${this.currentLibraryId}/series-provider/scan`, { quick })
         if (res?.success) {
           this.isAudibleScanning = true
-          this.audibleScanProgressText = quick ? 'Starting Quick scan...' : 'Starting Full scan...'
           this.$toast.info(quick ? (this.$strings.ToastAudibleQuickScanStarted || 'Audible series quick scan started') : (this.$strings.ToastAudibleScanStarted || 'Audible series full scan started'))
         }
       } catch (err) {
@@ -789,7 +841,9 @@ export default {
       try {
         await this.$axios.$post(`/api/libraries/${this.currentLibraryId}/series-provider/cancel`)
         this.isAudibleScanning = false
-        this.audibleScanProgressText = null
+        this.audibleScanCurrent = 0
+        this.audibleScanTotal = 0
+        this.audibleScanSeriesName = ''
         this.$toast.info(this.$strings.ToastAudibleScanCancelled || 'Audible series scan cancelled')
       } catch (err) {
         console.error('Failed to cancel Audible scan', err)
@@ -798,13 +852,18 @@ export default {
     onSeriesProviderScanProgress(data) {
       if (data?.libraryId === this.currentLibraryId) {
         this.isAudibleScanning = true
-        this.audibleScanProgressText = `Audible: ${data.seriesName || ''} (${data.current}/${data.total})`
+        this.audibleScanCurrent = data.current || 0
+        this.audibleScanTotal = data.total || 0
+        this.audibleScanSeriesName = data.seriesName || ''
+        this.audibleScanIsQuick = Boolean(data.quick)
       }
     },
     onSeriesProviderScanCompleted(data) {
       if (data?.libraryId === this.currentLibraryId) {
         this.isAudibleScanning = false
-        this.audibleScanProgressText = null
+        this.audibleScanCurrent = 0
+        this.audibleScanTotal = 0
+        this.audibleScanSeriesName = ''
         if (data.scanSummary) {
           this.localLastScanSummary = data.scanSummary
           const upcoming = data.scanSummary.upcomingFound || 0
@@ -814,10 +873,24 @@ export default {
         this.$eventBus.$emit('refresh-bookshelf')
       }
     },
+    onSeriesProviderScanCancelled(data) {
+      if (data?.libraryId === this.currentLibraryId) {
+        this.isAudibleScanning = false
+        this.audibleScanCurrent = 0
+        this.audibleScanTotal = 0
+        this.audibleScanSeriesName = ''
+        if (data.scanSummary) {
+          this.localLastScanSummary = data.scanSummary
+        }
+        this.$toast.info(this.$strings.ToastAudibleScanCancelled || 'Audible series scan cancelled')
+      }
+    },
     onSeriesProviderScanFailed(data) {
       if (data?.libraryId === this.currentLibraryId) {
         this.isAudibleScanning = false
-        this.audibleScanProgressText = null
+        this.audibleScanCurrent = 0
+        this.audibleScanTotal = 0
+        this.audibleScanSeriesName = ''
         this.$toast.error(data.error || this.$strings.ToastAudibleScanFailed || 'Audible scan failed')
       }
     }
@@ -830,6 +903,7 @@ export default {
     this.$root.socket.on('rss_feed_closed', this.rssFeedClosed)
     this.$root.socket.on('series_provider_scan_progress', this.onSeriesProviderScanProgress)
     this.$root.socket.on('series_provider_scan_completed', this.onSeriesProviderScanCompleted)
+    this.$root.socket.on('series_provider_scan_cancelled', this.onSeriesProviderScanCancelled)
     this.$root.socket.on('series_provider_scan_failed', this.onSeriesProviderScanFailed)
     this.checkAudibleScanStatus()
   },
@@ -840,6 +914,7 @@ export default {
     this.$root.socket.off('rss_feed_closed', this.rssFeedClosed)
     this.$root.socket.off('series_provider_scan_progress', this.onSeriesProviderScanProgress)
     this.$root.socket.off('series_provider_scan_completed', this.onSeriesProviderScanCompleted)
+    this.$root.socket.off('series_provider_scan_cancelled', this.onSeriesProviderScanCancelled)
     this.$root.socket.off('series_provider_scan_failed', this.onSeriesProviderScanFailed)
   }
 }
