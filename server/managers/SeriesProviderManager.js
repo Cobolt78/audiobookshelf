@@ -90,7 +90,8 @@ class SeriesProviderManager {
       const region = library.settings?.seriesScraperRegion || 'us'
       const ownedBooks = (series.books || []).map((b) => ({
         asin: b.asin,
-        title: b.title
+        title: b.title,
+        sequence: b.bookSeries?.sequence || null
       }))
 
       const onProgress = ({ current, total }) => {
@@ -335,7 +336,8 @@ class SeriesProviderManager {
 
         const ownedBooks = (series.books || []).map((b) => ({
           asin: b.asin,
-          title: b.title
+          title: b.title,
+          sequence: b.bookSeries?.sequence || null
         }))
 
         let result

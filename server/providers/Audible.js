@@ -200,6 +200,137 @@ class Audible {
   }
 
   /**
+   * Clean a title by removing series prefix and common audio format tags
+   * @param {string} title
+   * @param {string} [seriesName]
+   * @returns {string}
+   */
+  cleanTitle(title, seriesName) {
+    if (!title || typeof title !== 'string') return ''
+    let s = title.toLowerCase()
+    if (seriesName) {
+      const escaped = seriesName.replace(/[^a-z0-9]/gi, '\\$&')
+      s = s.replace(new RegExp('^' + escaped + '[:\\s-]*', 'i'), '')
+    }
+    s = s.replace(/\b(short story|novella|audiobook|unabridged)\b/gi, '')
+    return s.replace(/[^a-z0-9]/g, '')
+  }
+
+  /**
+   * Check if a product record from Audible is an unreleased, dummy, or delisted placeholder
+   * @param {object} p
+   * @returns {boolean}
+   */
+  isPlaceholder(p) {
+    if (!p) return false
+    if (typeof p.sku === 'string' && p.sku.startsWith('PL_HLDR')) return true
+    if (typeof p.sku_lite === 'string' && p.sku_lite.startsWith('PL_HLDR')) return true
+    if (typeof p.release_date === 'string' && p.release_date.startsWith('2200')) return true
+    if (typeof p.publication_datetime === 'string' && p.publication_datetime.startsWith('2200')) return true
+    if (!p.runtime_length_min && !p.price) {
+      if (!p.release_date || p.release_date.startsWith('2200')) return true
+    }
+    return false
+  }
+
+  /**
+   * Resolve an active, published edition for a placeholder entry
+   * @param {string} seriesName
+   * @param {object} placeholderProduct
+   * @param {string|null} rawSeq
+   * @param {string} region
+   * @returns {Promise<object|null>}
+   */
+  async resolveLiveEdition(seriesName, placeholderProduct, rawSeq, region = 'us') {
+    const tld = this.audibleTld(region)
+    const author = placeholderProduct.authors?.[0]?.name || null
+    const cleanSeq = rawSeq ? this.cleanSeriesSequence(seriesName, rawSeq) : null
+
+    const queries = []
+    if (cleanSeq) {
+      queries.push(`${seriesName} ${cleanSeq}`)
+    }
+    const titleBeforeColon = placeholderProduct.title?.split(/[:\-–—]/)[0]?.trim()
+    if (titleBeforeColon && !queries.includes(titleBeforeColon)) {
+      queries.push(titleBeforeColon)
+    }
+
+    for (const q of queries) {
+      try {
+        let url = `https://api.audible${tld}/1.0/catalog/products?title=${encodeURIComponent(q)}&response_groups=product_attrs,rating,media,price&image_sizes=500&num_results=5`
+        if (author) {
+          url += `&author=${encodeURIComponent(author)}`
+        }
+        const data = await this.requestAudible(url)
+        const candidates = data?.products || []
+        for (const cand of candidates) {
+          if (!cand.asin || !cand.title) continue
+          if (this.isPlaceholder(cand)) continue
+          if (cand.is_purchasability_suppressed === true) continue
+          if (!cand.price && !cand.runtime_length_min) continue
+          Logger.info(`[Audible] Resolved live edition for placeholder "${placeholderProduct.title}" (${placeholderProduct.asin}) -> "${cand.title}" (${cand.asin})`)
+          return cand
+        }
+      } catch (err) {
+        if (err.rateLimited) throw err
+        Logger.debug(`[Audible] Error searching live edition for query "${q}": ${err.message}`)
+      }
+    }
+    return null
+  }
+
+  /**
+   * Check if a candidate product is already owned in library using ASIN, sequence, or title
+   * @param {object} candidate
+   * @param {Array<object>} ownedBooks
+   * @param {Set<string>} ownedAsinSet
+   * @param {Set<string>} ownedTitleSet
+   * @param {string} seriesName
+   * @returns {boolean}
+   */
+  isBookOwned(candidate, ownedBooks = [], ownedAsinSet, ownedTitleSet, seriesName) {
+    if (candidate.asin && ownedAsinSet.has(candidate.asin.toUpperCase())) {
+      return true
+    }
+
+    const normCandTitle = this.normalizedTitle(candidate.title)
+    if (normCandTitle && ownedTitleSet.has(normCandTitle)) {
+      return true
+    }
+
+    const candBase = candidate.title.split(/[:\-–—]/)[0].trim()
+    const normCandBase = this.normalizedTitle(candBase)
+    if (normCandBase && normCandBase !== normCandTitle && ownedTitleSet.has(normCandBase)) {
+      return true
+    }
+
+    const candClean = this.cleanTitle(candidate.title, seriesName)
+
+    for (const owned of ownedBooks) {
+      if (candidate.posNum !== null && owned.sequence !== null && owned.sequence !== undefined) {
+        const ownedSeqNum = parseFloat(owned.sequence)
+        if (!isNaN(ownedSeqNum) && ownedSeqNum === candidate.posNum) {
+          return true
+        }
+      }
+
+      if (candClean && owned.title) {
+        const ownedClean = this.cleanTitle(owned.title, seriesName)
+        if (ownedClean && (candClean === ownedClean || candClean.includes(ownedClean) || ownedClean.includes(candClean))) {
+          return true
+        }
+        const ownedBase = owned.title.split(/[:\-–—]/)[0].trim()
+        const normOwnedBase = this.normalizedTitle(ownedBase)
+        if (normOwnedBase && (normOwnedBase === normCandTitle || normOwnedBase === normCandBase)) {
+          return true
+        }
+      }
+    }
+
+    return false
+  }
+
+  /**
    * Get TLD for region
    * @param {string} region
    * @returns {string}
@@ -351,20 +482,34 @@ class Audible {
 
     for (let i = 0; i < childAsins.length; i += batchSize) {
       const chunk = childAsins.slice(i, i + batchSize)
-      const productsUrl = `https://api.audible${tld}/1.0/catalog/products?asins=${chunk.join(',')}&response_groups=product_attrs,rating,media&image_sizes=500`
+      const productsUrl = `https://api.audible${tld}/1.0/catalog/products?asins=${chunk.join(',')}&response_groups=product_attrs,rating,media,price&image_sizes=500`
       const batchData = await this.requestAudible(productsUrl)
       if (Array.isArray(batchData?.products)) {
         hydratedProducts.push(...batchData.products)
       }
     }
 
-    // 3. Filter available products (not suppressed, listenable)
-    const availableProducts = hydratedProducts.filter((p) => {
-      if (!p.asin || !p.title) return false
-      if (p.is_listenable === false) return false
-      if (p.is_purchasability_suppressed === true) return false
-      return true
-    })
+    // 3. Filter available products (resolve placeholders or discard unreleased/delisted)
+    const availableProducts = []
+    for (const p of hydratedProducts) {
+      if (!p.asin || !p.title) continue
+      if (p.is_listenable === false) continue
+      if (p.is_purchasability_suppressed === true) continue
+
+      if (this.isPlaceholder(p)) {
+        const rawSeq = sequencesByAsin[p.asin.toUpperCase()]
+        const liveCand = await this.resolveLiveEdition(seriesName, p, rawSeq, region)
+        if (liveCand) {
+          sequencesByAsin[liveCand.asin.toUpperCase()] = rawSeq
+          availableProducts.push(liveCand)
+        } else {
+          Logger.info(`[Audible] Filtered out unreleased/delisted placeholder "${p.title}" (${p.asin}) in series "${seriesName}"`)
+        }
+        continue
+      }
+
+      availableProducts.push(p)
+    }
 
     // 4. Parse candidates, clean sequences, and deduplicate
     const parsedCandidates = availableProducts.map((p) => {
@@ -436,9 +581,7 @@ class Audible {
         onProgress({ current: idx + 1, total: uniqueCandidates.length })
         await new Promise((resolve) => setTimeout(resolve, 80))
       }
-      const isOwned =
-        ownedAsinSet.has(candidate.asin) ||
-        ownedTitleSet.has(this.normalizedTitle(candidate.title))
+      const isOwned = this.isBookOwned(candidate, ownedBooks, ownedAsinSet, ownedTitleSet, seriesName)
 
       if (isOwned) {
         continue
