@@ -14,6 +14,9 @@ const Logger = require('../Logger')
  * @property {string[]} metadataPrecedence
  * @property {number} markAsFinishedTimeRemaining Time remaining in seconds to mark as finished. (defaults to 10s)
  * @property {number} markAsFinishedPercentComplete Percent complete to mark as finished (0-100). If this is set it will be used over markAsFinishedTimeRemaining.
+ * @property {string|null} seriesScraperCron Cron expression for scheduled series scraping
+ * @property {string} seriesScraperRegion Regional marketplace for series scraping (e.g. 'us', 'uk', 'au')
+ * @property {Object|null} seriesScraperLastScan Summary of last series scan
  */
 
 class Library extends Model {
@@ -76,7 +79,10 @@ class Library extends Model {
         onlyShowLaterBooksInContinueSeries: false,
         metadataPrecedence: this.defaultMetadataPrecedence,
         markAsFinishedPercentComplete: null,
-        markAsFinishedTimeRemaining: 10
+        markAsFinishedTimeRemaining: 10,
+        seriesScraperCron: null,
+        seriesScraperRegion: 'us',
+        seriesScraperLastScan: null
       }
     }
   }

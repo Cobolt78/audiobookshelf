@@ -39,6 +39,7 @@ const CronManager = require('./managers/CronManager')
 const ApiCacheManager = require('./managers/ApiCacheManager')
 const BinaryManager = require('./managers/BinaryManager')
 const ShareManager = require('./managers/ShareManager')
+const SeriesProviderManager = require('./managers/SeriesProviderManager')
 const BandwidthManager = require('./managers/BandwidthManager')
 const LibraryScanner = require('./scanner/LibraryScanner')
 
@@ -124,6 +125,7 @@ class Server {
     this.apiCacheManager = new ApiCacheManager()
     this.binaryManager = new BinaryManager()
     this.bandwidthManager = new BandwidthManager(this)
+    this.seriesProviderManager = SeriesProviderManager
 
     // Routers
     this.apiRouter = new ApiRouter(this)

@@ -5,6 +5,7 @@ const Database = require('../Database')
 const LibraryScanner = require('../scanner/LibraryScanner')
 
 const ShareManager = require('./ShareManager')
+const SeriesProviderManager = require('./SeriesProviderManager')
 
 class CronManager {
   constructor(podcastManager, playbackSessionManager) {
@@ -14,6 +15,7 @@ class CronManager {
     this.playbackSessionManager = playbackSessionManager
 
     this.libraryScanCrons = []
+    this.seriesProviderCrons = []
     this.podcastCrons = []
 
     this.podcastCronExpressionsExecuting = []
@@ -27,6 +29,7 @@ class CronManager {
   async init(libraries) {
     this.initOpenSessionCleanupCron()
     this.initLibraryScanCrons(libraries)
+    this.initSeriesProviderCrons(libraries)
     await this.initPodcastCrons()
   }
 
@@ -112,6 +115,70 @@ class CronManager {
 
       this.removeCronForLibrary(library)
       this.startCronForLibrary(library)
+    }
+  }
+
+  /**
+   * Initialize series provider scraping crons
+   * @param {import('../models/Library')[]} libraries
+   */
+  initSeriesProviderCrons(libraries) {
+    for (const library of libraries) {
+      if (library.isBook && library.settings?.seriesScraperCron) {
+        this.startCronForSeriesProvider(library)
+      }
+    }
+  }
+
+  /**
+   * Start cron schedule for series provider scraping
+   *
+   * @param {import('../models/Library')} _library
+   */
+  startCronForSeriesProvider(_library) {
+    Logger.debug(`[CronManager] Init series provider cron for ${_library.name} on schedule ${_library.settings.seriesScraperCron}`)
+    const seriesCron = cron.schedule(_library.settings.seriesScraperCron, async () => {
+      const library = await Database.libraryModel.findByPk(_library.id)
+      if (!library) {
+        Logger.error(`[CronManager] Library not found for series provider cron ${_library.id}`)
+      } else {
+        Logger.debug(`[CronManager] Series provider cron executing for ${library.name}`)
+        SeriesProviderManager.scanLibrary(library.id)
+      }
+    })
+    this.seriesProviderCrons.push({
+      libraryId: _library.id,
+      expression: _library.settings.seriesScraperCron,
+      task: seriesCron
+    })
+  }
+
+  /**
+   * Remove cron for series provider
+   * @param {import('../models/Library')} library
+   */
+  removeCronForSeriesProvider(library) {
+    Logger.debug(`[CronManager] Removing series provider cron for ${library.name}`)
+    this.seriesProviderCrons = this.seriesProviderCrons.filter((spc) => spc.libraryId !== library.id)
+  }
+
+  /**
+   * Update or restart series provider cron for library
+   * @param {import('../models/Library')} library
+   */
+  updateSeriesProviderCron(library) {
+    const expression = library.settings?.seriesScraperCron
+    const existingCron = this.seriesProviderCrons.find((spc) => spc.libraryId === library.id)
+
+    if (!expression && existingCron) {
+      if (existingCron.task.stop) existingCron.task.stop()
+      this.removeCronForSeriesProvider(library)
+    } else if (!existingCron && expression) {
+      this.startCronForSeriesProvider(library)
+    } else if (existingCron && existingCron.expression !== expression) {
+      if (existingCron.task.stop) existingCron.task.stop()
+      this.removeCronForSeriesProvider(library)
+      this.startCronForSeriesProvider(library)
     }
   }
 

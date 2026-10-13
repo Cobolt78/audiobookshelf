@@ -1,0 +1,266 @@
+const Database = require('../Database')
+const Logger = require('../Logger')
+const SocketAuthority = require('../SocketAuthority')
+const Audible = require('../providers/Audible')
+
+/**
+ * @typedef ScanSummary
+ * @property {number} scannedAt
+ * @property {'idle'|'running'|'completed'|'cancelled'|'failed'|'rate-limited'} status
+ * @property {number} seriesChecked
+ * @property {number} upcomingFound
+ * @property {number} missingFound
+ * @property {number} skippedCount
+ * @property {string|null} errorMessage
+ */
+
+class SeriesProviderManager {
+  constructor() {
+    this.audible = new Audible()
+    /** @type {Map<string, { current: number, total: number, seriesName: string, startedAt: number, cancelled: boolean }>} */
+    this.activeScans = new Map()
+  }
+
+  /**
+   * Get current scan status and last scan metadata for a library
+   * @param {string} libraryId
+   * @param {import('../models/Library')} [library]
+   * @returns {{ isScanning: boolean, progress: { current: number, total: number, seriesName: string }|null, lastScan: ScanSummary|null }}
+   */
+  getScanStatus(libraryId, library) {
+    const active = this.activeScans.get(libraryId)
+    const lastScan = library?.settings?.seriesScraperLastScan || null
+    return {
+      isScanning: !!active,
+      progress: active ? { current: active.current, total: active.total, seriesName: active.seriesName } : null,
+      lastScan
+    }
+  }
+
+  /**
+   * Cancel an in-progress scan for a library
+   * @param {string} libraryId
+   * @returns {boolean}
+   */
+  cancelScan(libraryId) {
+    const active = this.activeScans.get(libraryId)
+    if (!active) return false
+    Logger.info(`[SeriesProvider] Cancelling active scan for library ${libraryId}`)
+    active.cancelled = true
+    return true
+  }
+
+  /**
+   * Scan series in library against external metadata provider (Audible)
+   * @param {string} libraryId
+   * @returns {Promise<{ success: boolean, summary?: ScanSummary, message?: string, error?: string }>}
+   */
+  async scanLibrary(libraryId) {
+    if (this.activeScans.has(libraryId)) {
+      Logger.warn(`[SeriesProvider] Scan already running for library ${libraryId}`)
+      return { success: false, message: 'Scan already in progress' }
+    }
+
+    const library = await Database.libraryModel.findByPk(libraryId)
+    if (!library) {
+      Logger.error(`[SeriesProvider] Library not found: ${libraryId}`)
+      return { success: false, message: 'Library not found' }
+    }
+
+    if (library.mediaType !== 'book') {
+      Logger.warn(`[SeriesProvider] Library ${library.name} (${libraryId}) is not a book library`)
+      return { success: false, message: 'Only book libraries support series provider scanning' }
+    }
+
+    const scanState = {
+      current: 0,
+      total: 0,
+      seriesName: '',
+      startedAt: Date.now(),
+      cancelled: false
+    }
+    this.activeScans.set(libraryId, scanState)
+    SocketAuthority.emitter('series_provider_scan_started', { libraryId })
+
+    let seriesChecked = 0
+    let upcomingFound = 0
+    let missingFound = 0
+    let skippedCount = 0
+
+    try {
+      // 1. Fetch all series in this library with their associated books
+      const allSeries = await Database.seriesModel.findAll({
+        where: { libraryId },
+        include: [
+          {
+            model: Database.bookModel,
+            attributes: ['id', 'title', 'asin'],
+            through: { attributes: ['sequence'] }
+          }
+        ],
+        order: [['updatedAt', 'DESC']]
+      })
+
+      scanState.total = allSeries.length
+      Logger.info(`[SeriesProvider] Starting scan of ${allSeries.length} series for library "${library.name}"`)
+
+      const region = library.settings?.seriesScraperRegion || 'us'
+
+      // 2. Iterate each series and query Audible provider
+      for (const series of allSeries) {
+        if (scanState.cancelled) {
+          Logger.info(`[SeriesProvider] Scan cancelled by user for library ${libraryId}`)
+          break
+        }
+
+        seriesChecked++
+        scanState.current = seriesChecked
+        scanState.seriesName = series.name
+
+        SocketAuthority.emitter('series_provider_scan_progress', {
+          libraryId,
+          current: seriesChecked,
+          total: allSeries.length,
+          seriesName: series.name
+        })
+
+        const ownedBooks = (series.books || []).map((b) => ({
+          asin: b.asin,
+          title: b.title
+        }))
+
+        let result
+        try {
+          result = await this.audible.fetchSeriesProviderEntries(series.name, ownedBooks, region)
+        } catch (err) {
+          if (err.rateLimited) {
+            throw err
+          }
+          Logger.error(`[SeriesProvider] Error scraping series "${series.name}": ${err.message}`)
+          skippedCount++
+          continue
+        }
+
+        if (!result || result.skipped) {
+          skippedCount++
+          continue
+        }
+
+        // 3. Clear existing entries for this series
+        await Database.seriesProviderEntryModel.destroy({
+          where: { seriesId: series.id }
+        })
+
+        // 4. Persist upcoming releases
+        if (result.upcoming && result.upcoming.length > 0) {
+          upcomingFound += result.upcoming.length
+          const upcomingRecords = result.upcoming.map((item) => ({
+            libraryId,
+            seriesId: series.id,
+            seriesName: series.name,
+            title: item.title,
+            position: item.position || null,
+            releaseDate: item.releaseDate || null,
+            asin: item.asin || null,
+            coverUrl: item.coverUrl || null,
+            providerUrl: item.providerUrl || null,
+            summary: item.summary || null,
+            provider: item.provider || 'audible',
+            entryType: 'upcoming',
+            isReleased: false,
+            lastScannedAt: Date.now()
+          }))
+          await Database.seriesProviderEntryModel.bulkCreate(upcomingRecords)
+        }
+
+        // 5. Persist missing books
+        if (result.missing && result.missing.length > 0) {
+          missingFound += result.missing.length
+          const missingRecords = result.missing.map((item) => ({
+            libraryId,
+            seriesId: series.id,
+            seriesName: series.name,
+            title: item.title,
+            position: item.position || null,
+            releaseDate: item.releaseDate || null,
+            asin: item.asin || null,
+            coverUrl: item.coverUrl || null,
+            providerUrl: item.providerUrl || null,
+            summary: item.summary || null,
+            provider: item.provider || 'audible',
+            entryType: 'missing',
+            isReleased: true,
+            lastScannedAt: Date.now()
+          }))
+          await Database.seriesProviderEntryModel.bulkCreate(missingRecords)
+        }
+
+        // Gentle pause between series to prevent rate spikes
+        await new Promise((resolve) => setTimeout(resolve, 250))
+      }
+
+      const finalStatus = scanState.cancelled ? 'cancelled' : 'completed'
+      const scanSummary = {
+        scannedAt: Date.now(),
+        status: finalStatus,
+        seriesChecked,
+        upcomingFound,
+        missingFound,
+        skippedCount,
+        errorMessage: null
+      }
+
+      const updatedSettings = {
+        ...(library.settings || {}),
+        seriesScraperLastScan: scanSummary
+      }
+      await library.update({ settings: updatedSettings })
+
+      if (scanState.cancelled) {
+        SocketAuthority.emitter('series_provider_scan_cancelled', { libraryId, scanSummary })
+      } else {
+        SocketAuthority.emitter('series_provider_scan_completed', { libraryId, scanSummary })
+      }
+
+      Logger.info(
+        `[SeriesProvider] Scan ${finalStatus} for library "${library.name}": ` +
+        `${seriesChecked} series analyzed, ${upcomingFound} upcoming releases, ${missingFound} missing books, ${skippedCount} skipped.`
+      )
+
+      return { success: true, summary: scanSummary }
+    } catch (err) {
+      const isRateLimit = !!err.rateLimited
+      const status = isRateLimit ? 'rate-limited' : 'failed'
+      const errorMessage = isRateLimit
+        ? `Audible rate limit encountered (retry in ${err.retryAfter || 60}s)`
+        : err.message
+
+      Logger.error(`[SeriesProvider] Scan ${status} for library ${libraryId}: ${errorMessage}`)
+
+      const scanSummary = {
+        scannedAt: Date.now(),
+        status,
+        seriesChecked,
+        upcomingFound,
+        missingFound,
+        skippedCount,
+        errorMessage
+      }
+
+      const updatedSettings = {
+        ...(library.settings || {}),
+        seriesScraperLastScan: scanSummary
+      }
+      await library.update({ settings: updatedSettings }).catch((saveErr) => {
+        Logger.error(`[SeriesProvider] Failed to update library settings after error: ${saveErr.message}`)
+      })
+
+      SocketAuthority.emitter('series_provider_scan_failed', { libraryId, scanSummary })
+      return { success: false, error: errorMessage, summary: scanSummary }
+    } finally {
+      this.activeScans.delete(libraryId)
+    }
+  }
+}
+
+module.exports = new SeriesProviderManager()

@@ -300,6 +300,7 @@ class LibraryController {
     let hasUpdates = false
     let hasUpdatedDisableWatcher = false
     let hasUpdatedScanCron = false
+    let hasUpdatedSeriesScraperCron = false
     if (req.body.settings) {
       for (const key in req.body.settings) {
         if (!Object.keys(defaultLibrarySettings).includes(key)) {
@@ -316,13 +317,14 @@ class LibraryController {
             updatedSettings[key] = [...req.body.settings[key]]
             Logger.debug(`[LibraryController] Library "${req.library.name}" updating setting "${key}" to "${updatedSettings[key]}"`)
           }
-        } else if (key === 'autoScanCronExpression' || key === 'podcastSearchRegion') {
+        } else if (key === 'autoScanCronExpression' || key === 'podcastSearchRegion' || key === 'seriesScraperCron' || key === 'seriesScraperRegion') {
           if (req.body.settings[key] !== null && typeof req.body.settings[key] !== 'string') {
             Logger.error(`[LibraryController] Invalid request. Settings "${key}" must be a string`)
             return res.status(400).send(`Invalid request. Settings "${key}" must be a string`)
           }
           if (req.body.settings[key] !== updatedSettings[key]) {
             if (key === 'autoScanCronExpression') hasUpdatedScanCron = true
+            if (key === 'seriesScraperCron') hasUpdatedSeriesScraperCron = true
 
             hasUpdates = true
             updatedSettings[key] = req.body.settings[key]
@@ -494,6 +496,12 @@ class LibraryController {
       this.cronManager.updateLibraryScanCron(req.library)
     }
 
+    if (hasUpdatedSeriesScraperCron) {
+      Logger.debug(`[LibraryController] Updated library "${req.library.name}" series provider cron`)
+      // Update series provider cron
+      this.cronManager.updateSeriesProviderCron(req.library)
+    }
+
     if (hasFolderUpdates || hasUpdatedDisableWatcher) {
       req.library.libraryFolders = await req.library.getLibraryFolders()
 
@@ -530,6 +538,10 @@ class LibraryController {
 
     // Remove library watcher
     Watcher.removeLibrary(req.library)
+
+    // Remove library crons
+    this.cronManager.removeCronForLibrary(req.library)
+    this.cronManager.removeCronForSeriesProvider(req.library)
 
     // Remove collections for library
     const numCollectionsRemoved = await Database.collectionModel.removeAllForLibrary(req.library.id)
