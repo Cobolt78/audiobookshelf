@@ -7,6 +7,7 @@
 
 <script>
 export default {
+  watchQuery: true,
   async asyncData({ params, query, store, redirect }) {
     var libraryId = params.library
     var libraryData = await store.dispatch('libraries/fetch', libraryId)

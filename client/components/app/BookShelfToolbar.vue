@@ -81,22 +81,63 @@
               <ui-icon-btn icon="close" :size="7" class="ml-1 text-xs" @click="cancelAudibleScan" />
             </ui-tooltip>
           </div>
-          <div v-else class="flex items-center ml-2 sm:ml-4">
+          <div v-else class="relative inline-flex items-center ml-2 sm:ml-4" v-click-outside="clickOutsideAudibleScanMenu">
             <ui-tooltip :text="lastAudibleScanTooltip" direction="bottom">
-              <div class="flex items-center rounded-sm overflow-hidden">
-                <ui-btn small color="bg-primary" class="h-7.5 text-xs flex items-center rounded-r-none border-r border-white/20" :loading="startingAudibleScan" @click="startAudibleScan(true)">
-                  <span class="material-symbols text-sm mr-1">bolt</span>
-                  {{ $strings.ButtonAudibleQuickScan || 'Quick Scan' }}
-                </ui-btn>
-                <ui-context-menu-dropdown :items="audibleScanMenuItems" :menu-width="240" class="h-7.5 w-7 bg-primary flex items-center justify-center cursor-pointer hover:bg-primary/80" @action="audibleScanMenuAction">
-                  <template #default="{ clickShowMenu }">
-                    <button type="button" class="h-full w-full flex items-center justify-center text-white" aria-label="Audible Scan Options" @click.stop.prevent="clickShowMenu">
-                      <span class="material-symbols text-base">arrow_drop_down</span>
-                    </button>
-                  </template>
-                </ui-context-menu-dropdown>
-              </div>
+              <button
+                type="button"
+                :disabled="startingAudibleScan"
+                class="h-7.5 px-3 bg-primary hover:bg-primary/80 active:bg-primary/70 text-white text-xs font-semibold rounded-l-md border border-gray-600 flex items-center focus:outline-hidden cursor-pointer shadow-xs transition-colors border-r border-white/20"
+                @click="startAudibleScan(true)"
+              >
+                <span class="material-symbols text-sm mr-1">bolt</span>
+                <span>{{ $strings.ButtonAudibleQuickScan || 'Audible Quick Scan' }}</span>
+              </button>
             </ui-tooltip>
+
+            <button
+              type="button"
+              class="h-7.5 w-7 bg-primary hover:bg-primary/80 active:bg-primary/70 text-white rounded-r-md border border-l-0 border-gray-600 flex items-center justify-center focus:outline-hidden cursor-pointer shadow-xs transition-colors"
+              aria-label="Audible Scan Options"
+              :aria-expanded="showAudibleScanMenu"
+              @click.stop.prevent="showAudibleScanMenu = !showAudibleScanMenu"
+            >
+              <span class="material-symbols text-base">arrow_drop_down</span>
+            </button>
+
+            <!-- Dropdown Menu -->
+            <transition name="menu">
+              <div
+                v-show="showAudibleScanMenu"
+                role="menu"
+                class="absolute right-0 top-full mt-1.5 z-50 bg-bg border border-black-200 shadow-2xl rounded-md py-1.5 focus:outline-hidden text-xs min-w-[280px] whitespace-normal"
+              >
+                <button
+                  type="button"
+                  role="menuitem"
+                  class="flex items-start w-full px-3 py-2 text-left text-white hover:bg-white/10 cursor-pointer space-x-2.5 transition-colors focus:outline-hidden"
+                  @click="runAudibleScanFromMenu(true)"
+                >
+                  <span class="material-symbols text-base text-yellow-400 mt-0.5 shrink-0">bolt</span>
+                  <div class="grow">
+                    <p class="font-medium text-white leading-tight">{{ $strings.ButtonAudibleQuickScan || 'Audible Quick Scan' }}</p>
+                    <p class="text-white/60 text-[11px] mt-0.5">New & updated series only</p>
+                  </div>
+                </button>
+                <div class="border-t border-white/10 my-1"></div>
+                <button
+                  type="button"
+                  role="menuitem"
+                  class="flex items-start w-full px-3 py-2 text-left text-white hover:bg-white/10 cursor-pointer space-x-2.5 transition-colors focus:outline-hidden"
+                  @click="runAudibleScanFromMenu(false)"
+                >
+                  <span class="material-symbols text-base text-primary mt-0.5 shrink-0">autorenew</span>
+                  <div class="grow">
+                    <p class="font-medium text-white leading-tight">{{ $strings.ButtonAudibleFullScan || 'Audible Full Scan' }}</p>
+                    <p class="text-white/60 text-[11px] mt-0.5">Comprehensive sync (all series)</p>
+                  </div>
+                </button>
+              </div>
+            </transition>
           </div>
         </template>
 
@@ -153,7 +194,8 @@ export default {
       isAudibleScanning: false,
       audibleScanProgressText: null,
       startingAudibleScan: false,
-      localLastScanSummary: null
+      localLastScanSummary: null,
+      showAudibleScanMenu: false
     }
   },
   computed: {
@@ -711,6 +753,13 @@ export default {
       } catch (err) {
         console.error('Failed to fetch series-provider status', err)
       }
+    },
+    clickOutsideAudibleScanMenu() {
+      this.showAudibleScanMenu = false
+    },
+    runAudibleScanFromMenu(quick) {
+      this.showAudibleScanMenu = false
+      this.startAudibleScan(quick)
     },
     audibleScanMenuAction({ action }) {
       if (action === 'quick-scan') {

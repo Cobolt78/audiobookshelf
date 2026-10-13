@@ -73,7 +73,8 @@ export default {
       type: Object,
       default: () => {}
     },
-    continueListeningShelf: Boolean
+    continueListeningShelf: Boolean,
+    isRefreshingDiscover: Boolean
   },
   data() {
     return {
@@ -81,8 +82,7 @@ export default {
       canScrollLeft: false,
       isScrolling: false,
       scrollTimer: null,
-      updateTimer: null,
-      isRefreshingDiscover: false
+      updateTimer: null
     }
   },
   computed: {
@@ -94,7 +94,7 @@ export default {
       return 2.5
     },
     currentLibraryId() {
-      return this.$store.state.libraries.currentLibraryId
+      return this.$store.state.libraries.currentLibraryId || this.$route.params.library
     },
     isSelectionMode() {
       return this.$store.getters['globals/getIsBatchSelectingMediaItems']
@@ -108,6 +108,7 @@ export default {
         'read-again',
         'recently-added',
         'recent-episodes',
+        'newest-episodes',
         'recent-series',
         'upcoming-series',
         'newest-authors',
@@ -124,29 +125,27 @@ export default {
       if (!this.currentLibraryId || !this.isClickableShelf) return
       const shelfId = this.shelf.id
       if (shelfId === 'continue-listening' || shelfId === 'continue-reading') {
-        this.$router.push(`/library/${this.currentLibraryId}/bookshelf?filter=progress.in-progress`)
+        this.$router.push(`/library/${this.currentLibraryId}/bookshelf?filter=progress.in-progress`).catch(() => {})
       } else if (shelfId === 'listen-again' || shelfId === 'read-again') {
-        this.$router.push(`/library/${this.currentLibraryId}/bookshelf?filter=progress.finished`)
+        this.$router.push(`/library/${this.currentLibraryId}/bookshelf?filter=progress.finished`).catch(() => {})
       } else if (shelfId === 'recently-added' || shelfId === 'recent-episodes') {
-        this.$router.push(`/library/${this.currentLibraryId}/bookshelf?sort=addedAt&desc=1`)
+        this.$router.push(`/library/${this.currentLibraryId}/bookshelf?sort=addedAt&desc=1`).catch(() => {})
       } else if (shelfId === 'recent-series') {
-        this.$router.push(`/library/${this.currentLibraryId}/bookshelf/series?sort=addedAt&desc=1`)
+        this.$router.push(`/library/${this.currentLibraryId}/bookshelf/series?sort=addedAt&desc=1`).catch(() => {})
       } else if (shelfId === 'upcoming-series') {
-        this.$router.push(`/library/${this.currentLibraryId}/bookshelf/series?filter=completion.has-upcoming`)
+        this.$router.push(`/library/${this.currentLibraryId}/bookshelf/series?filter=completion.has-upcoming`).catch(() => {})
       } else if (shelfId === 'newest-authors') {
-        this.$router.push(`/library/${this.currentLibraryId}/bookshelf/authors?sort=addedAt&desc=1`)
+        this.$router.push(`/library/${this.currentLibraryId}/bookshelf/authors?sort=addedAt&desc=1`).catch(() => {})
       } else if (shelfId === 'continue-series') {
-        this.$router.push(`/library/${this.currentLibraryId}/bookshelf?filter=progress.continue-series`)
+        this.$router.push(`/library/${this.currentLibraryId}/bookshelf?filter=progress.continue-series`).catch(() => {})
+      } else if (shelfId === 'newest-episodes') {
+        this.$router.push(`/library/${this.currentLibraryId}/podcast/latest`).catch(() => {})
       } else if (shelfId === 'discover') {
         this.clickRefreshDiscover()
       }
     },
     clickRefreshDiscover() {
-      this.isRefreshingDiscover = true
       this.$emit('refreshDiscover')
-      setTimeout(() => {
-        this.isRefreshingDiscover = false
-      }, 1000)
     },
     clearSelectedEntities() {
       this.updateSelectionMode(false)

@@ -17,14 +17,36 @@
     <div v-else-if="isAlternativeBookshelfView" class="w-full mb-24e">
       <template v-for="(shelf, index) in supportedShelves">
         <widgets-item-slider :shelf-id="shelf.id" :key="index + '.'" :items="shelf.entities" :continue-listening-shelf="shelf.id === 'continue-listening' || shelf.id === 'continue-reading'" :type="shelf.type" class="bookshelf-row pl-8e my-6e" @selectEntity="(payload) => selectEntity(payload, index)">
-          <h2 class="font-semibold text-gray-100">{{ $strings[shelf.labelStringKey] }}</h2>
+          <div class="flex items-center space-x-2">
+            <button
+              type="button"
+              class="flex items-center text-left text-gray-100 hover:text-white transition-colors group cursor-pointer focus:outline-hidden"
+              :class="{ 'pointer-events-none': !isShelfClickable(shelf) }"
+              @click="clickShelfHeader(shelf)"
+            >
+              <h2 class="font-semibold text-gray-100 group-hover:text-white group-hover:underline flex items-center select-none">
+                <span>{{ $strings[shelf.labelStringKey] || shelf.label }}</span>
+                <span v-if="isShelfClickable(shelf) && shelf.id !== 'discover'" class="material-symbols text-gray-400 group-hover:text-white group-hover:translate-x-0.5 transition-all text-xl ml-1">chevron_right</span>
+              </h2>
+            </button>
+            <ui-tooltip v-if="shelf.id === 'discover'" :text="$strings.ButtonRerollDiscover || 'Re-roll Recommendations'" direction="right">
+              <button
+                type="button"
+                class="w-7 h-7 flex items-center justify-center rounded-full text-gray-400 hover:text-white hover:bg-white/10 transition cursor-pointer ml-1"
+                :title="$strings.ButtonRerollDiscover || 'Re-roll Recommendations'"
+                @click.stop.prevent="refreshDiscoverShelf"
+              >
+                <span class="material-symbols text-base" :class="{ 'animate-spin': isRefreshingDiscover }">refresh</span>
+              </button>
+            </ui-tooltip>
+          </div>
         </widgets-item-slider>
       </template>
     </div>
     <!-- Regular bookshelf view -->
     <div v-else class="w-full">
       <template v-for="(shelf, index) in supportedShelves">
-        <app-book-shelf-row :key="index" :index="index" :shelf="shelf" :size-multiplier="sizeMultiplier" :book-cover-width="bookCoverWidth" :book-cover-aspect-ratio="coverAspectRatio" :continue-listening-shelf="shelf.id === 'continue-listening' || shelf.id === 'continue-reading'" @selectEntity="(payload) => selectEntity(payload, index)" @refreshDiscover="refreshDiscoverShelf" />
+        <app-book-shelf-row :key="index" :index="index" :shelf="shelf" :size-multiplier="sizeMultiplier" :book-cover-width="bookCoverWidth" :book-cover-aspect-ratio="coverAspectRatio" :continue-listening-shelf="shelf.id === 'continue-listening' || shelf.id === 'continue-reading'" :is-refreshing-discover="isRefreshingDiscover" @selectEntity="(payload) => selectEntity(payload, index)" @refreshDiscover="refreshDiscoverShelf" />
       </template>
     </div>
   </div>
@@ -47,7 +69,8 @@ export default {
       wrapperClientWidth: 0,
       shelves: [],
       lastItemIndexSelected: -1,
-      tempIsScanning: false
+      tempIsScanning: false,
+      isRefreshingDiscover: false
     }
   },
   computed: {
@@ -58,7 +81,7 @@ export default {
       return this.$store.getters['user/getIsAdminOrUp']
     },
     currentLibraryId() {
-      return this.$store.state.libraries.currentLibraryId
+      return this.$store.state.libraries.currentLibraryId || this.$route.params.library
     },
     currentLibraryMediaType() {
       return this.$store.getters['libraries/getCurrentLibraryMediaType']
@@ -195,7 +218,49 @@ export default {
       }
       this.shelves = categories
     },
+    isShelfClickable(shelf) {
+      if (!shelf?.id) return false
+      return [
+        'continue-listening',
+        'continue-reading',
+        'listen-again',
+        'read-again',
+        'recently-added',
+        'recent-episodes',
+        'newest-episodes',
+        'recent-series',
+        'upcoming-series',
+        'newest-authors',
+        'continue-series',
+        'discover'
+      ].includes(shelf.id)
+    },
+    clickShelfHeader(shelf) {
+      if (!this.currentLibraryId || !this.isShelfClickable(shelf)) return
+      const shelfId = shelf.id
+      if (shelfId === 'continue-listening' || shelfId === 'continue-reading') {
+        this.$router.push(`/library/${this.currentLibraryId}/bookshelf?filter=progress.in-progress`).catch(() => {})
+      } else if (shelfId === 'listen-again' || shelfId === 'read-again') {
+        this.$router.push(`/library/${this.currentLibraryId}/bookshelf?filter=progress.finished`).catch(() => {})
+      } else if (shelfId === 'recently-added' || shelfId === 'recent-episodes') {
+        this.$router.push(`/library/${this.currentLibraryId}/bookshelf?sort=addedAt&desc=1`).catch(() => {})
+      } else if (shelfId === 'recent-series') {
+        this.$router.push(`/library/${this.currentLibraryId}/bookshelf/series?sort=addedAt&desc=1`).catch(() => {})
+      } else if (shelfId === 'upcoming-series') {
+        this.$router.push(`/library/${this.currentLibraryId}/bookshelf/series?filter=completion.has-upcoming`).catch(() => {})
+      } else if (shelfId === 'newest-authors') {
+        this.$router.push(`/library/${this.currentLibraryId}/bookshelf/authors?sort=addedAt&desc=1`).catch(() => {})
+      } else if (shelfId === 'continue-series') {
+        this.$router.push(`/library/${this.currentLibraryId}/bookshelf?filter=progress.continue-series`).catch(() => {})
+      } else if (shelfId === 'newest-episodes') {
+        this.$router.push(`/library/${this.currentLibraryId}/podcast/latest`).catch(() => {})
+      } else if (shelfId === 'discover') {
+        this.refreshDiscoverShelf()
+      }
+    },
     async refreshDiscoverShelf() {
+      if (this.isRefreshingDiscover) return
+      this.isRefreshingDiscover = true
       try {
         const categories = await this.$axios.$get(`/api/libraries/${this.currentLibraryId}/personalized?include=rssfeed,numEpisodesIncomplete,share&refreshDiscover=1&_t=${Date.now()}`)
         if (categories?.length) {
@@ -209,6 +274,10 @@ export default {
         }
       } catch (err) {
         console.error('Failed to refresh discover shelf', err)
+      } finally {
+        setTimeout(() => {
+          this.isRefreshingDiscover = false
+        }, 500)
       }
     },
     async setShelvesFromSearch() {

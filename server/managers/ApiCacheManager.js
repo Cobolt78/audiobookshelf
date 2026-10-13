@@ -80,8 +80,8 @@ class ApiCacheManager {
      * @param {import('express').NextFunction} next
      */
     return (req, res, next) => {
-      if (req.query.sort === 'random') {
-        Logger.debug(`[ApiCacheManager] Skipping cache for random sort`)
+      if (req.query.sort === 'random' || req.query.refreshDiscover) {
+        Logger.debug(`[ApiCacheManager] Skipping cache for random sort or refreshDiscover`)
         return next()
       }
 
