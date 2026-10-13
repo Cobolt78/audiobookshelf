@@ -11,10 +11,12 @@
       </template>
     </div>
 
-    <div class="px-2 md:px-4 w-full text-sm pt-2 md:pt-6 pb-20 rounded-b-lg rounded-tr-lg bg-bg shadow-lg border border-black-300 relative overflow-hidden" style="min-height: 400px; max-height: 80vh">
-      <component v-if="libraryCopy && show" ref="tabComponent" :is="tabName" :is-new="!library" :library="libraryCopy" :library-id="libraryId" :processing.sync="processing" @update="updateLibrary" @close="show = false" />
+    <div class="px-2 md:px-4 w-full text-sm pt-2 md:pt-6 rounded-b-lg rounded-tr-lg bg-bg shadow-lg border border-black-300 flex flex-col justify-between" style="min-height: 400px; max-height: 80vh">
+      <div class="w-full overflow-y-auto pr-1 flex-1 pb-4">
+        <component v-if="libraryCopy && show" ref="tabComponent" :is="tabName" :is-new="!library" :library="libraryCopy" :library-id="libraryId" :processing.sync="processing" @update="updateLibrary" @close="show = false" />
+      </div>
 
-      <div v-show="selectedTab !== 'tools'" class="absolute bottom-0 left-0 w-full px-4 py-4 border-t border-white/10">
+      <div v-show="selectedTab !== 'tools'" class="w-full px-4 py-3 border-t border-white/10 bg-bg z-10 flex-shrink-0">
         <div class="flex justify-end">
           <ui-btn @click="submit">{{ buttonText }}</ui-btn>
         </div>
@@ -129,7 +131,11 @@ export default {
           onlyShowLaterBooksInContinueSeries: false,
           metadataPrecedence: ['folderStructure', 'audioMetatags', 'nfoFile', 'txtFiles', 'opfFile', 'absMetadata'],
           markAsFinishedPercentComplete: null,
-          markAsFinishedTimeRemaining: 10
+          markAsFinishedTimeRemaining: 10,
+          seriesScraperCron: '0 3 * * 1',
+          seriesScraperQuickCron: '0 2 * * *',
+          seriesScraperIntervalDays: 14,
+          seriesScraperRegion: 'us'
         }
       }
     },

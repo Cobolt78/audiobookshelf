@@ -308,7 +308,7 @@ class Audible {
    * @param {string} [region='us']
    * @returns {Promise<{ upcoming: Array, missing: Array, seriesAsin: string|null, skipped: boolean, reason?: string }>}
    */
-  async fetchSeriesProviderEntries(seriesName, ownedBooks = [], region = 'us') {
+  async fetchSeriesProviderEntries(seriesName, ownedBooks = [], region = 'us', onProgress = null) {
     if (!seriesName) {
       return { upcoming: [], missing: [], seriesAsin: null, skipped: true, reason: 'Empty series name' }
     }
@@ -430,7 +430,12 @@ class Audible {
     const upcoming = []
     const missing = []
 
-    for (const candidate of uniqueCandidates) {
+    for (let idx = 0; idx < uniqueCandidates.length; idx++) {
+      const candidate = uniqueCandidates[idx]
+      if (onProgress) {
+        onProgress({ current: idx + 1, total: uniqueCandidates.length })
+        await new Promise((resolve) => setTimeout(resolve, 80))
+      }
       const isOwned =
         ownedAsinSet.has(candidate.asin) ||
         ownedTitleSet.has(this.normalizedTitle(candidate.title))

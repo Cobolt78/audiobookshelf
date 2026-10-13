@@ -34,7 +34,7 @@ module.exports = {
     let filterValue = null
     let filterGroup = null
     if (filterBy) {
-      const searchGroups = ['genres', 'tags', 'authors', 'progress', 'narrators', 'publishers', 'languages', 'completion']
+      const searchGroups = ['genres', 'tags', 'authors', 'progress', 'narrators', 'publishers', 'languages', 'completion', 'missing-books']
       const group = searchGroups.find((_group) => filterBy.startsWith(_group + '.'))
       filterGroup = group || filterBy
       filterValue = group ? this.decode(filterBy.replace(`${group}.`, '')) : null
@@ -96,14 +96,14 @@ module.exports = {
         attrQuery = 'SELECT count(*) FROM books b, bookSeries bs LEFT OUTER JOIN mediaProgresses mp ON mp.mediaItemId = b.id AND mp.userId = :userId WHERE bs.seriesId = series.id AND bs.bookId = b.id AND (mp.currentTime > 0 OR mp.ebookProgress > 0) AND mp.isFinished = 0'
         userPermissionBookWhere.replacements.userId = user.id
       }
-    } else if (filterGroup === 'completion') {
-      const rawVal = filterBy ? filterBy.replace('completion.', '') : ''
-      const val = (filterValue === 'has-missing' || rawVal === 'has-missing') ? 'has-missing'
+    } else if (filterGroup === 'completion' || filterGroup === 'missing-books') {
+      const rawVal = filterBy ? filterBy.replace(/^(completion|missing-books)\./, '') : ''
+      const val = (filterValue === 'has-missing' || rawVal === 'has-missing' || filterGroup === 'missing-books') ? 'has-missing'
         : (filterValue === 'complete' || rawVal === 'complete') ? 'complete'
         : (filterValue === 'has-upcoming' || rawVal === 'has-upcoming') ? 'has-upcoming'
         : filterValue
 
-      if (val === 'has-missing') {
+      if (val === 'has-missing' || filterGroup === 'missing-books') {
         const missingQuery = "SELECT count(*) FROM seriesProviderEntries spe WHERE spe.seriesId = series.id AND spe.entryType = 'missing'"
         seriesWhere.push(Sequelize.where(Sequelize.literal(`(${missingQuery})`), { [Sequelize.Op.gt]: 0 }))
       } else if (val === 'complete') {
@@ -148,6 +148,26 @@ module.exports = {
         [Sequelize.literal("(SELECT count(*) FROM seriesProviderEntries spe WHERE spe.seriesId = series.id AND spe.entryType = 'missing')"), 'missingBooksCount'],
         [Sequelize.literal("(SELECT count(*) FROM seriesProviderEntries spe WHERE spe.seriesId = series.id AND spe.entryType = 'upcoming')"), 'upcomingBooksCount']
       ]
+    }
+
+    // Handle default sort override for missing-books sub-options
+    if (filterGroup === 'missing-books') {
+      const rawVal = filterBy ? filterBy.replace('missing-books.', '') : ''
+      if ((!sortBy || sortBy === 'name') && rawVal) {
+        if (rawVal === 'missing-count') {
+          sortBy = 'missingBooks'
+          sortDesc = true
+        } else if (rawVal === 'title') {
+          sortBy = 'name'
+          sortDesc = false
+        } else if (rawVal === 'added-at') {
+          sortBy = 'addedAt'
+          sortDesc = true
+        } else if (rawVal === 'last-book-added') {
+          sortBy = 'lastBookAdded'
+          sortDesc = true
+        }
+      }
     }
 
     // Handle sort order

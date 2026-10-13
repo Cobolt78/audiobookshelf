@@ -172,4 +172,44 @@ describe('SeriesProviderManager & Cron Integration', () => {
     cronManager.updateSeriesProviderCron(mockLib)
     expect(cronManager.seriesProviderCrons).to.have.lengthOf(0)
   })
+
+  it('manages both full and quick crons concurrently in CronManager', () => {
+    const cronManager = new CronManager(null, null)
+
+    const mockLib = {
+      id: 'lib-2',
+      name: 'Audiobooks',
+      isBook: true,
+      settings: {
+        seriesScraperCron: '0 3 * * 1',
+        seriesScraperQuickCron: '0 2 * * *',
+        seriesScraperIntervalDays: 14
+      }
+    }
+
+    cronManager.initSeriesProviderCrons([mockLib])
+    expect(cronManager.seriesProviderCrons).to.have.lengthOf(2)
+    const fullCron = cronManager.seriesProviderCrons.find((c) => c.type === 'full')
+    const quickCron = cronManager.seriesProviderCrons.find((c) => c.type === 'quick')
+    expect(fullCron).to.exist
+    expect(fullCron.expression).to.equal('0 3 * * 1')
+    expect(quickCron).to.exist
+    expect(quickCron.expression).to.equal('0 2 * * *')
+
+    // Update quick cron
+    mockLib.settings.seriesScraperQuickCron = '0 1 * * *'
+    cronManager.updateSeriesProviderCron(mockLib)
+    expect(cronManager.seriesProviderCrons).to.have.lengthOf(2)
+    expect(cronManager.seriesProviderCrons.find((c) => c.type === 'quick').expression).to.equal('0 1 * * *')
+
+    // Disable full cron only
+    mockLib.settings.seriesScraperCron = null
+    cronManager.updateSeriesProviderCron(mockLib)
+    expect(cronManager.seriesProviderCrons).to.have.lengthOf(1)
+    expect(cronManager.seriesProviderCrons[0].type).to.equal('quick')
+
+    // Remove all for library
+    cronManager.removeCronForSeriesProvider(mockLib)
+    expect(cronManager.seriesProviderCrons).to.have.lengthOf(0)
+  })
 })

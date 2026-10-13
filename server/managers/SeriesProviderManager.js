@@ -38,7 +38,160 @@ class SeriesProviderManager {
       total: active?.total || 0,
       seriesName: active?.seriesName || '',
       quick: !!active?.quick,
+      singleSeriesId: active?.singleSeriesId || null,
       lastScan
+    }
+  }
+
+  /**
+   * Scan a single series against external metadata provider (Audible)
+   * @param {string} libraryId
+   * @param {string} seriesId
+   * @returns {Promise<{ success: boolean, summary?: ScanSummary, message?: string, error?: string }>}
+   */
+  async scanSingleSeries(libraryId, seriesId) {
+    if (this.activeScans.has(libraryId)) {
+      Logger.warn(`[SeriesProvider] Scan already running for library ${libraryId}`)
+      return { success: false, message: 'Scan already in progress' }
+    }
+
+    const library = await Database.libraryModel.findByPk(libraryId)
+    if (!library || library.mediaType !== 'book') {
+      return { success: false, message: 'Book library required' }
+    }
+
+    const series = await Database.seriesModel.findOne({
+      where: { id: seriesId, libraryId },
+      include: [
+        {
+          model: Database.bookModel,
+          attributes: ['id', 'title', 'asin', 'updatedAt', 'createdAt'],
+          through: { attributes: ['sequence'] }
+        }
+      ]
+    })
+
+    if (!series) {
+      return { success: false, message: 'Series not found' }
+    }
+
+    const scanState = {
+      current: 0,
+      total: 0,
+      seriesName: series.name,
+      startedAt: Date.now(),
+      cancelled: false,
+      singleSeriesId: seriesId
+    }
+    this.activeScans.set(libraryId, scanState)
+    SocketAuthority.emitter('series_provider_scan_started', { libraryId, seriesId, seriesName: series.name, isSingle: true })
+
+    try {
+      const region = library.settings?.seriesScraperRegion || 'us'
+      const ownedBooks = (series.books || []).map((b) => ({
+        asin: b.asin,
+        title: b.title
+      }))
+
+      const onProgress = ({ current, total }) => {
+        if (scanState.cancelled) return
+        scanState.current = current
+        scanState.total = total
+        SocketAuthority.emitter('series_provider_scan_progress', {
+          libraryId,
+          seriesId,
+          current,
+          total,
+          seriesName: series.name,
+          isSingle: true
+        })
+      }
+
+      const result = await this.audible.fetchSeriesProviderEntries(series.name, ownedBooks, region, onProgress)
+
+      if (result && !result.skipped && !scanState.cancelled) {
+        // Destroy old entries
+        await Database.seriesProviderEntryModel.destroy({
+          where: { seriesId: series.id }
+        })
+
+        // Persist upcoming
+        if (result.upcoming?.length) {
+          const upcomingRecords = result.upcoming.map((item) => ({
+            libraryId,
+            seriesId: series.id,
+            seriesName: series.name,
+            title: item.title,
+            position: item.position || null,
+            releaseDate: item.releaseDate || null,
+            asin: item.asin || null,
+            coverUrl: item.coverUrl || null,
+            providerUrl: item.providerUrl || null,
+            summary: item.summary || null,
+            provider: 'audible',
+            entryType: 'upcoming',
+            isReleased: false,
+            lastScannedAt: Date.now()
+          }))
+          await Database.seriesProviderEntryModel.bulkCreate(upcomingRecords)
+        }
+
+        // Persist missing
+        if (result.missing?.length) {
+          const missingRecords = result.missing.map((item) => ({
+            libraryId,
+            seriesId: series.id,
+            seriesName: series.name,
+            title: item.title,
+            position: item.position || null,
+            releaseDate: item.releaseDate || null,
+            asin: item.asin || null,
+            coverUrl: item.coverUrl || null,
+            providerUrl: item.providerUrl || null,
+            summary: item.summary || null,
+            provider: 'audible',
+            entryType: 'missing',
+            isReleased: item.isReleased !== false,
+            lastScannedAt: Date.now()
+          }))
+          await Database.seriesProviderEntryModel.bulkCreate(missingRecords)
+        }
+      }
+
+      const scanSummary = {
+        scannedAt: Date.now(),
+        status: scanState.cancelled ? 'cancelled' : 'completed',
+        seriesChecked: 1,
+        upcomingFound: result?.upcoming?.length || 0,
+        missingFound: result?.missing?.length || 0,
+        skippedCount: result?.skipped ? 1 : 0,
+        errorMessage: null
+      }
+
+      this.activeScans.delete(libraryId)
+      SocketAuthority.emitter('series_provider_scan_completed', {
+        libraryId,
+        seriesId,
+        scanSummary
+      })
+      return { success: true, summary: scanSummary }
+    } catch (err) {
+      Logger.error(`[SeriesProvider] Error checking single series "${series.name}":`, err)
+      this.activeScans.delete(libraryId)
+      SocketAuthority.emitter('series_provider_scan_completed', {
+        libraryId,
+        seriesId,
+        scanSummary: {
+          scannedAt: Date.now(),
+          status: 'failed',
+          seriesChecked: 0,
+          upcomingFound: 0,
+          missingFound: 0,
+          skippedCount: 1,
+          errorMessage: err.message
+        }
+      })
+      return { success: false, error: err.message }
     }
   }
 
@@ -145,7 +298,8 @@ class SeriesProviderManager {
           }
           const updatedSettings = {
             ...(library.settings || {}),
-            seriesScraperLastScan: scanSummary
+            seriesScraperLastScan: scanSummary,
+            seriesScraperLastQuickScan: scanSummary
           }
           await library.update({ settings: updatedSettings })
           this.activeScans.delete(libraryId)
@@ -268,7 +422,8 @@ class SeriesProviderManager {
 
       const updatedSettings = {
         ...(library.settings || {}),
-        seriesScraperLastScan: scanSummary
+        seriesScraperLastScan: scanSummary,
+        ...(quick ? { seriesScraperLastQuickScan: scanSummary } : { seriesScraperLastFullScan: scanSummary })
       }
       await library.update({ settings: updatedSettings })
 

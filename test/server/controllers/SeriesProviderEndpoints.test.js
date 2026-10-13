@@ -181,6 +181,22 @@ describe('Series Provider Endpoints & Completion Filters', () => {
       expect(result.series[0].name).to.equal('Red Rising')
     })
 
+    it('filters series with missing books using missing-books.missing-count', async () => {
+      const result = await seriesFilters.getFilteredSeries(
+        library,
+        user,
+        'missing-books.missing-count',
+        null,
+        null,
+        [],
+        10,
+        0
+      )
+
+      expect(result.series).to.have.lengthOf(1)
+      expect(result.series[0].name).to.equal('The Stormlight Archive')
+    })
+
     it('sorts series by missingBooks count descending', async () => {
       const result = await seriesFilters.getFilteredSeries(
         library,
@@ -218,6 +234,28 @@ describe('Series Provider Endpoints & Completion Filters', () => {
       expect(res.json.calledOnce).to.be.true
       expect(res.json.firstCall.args[0].success).to.be.true
       expect(scanStub.calledWith(library.id)).to.be.true
+    })
+
+    it('scanSeriesProvider initiates single series scan when seriesId provided', async () => {
+      const singleScanStub = sinon.stub(SeriesProviderManager, 'scanSingleSeries').resolves({ success: true })
+      sinon.stub(SeriesProviderManager, 'getScanStatus').returns({ isScanning: false })
+
+      const req = {
+        user: { canUpdate: true },
+        library: { id: library.id, isBook: true },
+        body: { seriesId: 'test-series-id' }
+      }
+      const res = {
+        json: sinon.spy(),
+        status: sinon.stub().returns({ json: sinon.spy() }),
+        sendStatus: sinon.spy()
+      }
+
+      await LibraryController.scanSeriesProvider(req, res)
+      expect(res.json.calledOnce).to.be.true
+      expect(res.json.firstCall.args[0].success).to.be.true
+      expect(res.json.firstCall.args[0].seriesId).to.equal('test-series-id')
+      expect(singleScanStub.calledWith(library.id, 'test-series-id')).to.be.true
     })
 
     it('cancelSeriesProviderScan cancels active scan', async () => {

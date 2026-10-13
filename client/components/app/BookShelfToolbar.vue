@@ -279,7 +279,7 @@ export default {
           value: 'totalDuration'
         },
         {
-          text: this.$strings.LabelMissingBooks || 'Missing Books Count',
+          text: this.$strings.LabelMissingBooks || 'Missing Books',
           value: 'missingBooks'
         },
         {
@@ -743,6 +743,22 @@ export default {
       this.saveSettings()
     },
     updateSeriesFilter() {
+      if (this.settings.seriesFilterBy?.startsWith('missing-books.')) {
+        const sub = this.settings.seriesFilterBy.split('.')[1]
+        if (sub === 'missing-count') {
+          this.settings.seriesSortBy = 'missingBooks'
+          this.settings.seriesSortDesc = true
+        } else if (sub === 'title') {
+          this.settings.seriesSortBy = 'name'
+          this.settings.seriesSortDesc = false
+        } else if (sub === 'added-at') {
+          this.settings.seriesSortBy = 'addedAt'
+          this.settings.seriesSortDesc = true
+        } else if (sub === 'last-book-added') {
+          this.settings.seriesSortBy = 'lastBookAdded'
+          this.settings.seriesSortDesc = true
+        }
+      }
       this.saveSettings()
     },
     updateCollapseSeries() {

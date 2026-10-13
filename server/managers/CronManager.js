@@ -124,8 +124,13 @@ class CronManager {
    */
   initSeriesProviderCrons(libraries) {
     for (const library of libraries) {
-      if (library.isBook && library.settings?.seriesScraperCron) {
-        this.startCronForSeriesProvider(library)
+      if (library.isBook) {
+        if (library.settings?.seriesScraperCron) {
+          this.startCronForSeriesProvider(library, 'full')
+        }
+        if (library.settings?.seriesScraperQuickCron) {
+          this.startCronForSeriesProvider(library, 'quick')
+        }
       }
     }
   }
@@ -134,21 +139,45 @@ class CronManager {
    * Start cron schedule for series provider scraping
    *
    * @param {import('../models/Library')} _library
+   * @param {'full'|'quick'} [type='full']
    */
-  startCronForSeriesProvider(_library) {
-    Logger.debug(`[CronManager] Init series provider cron for ${_library.name} on schedule ${_library.settings.seriesScraperCron}`)
-    const seriesCron = cron.schedule(_library.settings.seriesScraperCron, async () => {
+  startCronForSeriesProvider(_library, type = 'full') {
+    const isQuick = type === 'quick'
+    const expression = isQuick ? _library.settings?.seriesScraperQuickCron : _library.settings?.seriesScraperCron
+    if (!expression) return
+
+    Logger.debug(`[CronManager] Init series provider ${type} cron for ${_library.name} on schedule ${expression}`)
+    const seriesCron = cron.schedule(expression, async () => {
       const library = await Database.libraryModel.findByPk(_library.id)
       if (!library) {
-        Logger.error(`[CronManager] Library not found for series provider cron ${_library.id}`)
+        Logger.error(`[CronManager] Library not found for series provider ${type} cron ${_library.id}`)
+        return
+      }
+
+      if (isQuick) {
+        Logger.info(`[CronManager] Quick series provider cron executing for ${library.name}`)
+        SeriesProviderManager.scanLibrary(library.id, { quick: true })
       } else {
-        Logger.debug(`[CronManager] Series provider cron executing for ${library.name}`)
-        SeriesProviderManager.scanLibrary(library.id)
+        // Enforce 14-day interval check if interval configured
+        const intervalDays = library.settings?.seriesScraperIntervalDays !== undefined ? library.settings.seriesScraperIntervalDays : 14
+        const lastFullScanAt = library.settings?.seriesScraperLastFullScan?.scannedAt || 0
+        if (intervalDays > 0 && lastFullScanAt) {
+          const elapsedDays = (Date.now() - lastFullScanAt) / (24 * 60 * 60 * 1000)
+          if (elapsedDays < (intervalDays - 0.5)) {
+            Logger.info(`[CronManager] Skipping scheduled full series scan for "${library.name}" (cadence is every ${intervalDays} days; last full scan was ${Math.round(elapsedDays)}d ago)`)
+            return
+          }
+        }
+
+        Logger.info(`[CronManager] Full series provider cron executing for ${library.name}`)
+        SeriesProviderManager.scanLibrary(library.id, { quick: false })
       }
     })
+
     this.seriesProviderCrons.push({
       libraryId: _library.id,
-      expression: _library.settings.seriesScraperCron,
+      type,
+      expression,
       task: seriesCron
     })
   }
@@ -156,10 +185,15 @@ class CronManager {
   /**
    * Remove cron for series provider
    * @param {import('../models/Library')} library
+   * @param {'full'|'quick'|null} [type=null]
    */
-  removeCronForSeriesProvider(library) {
-    Logger.debug(`[CronManager] Removing series provider cron for ${library.name}`)
-    this.seriesProviderCrons = this.seriesProviderCrons.filter((spc) => spc.libraryId !== library.id)
+  removeCronForSeriesProvider(library, type = null) {
+    Logger.debug(`[CronManager] Removing series provider ${type || 'all'} cron(s) for ${library.name}`)
+    const toRemove = this.seriesProviderCrons.filter((spc) => spc.libraryId === library.id && (!type || spc.type === type))
+    for (const c of toRemove) {
+      if (c.task?.stop) c.task.stop()
+    }
+    this.seriesProviderCrons = this.seriesProviderCrons.filter((spc) => !(spc.libraryId === library.id && (!type || spc.type === type)))
   }
 
   /**
@@ -167,18 +201,30 @@ class CronManager {
    * @param {import('../models/Library')} library
    */
   updateSeriesProviderCron(library) {
-    const expression = library.settings?.seriesScraperCron
-    const existingCron = this.seriesProviderCrons.find((spc) => spc.libraryId === library.id)
+    // 1. Full scan cron
+    const fullExpression = library.settings?.seriesScraperCron
+    const existingFull = this.seriesProviderCrons.find((spc) => spc.libraryId === library.id && (!spc.type || spc.type === 'full'))
 
-    if (!expression && existingCron) {
-      if (existingCron.task.stop) existingCron.task.stop()
-      this.removeCronForSeriesProvider(library)
-    } else if (!existingCron && expression) {
-      this.startCronForSeriesProvider(library)
-    } else if (existingCron && existingCron.expression !== expression) {
-      if (existingCron.task.stop) existingCron.task.stop()
-      this.removeCronForSeriesProvider(library)
-      this.startCronForSeriesProvider(library)
+    if (!fullExpression && existingFull) {
+      this.removeCronForSeriesProvider(library, 'full')
+    } else if (!existingFull && fullExpression) {
+      this.startCronForSeriesProvider(library, 'full')
+    } else if (existingFull && existingFull.expression !== fullExpression) {
+      this.removeCronForSeriesProvider(library, 'full')
+      this.startCronForSeriesProvider(library, 'full')
+    }
+
+    // 2. Quick scan cron
+    const quickExpression = library.settings?.seriesScraperQuickCron
+    const existingQuick = this.seriesProviderCrons.find((spc) => spc.libraryId === library.id && spc.type === 'quick')
+
+    if (!quickExpression && existingQuick) {
+      this.removeCronForSeriesProvider(library, 'quick')
+    } else if (!existingQuick && quickExpression) {
+      this.startCronForSeriesProvider(library, 'quick')
+    } else if (existingQuick && existingQuick.expression !== quickExpression) {
+      this.removeCronForSeriesProvider(library, 'quick')
+      this.startCronForSeriesProvider(library, 'quick')
     }
   }
 

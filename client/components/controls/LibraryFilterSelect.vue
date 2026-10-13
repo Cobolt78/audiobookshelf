@@ -151,6 +151,12 @@ export default {
           sublist: true
         },
         {
+          text: this.$strings.LabelMissingBooks || 'Missing Books',
+          textPlural: this.$strings.LabelMissingBooks || 'Missing Books',
+          value: 'missing-books',
+          sublist: true
+        },
+        {
           text: this.$strings.LabelSeriesCompletion || 'Completion',
           textPlural: this.$strings.LabelSeriesCompletion || 'Completion',
           value: 'completion',
@@ -360,6 +366,9 @@ export default {
         } else if (parts[0] === 'completion') {
           const item = this.completion.find((c) => c.id == decoded || c.id == raw)
           if (item) filterValue = item.name
+        } else if (parts[0] === 'missing-books') {
+          const item = this.missingBooks.find((m) => m.id == decoded || m.id == raw)
+          if (item) filterValue = item.name
         } else {
           filterValue = decoded || raw
         }
@@ -435,6 +444,30 @@ export default {
         {
           id: 'has-upcoming',
           name: this.$strings.LabelSeriesHasUpcoming || 'Has Upcoming Releases'
+        }
+      ]
+    },
+    missingBooks() {
+      return [
+        {
+          id: 'missing-count',
+          name: this.$strings.LabelSortByMissingCount || 'By Missing Book Count'
+        },
+        {
+          id: 'title',
+          name: this.$strings.LabelSortByTitle || 'By Title / Alphabetical'
+        },
+        {
+          id: 'added-at',
+          name: this.$strings.LabelSortByDateAdded || 'By Date Added'
+        },
+        {
+          id: 'last-book-added',
+          name: this.$strings.LabelSortByLastBookAdded || 'By Last Book Added'
+        },
+        {
+          id: 'all',
+          name: this.$strings.LabelAllMissingBooks || 'All Series with Missing Books'
         }
       ]
     },
@@ -535,7 +568,8 @@ export default {
       ]
     },
     sublistItems() {
-      const sublistItems = (this[this.sublist] || []).map((item) => {
+      const list = this.sublist === 'missing-books' ? this.missingBooks : (this[this.sublist] || [])
+      const sublistItems = list.map((item) => {
         if (typeof item === 'string') {
           return {
             text: item,

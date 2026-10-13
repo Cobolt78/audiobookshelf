@@ -302,6 +302,7 @@ class LibraryController {
     let hasUpdatedDisableWatcher = false
     let hasUpdatedScanCron = false
     let hasUpdatedSeriesScraperCron = false
+    let hasUpdatedSeriesScraperQuickCron = false
     if (req.body.settings) {
       for (const key in req.body.settings) {
         if (!Object.keys(defaultLibrarySettings).includes(key)) {
@@ -318,7 +319,7 @@ class LibraryController {
             updatedSettings[key] = [...req.body.settings[key]]
             Logger.debug(`[LibraryController] Library "${req.library.name}" updating setting "${key}" to "${updatedSettings[key]}"`)
           }
-        } else if (key === 'autoScanCronExpression' || key === 'podcastSearchRegion' || key === 'seriesScraperCron' || key === 'seriesScraperRegion') {
+        } else if (key === 'autoScanCronExpression' || key === 'podcastSearchRegion' || key === 'seriesScraperCron' || key === 'seriesScraperQuickCron' || key === 'seriesScraperRegion') {
           if (req.body.settings[key] !== null && typeof req.body.settings[key] !== 'string') {
             Logger.error(`[LibraryController] Invalid request. Settings "${key}" must be a string`)
             return res.status(400).send(`Invalid request. Settings "${key}" must be a string`)
@@ -326,6 +327,7 @@ class LibraryController {
           if (req.body.settings[key] !== updatedSettings[key]) {
             if (key === 'autoScanCronExpression') hasUpdatedScanCron = true
             if (key === 'seriesScraperCron') hasUpdatedSeriesScraperCron = true
+            if (key === 'seriesScraperQuickCron') hasUpdatedSeriesScraperQuickCron = true
 
             hasUpdates = true
             updatedSettings[key] = req.body.settings[key]
@@ -344,7 +346,7 @@ class LibraryController {
             updatedSettings[key] = req.body.settings[key] === null ? null : Number(req.body.settings[key])
             Logger.debug(`[LibraryController] Library "${req.library.name}" updating setting "${key}" to "${updatedSettings[key]}"`)
           }
-        } else if (key === 'markAsFinishedTimeRemaining') {
+        } else if (key === 'markAsFinishedTimeRemaining' || key === 'seriesScraperIntervalDays') {
           if (req.body.settings[key] !== null && isNaN(req.body.settings[key])) {
             Logger.error(`[LibraryController] Invalid request. Setting "${key}" must be a number`)
             return res.status(400).send(`Invalid request. Setting "${key}" must be a number`)
@@ -354,6 +356,7 @@ class LibraryController {
           }
           if (req.body.settings[key] !== updatedSettings[key]) {
             hasUpdates = true
+            if (key === 'seriesScraperIntervalDays') hasUpdatedSeriesScraperCron = true
             updatedSettings[key] = req.body.settings[key] === null ? null : Number(req.body.settings[key])
             Logger.debug(`[LibraryController] Library "${req.library.name}" updating setting "${key}" to "${updatedSettings[key]}"`)
           }
@@ -497,8 +500,8 @@ class LibraryController {
       this.cronManager.updateLibraryScanCron(req.library)
     }
 
-    if (hasUpdatedSeriesScraperCron) {
-      Logger.debug(`[LibraryController] Updated library "${req.library.name}" series provider cron`)
+    if (hasUpdatedSeriesScraperCron || hasUpdatedSeriesScraperQuickCron) {
+      Logger.debug(`[LibraryController] Updated library "${req.library.name}" series provider cron(s)`)
       // Update series provider cron
       this.cronManager.updateSeriesProviderCron(req.library)
     }
@@ -1534,6 +1537,12 @@ class LibraryController {
     }
 
     // Trigger asynchronously in background
+    const seriesId = req.body?.seriesId || req.query?.seriesId
+    if (seriesId) {
+      manager.scanSingleSeries(req.library.id, seriesId)
+      return res.json({ success: true, seriesId, message: 'Audible series check started' })
+    }
+
     const quick = req.body?.quick === true || req.query?.quick === 'true' || req.query?.quick === '1'
     manager.scanLibrary(req.library.id, { quick })
     return res.json({ success: true, quick, message: quick ? 'Audible series quick scan started' : 'Audible series full scan started' })
