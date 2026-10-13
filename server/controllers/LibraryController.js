@@ -1534,8 +1534,9 @@ class LibraryController {
     }
 
     // Trigger asynchronously in background
-    manager.scanLibrary(req.library.id)
-    return res.json({ success: true, message: 'Series provider scan started' })
+    const quick = req.body?.quick === true || req.query?.quick === 'true' || req.query?.quick === '1'
+    manager.scanLibrary(req.library.id, { quick })
+    return res.json({ success: true, quick, message: quick ? 'Audible series quick scan started' : 'Audible series full scan started' })
   }
 
   /**

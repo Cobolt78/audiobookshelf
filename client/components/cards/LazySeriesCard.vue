@@ -6,8 +6,16 @@
         <covers-group-cover v-if="series" ref="cover" :id="seriesId" :name="displayTitle" :book-items="books" :width="cardWidth" :height="coverHeight" :book-cover-aspect-ratio="bookCoverAspectRatio" />
       </div>
 
-      <div cy-id="seriesLengthMarker" class="absolute rounded-lg bg-black/90 box-shadow-md z-20" :style="{ top: 0.375 + 'em', right: 0.375 + 'em', padding: `0.1em 0.25em` }" style="background-color: #cd9d49dd">
-        <p :style="{ fontSize: 0.8 + 'em' }" role="status" :aria-label="$strings.LabelNumberOfBooks">{{ books.length }}</p>
+      <div
+        cy-id="seriesLengthMarker"
+        class="absolute rounded-lg box-shadow-md z-20 flex items-center px-1.5 py-0.5"
+        :style="{ top: 0.375 + 'em', right: 0.375 + 'em' }"
+        :class="isSeriesFinished ? 'bg-success/90' : (seriesBooksFinished.length > 0 ? 'bg-amber-600/90' : 'bg-black/75')"
+      >
+        <span v-if="isSeriesFinished" class="material-symbols text-xs mr-1 text-white">check_circle</span>
+        <p :style="{ fontSize: 0.75 + 'em' }" class="text-white font-medium" role="status" :aria-label="$strings.LabelNumberOfBooks">
+          {{ seriesBooksFinished.length }}/{{ books.length }} read
+        </p>
       </div>
 
       <!-- Missing books badge -->

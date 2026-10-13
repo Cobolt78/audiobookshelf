@@ -53,9 +53,10 @@ class SeriesProviderManager {
   /**
    * Scan series in library against external metadata provider (Audible)
    * @param {string} libraryId
+   * @param {{ quick?: boolean }} [options]
    * @returns {Promise<{ success: boolean, summary?: ScanSummary, message?: string, error?: string }>}
    */
-  async scanLibrary(libraryId) {
+  async scanLibrary(libraryId, { quick = false } = {}) {
     if (this.activeScans.has(libraryId)) {
       Logger.warn(`[SeriesProvider] Scan already running for library ${libraryId}`)
       return { success: false, message: 'Scan already in progress' }
@@ -77,10 +78,11 @@ class SeriesProviderManager {
       total: 0,
       seriesName: '',
       startedAt: Date.now(),
-      cancelled: false
+      cancelled: false,
+      quick: Boolean(quick)
     }
     this.activeScans.set(libraryId, scanState)
-    SocketAuthority.emitter('series_provider_scan_started', { libraryId })
+    SocketAuthority.emitter('series_provider_scan_started', { libraryId, quick: Boolean(quick) })
 
     let seriesChecked = 0
     let upcomingFound = 0
@@ -94,20 +96,67 @@ class SeriesProviderManager {
         include: [
           {
             model: Database.bookModel,
-            attributes: ['id', 'title', 'asin'],
+            attributes: ['id', 'title', 'asin', 'updatedAt', 'createdAt'],
             through: { attributes: ['sequence'] }
           }
         ],
         order: [['updatedAt', 'DESC']]
       })
 
-      scanState.total = allSeries.length
-      Logger.info(`[SeriesProvider] Starting scan of ${allSeries.length} series for library "${library.name}"`)
+      let targetSeries = allSeries
+      if (quick) {
+        const lastScanTime = library.settings?.seriesScraperLastScan?.scannedAt || 0
+        const existingEntries = await Database.seriesProviderEntryModel.findAll({
+          where: { libraryId },
+          attributes: ['seriesId'],
+          group: ['seriesId']
+        })
+        const scannedSeriesIdSet = new Set(existingEntries.map((e) => e.seriesId))
+
+        targetSeries = allSeries.filter((series) => {
+          if (!scannedSeriesIdSet.has(series.id)) return true
+          const seriesUpdated = new Date(series.updatedAt).getTime()
+          if (seriesUpdated > lastScanTime) return true
+          if (series.books?.some((b) => {
+            const bookAdded = new Date(b.createdAt).getTime()
+            const bookUpdated = new Date(b.updatedAt).getTime()
+            return bookAdded > lastScanTime || bookUpdated > lastScanTime
+          })) return true
+          return false
+        })
+
+        Logger.info(`[SeriesProvider] Quick scan: ${targetSeries.length} of ${allSeries.length} series require scanning for library "${library.name}"`)
+
+        if (targetSeries.length === 0) {
+          const scanSummary = {
+            scannedAt: Date.now(),
+            status: 'completed',
+            seriesChecked: 0,
+            upcomingFound: 0,
+            missingFound: 0,
+            skippedCount: 0,
+            quick: true,
+            errorMessage: null
+          }
+          const updatedSettings = {
+            ...(library.settings || {}),
+            seriesScraperLastScan: scanSummary
+          }
+          await library.update({ settings: updatedSettings })
+          this.activeScans.delete(libraryId)
+          SocketAuthority.emitter('series_provider_scan_completed', { libraryId, scanSummary })
+          Logger.info(`[SeriesProvider] Quick scan complete: all ${allSeries.length} series already up to date for library "${library.name}"`)
+          return { success: true, summary: scanSummary }
+        }
+      }
+
+      scanState.total = targetSeries.length
+      Logger.info(`[SeriesProvider] Starting ${quick ? 'quick ' : ''}scan of ${targetSeries.length} series for library "${library.name}"`)
 
       const region = library.settings?.seriesScraperRegion || 'us'
 
       // 2. Iterate each series and query Audible provider
-      for (const series of allSeries) {
+      for (const series of targetSeries) {
         if (scanState.cancelled) {
           Logger.info(`[SeriesProvider] Scan cancelled by user for library ${libraryId}`)
           break
@@ -120,8 +169,9 @@ class SeriesProviderManager {
         SocketAuthority.emitter('series_provider_scan_progress', {
           libraryId,
           current: seriesChecked,
-          total: allSeries.length,
-          seriesName: series.name
+          total: targetSeries.length,
+          seriesName: series.name,
+          quick: Boolean(quick)
         })
 
         const ownedBooks = (series.books || []).map((b) => ({
@@ -207,6 +257,7 @@ class SeriesProviderManager {
         upcomingFound,
         missingFound,
         skippedCount,
+        quick: Boolean(quick),
         errorMessage: null
       }
 

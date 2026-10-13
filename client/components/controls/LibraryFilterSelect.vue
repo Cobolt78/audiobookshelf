@@ -412,6 +412,10 @@ export default {
           name: this.$strings.LabelNotStarted
         },
         {
+          id: 'continue-series',
+          name: this.$strings.LabelContinueSeries || 'Continue Series'
+        },
+        {
           id: 'not-finished',
           name: this.$strings.LabelNotFinished
         }

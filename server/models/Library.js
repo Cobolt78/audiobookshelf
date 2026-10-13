@@ -80,7 +80,7 @@ class Library extends Model {
         metadataPrecedence: this.defaultMetadataPrecedence,
         markAsFinishedPercentComplete: null,
         markAsFinishedTimeRemaining: 10,
-        seriesScraperCron: null,
+        seriesScraperCron: '0 3 * * 1',
         seriesScraperRegion: 'us',
         seriesScraperLastScan: null
       }

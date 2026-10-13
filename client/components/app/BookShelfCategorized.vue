@@ -24,7 +24,7 @@
     <!-- Regular bookshelf view -->
     <div v-else class="w-full">
       <template v-for="(shelf, index) in supportedShelves">
-        <app-book-shelf-row :key="index" :index="index" :shelf="shelf" :size-multiplier="sizeMultiplier" :book-cover-width="bookCoverWidth" :book-cover-aspect-ratio="coverAspectRatio" :continue-listening-shelf="shelf.id === 'continue-listening' || shelf.id === 'continue-reading'" @selectEntity="(payload) => selectEntity(payload, index)" />
+        <app-book-shelf-row :key="index" :index="index" :shelf="shelf" :size-multiplier="sizeMultiplier" :book-cover-width="bookCoverWidth" :book-cover-aspect-ratio="coverAspectRatio" :continue-listening-shelf="shelf.id === 'continue-listening' || shelf.id === 'continue-reading'" @selectEntity="(payload) => selectEntity(payload, index)" @refreshDiscover="refreshDiscoverShelf" />
       </template>
     </div>
   </div>
@@ -194,6 +194,22 @@ export default {
         totalEntityCount += shelf.entities.length
       }
       this.shelves = categories
+    },
+    async refreshDiscoverShelf() {
+      try {
+        const categories = await this.$axios.$get(`/api/libraries/${this.currentLibraryId}/personalized?include=rssfeed,numEpisodesIncomplete,share&refreshDiscover=1&_t=${Date.now()}`)
+        if (categories?.length) {
+          const newDiscover = categories.find((s) => s.id === 'discover')
+          const existingIndex = this.shelves.findIndex((s) => s.id === 'discover')
+          if (newDiscover && existingIndex >= 0) {
+            newDiscover.shelfStartIndex = this.shelves[existingIndex].shelfStartIndex
+            this.$set(this.shelves, existingIndex, newDiscover)
+            this.$toast.info('Discoveries refreshed!')
+          }
+        }
+      } catch (err) {
+        console.error('Failed to refresh discover shelf', err)
+      }
     },
     async setShelvesFromSearch() {
       const shelves = []

@@ -35,9 +35,22 @@
       </div>
     </div>
     <div class="relative">
-      <div class="relative text-center categoryPlacard transform z-30 top-0 left-4e md:left-8e w-44e rounded-md">
-        <div class="w-full h-full shinyBlack flex items-center justify-center rounded-xs border" :style="{ padding: `0em 0.5em` }">
-          <h2 :style="{ fontSize: 0.9 + 'em' }">{{ $strings[shelf.labelStringKey] }}</h2>
+      <div class="relative text-center categoryPlacard transform z-30 top-0 left-4e md:left-8e w-48e rounded-md">
+        <div
+          class="w-full h-full shinyBlack flex items-center justify-center rounded-xs border transition-colors"
+          :class="isClickableShelf ? 'cursor-pointer hover:border-warning/80 hover:bg-white/5 group' : ''"
+          :style="{ padding: `0em 0.5em` }"
+          @click="clickShelfHeader"
+        >
+          <h2 :style="{ fontSize: 0.9 + 'em' }" class="flex items-center select-none truncate">
+            <span>{{ $strings[shelf.labelStringKey] }}</span>
+            <span v-if="isClickableShelf && !isDiscoverShelf" class="material-symbols text-sm ml-1 text-gray-400 group-hover:text-warning group-hover:translate-x-0.5 transition-all">chevron_right</span>
+          </h2>
+          <ui-tooltip v-if="isDiscoverShelf" :text="$strings.ButtonRerollDiscover || 'Refresh Discoveries'" direction="top" class="ml-2">
+            <button type="button" class="text-gray-400 hover:text-white cursor-pointer flex items-center justify-center p-0.5 rounded-full hover:bg-white/10" @click.stop="clickRefreshDiscover">
+              <span class="material-symbols text-base" :class="{ 'animate-spin': isRefreshingDiscover }">refresh</span>
+            </button>
+          </ui-tooltip>
         </div>
       </div>
 
@@ -68,7 +81,8 @@ export default {
       canScrollLeft: false,
       isScrolling: false,
       scrollTimer: null,
-      updateTimer: null
+      updateTimer: null,
+      isRefreshingDiscover: false
     }
   },
   computed: {
@@ -84,9 +98,56 @@ export default {
     },
     isSelectionMode() {
       return this.$store.getters['globals/getIsBatchSelectingMediaItems']
+    },
+    isClickableShelf() {
+      const id = this.shelf?.id
+      return [
+        'continue-listening',
+        'continue-reading',
+        'listen-again',
+        'read-again',
+        'recently-added',
+        'recent-episodes',
+        'recent-series',
+        'upcoming-series',
+        'newest-authors',
+        'continue-series',
+        'discover'
+      ].includes(id)
+    },
+    isDiscoverShelf() {
+      return this.shelf?.id === 'discover'
     }
   },
   methods: {
+    clickShelfHeader() {
+      if (!this.currentLibraryId || !this.isClickableShelf) return
+      const shelfId = this.shelf.id
+      if (shelfId === 'continue-listening' || shelfId === 'continue-reading') {
+        this.$router.push(`/library/${this.currentLibraryId}/bookshelf?filter=progress.in-progress`)
+      } else if (shelfId === 'listen-again' || shelfId === 'read-again') {
+        this.$router.push(`/library/${this.currentLibraryId}/bookshelf?filter=progress.finished`)
+      } else if (shelfId === 'recently-added' || shelfId === 'recent-episodes') {
+        this.$router.push(`/library/${this.currentLibraryId}/bookshelf?sort=addedAt&desc=1`)
+      } else if (shelfId === 'recent-series') {
+        this.$router.push(`/library/${this.currentLibraryId}/bookshelf/series?sort=addedAt&desc=1`)
+      } else if (shelfId === 'upcoming-series') {
+        this.$router.push(`/library/${this.currentLibraryId}/bookshelf/series?filter=completion.has-upcoming`)
+      } else if (shelfId === 'newest-authors') {
+        this.$router.push(`/library/${this.currentLibraryId}/bookshelf/authors?sort=addedAt&desc=1`)
+      } else if (shelfId === 'continue-series') {
+        this.$router.push(`/library/${this.currentLibraryId}/bookshelf?filter=progress.continue-series`)
+      } else if (shelfId === 'discover') {
+        this.clickRefreshDiscover()
+      }
+    },
+    clickRefreshDiscover() {
+      this.isRefreshingDiscover = true
+      this.$emit('refreshDiscover')
+      setTimeout(() => {
+        this.isRefreshingDiscover = false
+      }, 1000)
+    },
     clearSelectedEntities() {
       this.updateSelectionMode(false)
     },

@@ -83,9 +83,14 @@ export default {
           value: 'match-books'
         })
         items.push({
-          text: this.$strings.ButtonAudibleScan || 'Audible Scan',
-          action: 'audible-scan',
-          value: 'audible-scan'
+          text: this.$strings.ButtonAudibleQuickScan || 'Audible Quick Scan',
+          action: 'audible-quick-scan',
+          value: 'audible-quick-scan'
+        })
+        items.push({
+          text: this.$strings.ButtonAudibleFullScan || 'Audible Full Scan',
+          action: 'audible-full-scan',
+          value: 'audible-full-scan'
         })
       }
       items.push({
@@ -110,16 +115,18 @@ export default {
         this.scan(true)
       } else if (action === 'match-books') {
         this.matchAll()
-      } else if (action === 'audible-scan') {
-        this.scanAudible()
+      } else if (action === 'audible-quick-scan') {
+        this.scanAudible(true)
+      } else if (action === 'audible-full-scan') {
+        this.scanAudible(false)
       } else if (action === 'delete') {
         this.deleteClick()
       }
     },
-    async scanAudible() {
+    async scanAudible(quick = false) {
       try {
-        await this.$axios.$post(`/api/libraries/${this.library.id}/series-provider/scan`)
-        this.$toast.info(this.$strings.ToastAudibleScanStarted || 'Audible series scan started')
+        await this.$axios.$post(`/api/libraries/${this.library.id}/series-provider/scan`, { quick })
+        this.$toast.info(quick ? (this.$strings.ToastAudibleQuickScanStarted || 'Audible series quick scan started') : (this.$strings.ToastAudibleScanStarted || 'Audible series full scan started'))
       } catch (err) {
         console.error('Failed to start Audible scan', err)
         this.$toast.error(err.response?.data?.error || this.$strings.ToastAudibleScanFailed || 'Failed to start Audible scan')

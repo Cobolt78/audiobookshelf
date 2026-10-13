@@ -83,10 +83,19 @@
           </div>
           <div v-else class="flex items-center ml-2 sm:ml-4">
             <ui-tooltip :text="lastAudibleScanTooltip" direction="bottom">
-              <ui-btn small color="bg-primary" class="h-7.5 text-xs flex items-center" :loading="startingAudibleScan" @click="startAudibleScan">
-                <span class="material-symbols text-sm mr-1">bolt</span>
-                {{ $strings.ButtonAudibleScan || 'Audible Scan' }}
-              </ui-btn>
+              <div class="flex items-center rounded-sm overflow-hidden">
+                <ui-btn small color="bg-primary" class="h-7.5 text-xs flex items-center rounded-r-none border-r border-white/20" :loading="startingAudibleScan" @click="startAudibleScan(true)">
+                  <span class="material-symbols text-sm mr-1">bolt</span>
+                  {{ $strings.ButtonAudibleQuickScan || 'Quick Scan' }}
+                </ui-btn>
+                <ui-context-menu-dropdown :items="audibleScanMenuItems" :menu-width="240" class="h-7.5 w-7 bg-primary flex items-center justify-center cursor-pointer hover:bg-primary/80" @action="audibleScanMenuAction">
+                  <template #default="{ clickShowMenu }">
+                    <button type="button" class="h-full w-full flex items-center justify-center text-white" aria-label="Audible Scan Options" @click.stop.prevent="clickShowMenu">
+                      <span class="material-symbols text-base">arrow_drop_down</span>
+                    </button>
+                  </template>
+                </ui-context-menu-dropdown>
+              </div>
             </ui-tooltip>
           </div>
         </template>
@@ -240,7 +249,20 @@ export default {
       const upcoming = summary.upcomingFound ?? 0
       const missing = summary.missingFound ?? 0
       const checked = summary.seriesChecked ?? 0
-      return `Last Audible scan: ${timeStr} • ${checked} series checked (${upcoming} upcoming, ${missing} missing). Click to scan again.`
+      const mode = summary.quick ? ' (Quick Scan)' : ' (Full Scan)'
+      return `Last Audible scan: ${timeStr}${mode} • ${checked} series checked (${upcoming} upcoming, ${missing} missing). Click for Quick Scan or use arrow for options.`
+    },
+    audibleScanMenuItems() {
+      return [
+        {
+          text: '⚡ ' + (this.$strings.ButtonAudibleQuickScan || 'Audible Quick Scan') + ' (New & Updated)',
+          action: 'quick-scan'
+        },
+        {
+          text: '🔄 ' + (this.$strings.ButtonAudibleFullScan || 'Audible Full Scan') + ' (All Series)',
+          action: 'full-scan'
+        }
+      ]
     },
     authorSortItems() {
       return [
@@ -690,15 +712,22 @@ export default {
         console.error('Failed to fetch series-provider status', err)
       }
     },
-    async startAudibleScan() {
+    audibleScanMenuAction({ action }) {
+      if (action === 'quick-scan') {
+        this.startAudibleScan(true)
+      } else if (action === 'full-scan') {
+        this.startAudibleScan(false)
+      }
+    },
+    async startAudibleScan(quick = true) {
       if (this.startingAudibleScan || this.isAudibleScanning) return
       this.startingAudibleScan = true
       try {
-        const res = await this.$axios.$post(`/api/libraries/${this.currentLibraryId}/series-provider/scan`)
+        const res = await this.$axios.$post(`/api/libraries/${this.currentLibraryId}/series-provider/scan`, { quick })
         if (res?.success) {
           this.isAudibleScanning = true
-          this.audibleScanProgressText = 'Starting Audible scan...'
-          this.$toast.info(this.$strings.ToastAudibleScanStarted || 'Audible series scan started')
+          this.audibleScanProgressText = quick ? 'Starting Quick scan...' : 'Starting Full scan...'
+          this.$toast.info(quick ? (this.$strings.ToastAudibleQuickScanStarted || 'Audible series quick scan started') : (this.$strings.ToastAudibleScanStarted || 'Audible series full scan started'))
         }
       } catch (err) {
         console.error('Failed to start Audible scan', err)

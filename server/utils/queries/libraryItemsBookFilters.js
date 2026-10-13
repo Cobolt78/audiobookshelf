@@ -397,6 +397,11 @@ module.exports = {
    * @returns {{ libraryItems: import('../../models/LibraryItem')[], count: number }}
    */
   async getFilteredLibraryItems(libraryId, user, filterGroup, filterValue, sortBy, sortDesc, collapseseries, include, limit, offset, isHomePage = false) {
+    if (filterGroup === 'progress' && filterValue === 'continue-series') {
+      const library = await Database.libraryModel.findByPk(libraryId)
+      return this.getContinueSeriesLibraryItems(library, user, include, limit, offset)
+    }
+
     // TODO: Handle collapse sub-series
     if (filterGroup === 'series' && collapseseries) {
       collapseseries = false

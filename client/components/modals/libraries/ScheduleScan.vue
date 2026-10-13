@@ -8,6 +8,18 @@
     <div v-else>
       <p class="text-yellow-400 text-base">{{ $strings.MessageScheduleLibraryScanNote }}</p>
     </div>
+
+    <!-- Audible Series Sync Schedule for book libraries -->
+    <div v-if="isBookLibrary" class="mt-8 pt-6 border-t border-white/10">
+      <div class="flex items-center justify-between mb-4">
+        <p class="text-base md:text-xl font-semibold">{{ $strings.HeaderScheduleAudibleScan || 'Schedule Audible Series Sync' }}</p>
+        <ui-checkbox v-model="enableAudibleScan" @input="toggleEnableAudibleScan" :label="$strings.LabelEnable" medium checkbox-bg="bg" label-class="pl-2 text-base md:text-lg" />
+      </div>
+      <widgets-cron-expression-builder ref="audibleCronExpressionBuilder" v-if="enableAudibleScan" v-model="audibleCronExpression" @input="updatedAudibleCron" />
+      <div v-else>
+        <p class="text-yellow-400 text-base">{{ $strings.MessageScheduleAudibleScanNote || 'Scheduled Audible series sync is disabled for this library. Series will only be scanned manually.' }}</p>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -23,15 +35,22 @@ export default {
   data() {
     return {
       cronExpression: null,
-      enableAutoScan: false
+      enableAutoScan: false,
+      audibleCronExpression: null,
+      enableAudibleScan: false
     }
   },
-  computed: {},
+  computed: {
+    isBookLibrary() {
+      return this.library?.mediaType === 'book'
+    }
+  },
   methods: {
     checkBlurExpressionInput() {
       // returns true if advanced cron input is focused
-      if (!this.$refs.cronExpressionBuilder) return false
-      return this.$refs.cronExpressionBuilder.checkBlurExpressionInput()
+      if (this.$refs.cronExpressionBuilder?.checkBlurExpressionInput()) return true
+      if (this.$refs.audibleCronExpressionBuilder?.checkBlurExpressionInput()) return true
+      return false
     },
     toggleEnableAutoScan(v) {
       if (!v) this.updatedCron(null)
@@ -47,9 +66,25 @@ export default {
         }
       })
     },
+    toggleEnableAudibleScan(v) {
+      if (!v) this.updatedAudibleCron(null)
+      else if (!this.audibleCronExpression) {
+        this.audibleCronExpression = '0 3 * * 1'
+        this.updatedAudibleCron(this.audibleCronExpression)
+      }
+    },
+    updatedAudibleCron(expression) {
+      this.$emit('update', {
+        settings: {
+          seriesScraperCron: expression
+        }
+      })
+    },
     init() {
       this.cronExpression = this.library.settings.autoScanCronExpression
       this.enableAutoScan = !!this.cronExpression
+      this.audibleCronExpression = this.library.settings.seriesScraperCron || (this.isBookLibrary ? '0 3 * * 1' : null)
+      this.enableAudibleScan = !!this.audibleCronExpression
     }
   },
   mounted() {
