@@ -72,6 +72,11 @@ class Database {
     return this.models.series
   }
 
+  /** @type {typeof import('./models/SeriesProviderEntry')} */
+  get seriesProviderEntryModel() {
+    return this.models.seriesProviderEntry
+  }
+
   /** @type {typeof import('./models/Book')} */
   get bookModel() {
     return this.models.book
@@ -346,6 +351,7 @@ class Database {
     require('./models/LibraryItem').init(this.sequelize)
     require('./models/MediaProgress').init(this.sequelize)
     require('./models/Series').init(this.sequelize)
+    require('./models/SeriesProviderEntry').init(this.sequelize)
     require('./models/BookSeries').init(this.sequelize)
     require('./models/Author').init(this.sequelize)
     require('./models/BookAuthor').init(this.sequelize)
