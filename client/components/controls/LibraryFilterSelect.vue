@@ -19,7 +19,7 @@
     <div v-show="showMenu" class="absolute z-10 mt-1 w-full bg-bg border border-black-200 shadow-lg rounded-md py-1 ring-1 ring-black/5 overflow-auto focus:outline-hidden text-sm libraryFilterMenu">
       <ul v-show="!sublist" class="h-full w-full" role="menu">
         <template v-for="item in selectItems">
-          <li :key="item.value" class="select-none relative py-2 pr-9 cursor-pointer hover:bg-white/5" :class="item.value === selected ? 'bg-white/5 text-yellow-400' : 'text-gray-200 hover:text-white'" role="menuitem" :aria-haspopup="item.sublist ? '' : 'menu'" @click="clickedOption(item)">
+          <li :key="item.value" class="select-none relative py-2 pr-9 cursor-pointer hover:bg-white/5" :class="isItemActive(item) ? 'bg-white/5 text-yellow-400' : 'text-gray-200 hover:text-white'" role="menuitem" :aria-haspopup="item.sublist ? '' : 'menu'" @click="clickedOption(item)">
             <div class="flex items-center justify-between">
               <span class="font-normal ml-3 block truncate text-sm">{{ item.text }}</span>
             </div>
@@ -27,7 +27,7 @@
               <span class="material-symbols text-2xl" :aria-label="$strings.LabelMore">arrow_right</span>
             </div>
             <!-- selected checkmark icon -->
-            <div v-if="item.value === selected" class="absolute inset-y-0 right-2 h-full flex items-center pointer-events-none">
+            <div v-if="isItemActive(item)" class="absolute inset-y-0 right-2 h-full flex items-center pointer-events-none">
               <span class="material-symbols text-base text-yellow-400">check</span>
             </div>
           </li>
@@ -48,12 +48,12 @@
           </div>
         </li>
         <template v-for="item in sublistItems">
-          <li :key="item.value" class="select-none relative px-2 cursor-pointer hover:bg-white/5" :class="`${sublist}.${item.value}` === selected ? 'bg-white/5 text-yellow-400' : 'text-gray-200 hover:text-white'" role="menuitem" @click="clickedSublistOption(item.value)">
+          <li :key="item.value" class="select-none relative px-2 cursor-pointer hover:bg-white/5" :class="isSubitemSelected(item) ? 'bg-white/5 text-yellow-400' : 'text-gray-200 hover:text-white'" role="menuitem" @click="clickedSublistOption(item.value)">
             <div class="flex items-center">
               <span class="font-normal truncate py-2 text-xs">{{ item.text }}</span>
             </div>
             <!-- selected checkmark icon -->
-            <div v-if="`${sublist}.${item.value}` === selected" class="absolute inset-y-0 right-2 h-full flex items-center pointer-events-none">
+            <div v-if="isSubitemSelected(item)" class="absolute inset-y-0 right-2 h-full flex items-center pointer-events-none">
               <span class="material-symbols text-base text-yellow-400">check</span>
             </div>
           </li>
@@ -334,33 +334,34 @@ export default {
       let filterValue = null
       if (parts.length > 1) {
         const decoded = this.$decode(parts[1])
+        const raw = parts[1]
         if (parts[0] === 'authors') {
-          const author = this.authors.find((au) => au.id == decoded)
+          const author = this.authors.find((au) => au.id == decoded || au.id == raw)
           if (author) filterValue = author.name
         } else if (parts[0] === 'series') {
-          if (decoded === 'no-series') {
+          if (decoded === 'no-series' || raw === 'no-series') {
             filterValue = this.$strings.MessageNoSeries
           } else {
-            const series = this.series.find((se) => se.id == decoded)
+            const series = this.series.find((se) => se.id == decoded || se.id == raw)
             if (series) filterValue = series.name
           }
         } else if (parts[0] === 'progress') {
-          const item = this.progress.find((p) => p.id == decoded)
+          const item = this.progress.find((p) => p.id == decoded || p.id == raw)
           if (item) filterValue = item.name
         } else if (parts[0] === 'tracks') {
-          const item = this.tracks.find((t) => t.id == decoded)
+          const item = this.tracks.find((t) => t.id == decoded || t.id == raw)
           if (item) filterValue = item.name
         } else if (parts[0] === 'ebooks') {
-          const item = this.ebooks.find((e) => e.id == decoded)
+          const item = this.ebooks.find((e) => e.id == decoded || e.id == raw)
           if (item) filterValue = item.name
         } else if (parts[0] === 'missing') {
-          const item = this.missing.find((m) => m.id == decoded)
+          const item = this.missing.find((m) => m.id == decoded || m.id == raw)
           if (item) filterValue = item.name
         } else if (parts[0] === 'completion') {
-          const item = this.completion.find((c) => c.id == decoded)
+          const item = this.completion.find((c) => c.id == decoded || c.id == raw)
           if (item) filterValue = item.name
         } else {
-          filterValue = decoded
+          filterValue = decoded || raw
         }
       }
       if (filterName && filterValue) {
@@ -538,19 +539,22 @@ export default {
         if (typeof item === 'string') {
           return {
             text: item,
-            value: this.$encode(item)
+            value: this.$encode(item),
+            rawId: item
           }
         } else {
           return {
             text: item.name,
-            value: this.$encode(item.id)
+            value: this.$encode(item.id),
+            rawId: item.id
           }
         }
       })
       if (this.sublist === 'series') {
         sublistItems.unshift({
           text: this.$strings.MessageNoSeries,
-          value: this.$encode('no-series')
+          value: this.$encode('no-series'),
+          rawId: 'no-series'
         })
       }
       return sublistItems
@@ -560,6 +564,24 @@ export default {
     }
   },
   methods: {
+    isItemActive(item) {
+      if (item.value === this.selected) return true
+      if (this.selectedItemSublist && item.value === this.selectedItemSublist) return true
+      return false
+    },
+    isSubitemSelected(item) {
+      if (!this.selected) return false
+      const parts = this.selected.split('.')
+      if (parts.length < 2 || parts[0] !== this.sublist) return false
+      const decodedVal = this.$decode(parts[1])
+      return (
+        decodedVal === item.rawId ||
+        decodedVal === item.value ||
+        parts[1] === item.rawId ||
+        parts[1] === item.value ||
+        decodeURIComponent(parts[1]) === decodeURIComponent(item.value)
+      )
+    },
     clearSelected() {
       this.selected = 'all'
       this.showMenu = false

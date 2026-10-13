@@ -169,7 +169,18 @@ Vue.prototype.$xmlToJson = xmlToJson
 
 const encode = (text) => encodeURIComponent(Buffer.from(text).toString('base64'))
 Vue.prototype.$encode = encode
-const decode = (text) => Buffer.from(decodeURIComponent(text), 'base64').toString()
+const decode = (text) => {
+  if (!text) return ''
+  try {
+    const decoded = Buffer.from(decodeURIComponent(text), 'base64').toString()
+    if (encodeURIComponent(Buffer.from(decoded).toString('base64')) === encodeURIComponent(text) || Buffer.from(decoded).toString('base64') === decodeURIComponent(text)) {
+      return decoded
+    }
+    return decodeURIComponent(text)
+  } catch (error) {
+    return text
+  }
+}
 Vue.prototype.$decode = decode
 
 export { encode, decode }

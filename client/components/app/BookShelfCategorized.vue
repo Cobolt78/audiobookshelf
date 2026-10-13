@@ -239,19 +239,19 @@ export default {
       if (!this.currentLibraryId || !this.isShelfClickable(shelf)) return
       const shelfId = shelf.id
       if (shelfId === 'continue-listening' || shelfId === 'continue-reading') {
-        this.$router.push(`/library/${this.currentLibraryId}/bookshelf?filter=progress.in-progress`).catch(() => {})
+        this.$router.push(`/library/${this.currentLibraryId}/bookshelf?filter=progress.${this.$encode('in-progress')}&sort=progress&desc=1`).catch(() => {})
       } else if (shelfId === 'listen-again' || shelfId === 'read-again') {
-        this.$router.push(`/library/${this.currentLibraryId}/bookshelf?filter=progress.finished`).catch(() => {})
+        this.$router.push(`/library/${this.currentLibraryId}/bookshelf?filter=progress.${this.$encode('finished')}&sort=progress.finishedAt&desc=1`).catch(() => {})
       } else if (shelfId === 'recently-added' || shelfId === 'recent-episodes') {
-        this.$router.push(`/library/${this.currentLibraryId}/bookshelf?sort=addedAt&desc=1`).catch(() => {})
+        this.$router.push(`/library/${this.currentLibraryId}/bookshelf?filter=all&sort=addedAt&desc=1`).catch(() => {})
       } else if (shelfId === 'recent-series') {
-        this.$router.push(`/library/${this.currentLibraryId}/bookshelf/series?sort=addedAt&desc=1`).catch(() => {})
+        this.$router.push(`/library/${this.currentLibraryId}/bookshelf/series?filter=all&sort=addedAt&desc=1`).catch(() => {})
       } else if (shelfId === 'upcoming-series') {
-        this.$router.push(`/library/${this.currentLibraryId}/bookshelf/series?filter=completion.has-upcoming`).catch(() => {})
+        this.$router.push(`/library/${this.currentLibraryId}/bookshelf/series?filter=completion.${this.$encode('has-upcoming')}`).catch(() => {})
       } else if (shelfId === 'newest-authors') {
         this.$router.push(`/library/${this.currentLibraryId}/bookshelf/authors?sort=addedAt&desc=1`).catch(() => {})
       } else if (shelfId === 'continue-series') {
-        this.$router.push(`/library/${this.currentLibraryId}/bookshelf?filter=progress.continue-series`).catch(() => {})
+        this.$router.push(`/library/${this.currentLibraryId}/bookshelf?filter=progress.${this.$encode('continue-series')}`).catch(() => {})
       } else if (shelfId === 'newest-episodes') {
         this.$router.push(`/library/${this.currentLibraryId}/podcast/latest`).catch(() => {})
       } else if (shelfId === 'discover') {

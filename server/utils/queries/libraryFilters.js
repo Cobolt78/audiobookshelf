@@ -11,11 +11,15 @@ const naturalSort = createNewSortInstance({
 
 module.exports = {
   decode(text) {
+    if (!text) return text
     try {
-      return Buffer.from(decodeURIComponent(text), 'base64').toString()
+      const decoded = Buffer.from(decodeURIComponent(text), 'base64').toString()
+      if (encodeURIComponent(Buffer.from(decoded).toString('base64')) === encodeURIComponent(text) || Buffer.from(decoded).toString('base64') === decodeURIComponent(text)) {
+        return decoded
+      }
+      return text
     } catch (error) {
-      Logger.warn(`[libraryFilters] Failed to decode filter value "${text}": ${error.message}`)
-      return null
+      return text
     }
   },
 

@@ -43,7 +43,7 @@
           @click="clickShelfHeader"
         >
           <h2 :style="{ fontSize: 0.9 + 'em' }" class="flex items-center select-none truncate">
-            <span>{{ $strings[shelf.labelStringKey] }}</span>
+            <span>{{ $strings[shelf.labelStringKey] || shelf.label }}</span>
             <span v-if="isClickableShelf && !isDiscoverShelf" class="material-symbols text-sm ml-1 text-gray-400 group-hover:text-warning group-hover:translate-x-0.5 transition-all">chevron_right</span>
           </h2>
           <ui-tooltip v-if="isDiscoverShelf" :text="$strings.ButtonRerollDiscover || 'Refresh Discoveries'" direction="top" class="ml-2">
@@ -125,19 +125,19 @@ export default {
       if (!this.currentLibraryId || !this.isClickableShelf) return
       const shelfId = this.shelf.id
       if (shelfId === 'continue-listening' || shelfId === 'continue-reading') {
-        this.$router.push(`/library/${this.currentLibraryId}/bookshelf?filter=progress.in-progress`).catch(() => {})
+        this.$router.push(`/library/${this.currentLibraryId}/bookshelf?filter=progress.${this.$encode('in-progress')}&sort=progress&desc=1`).catch(() => {})
       } else if (shelfId === 'listen-again' || shelfId === 'read-again') {
-        this.$router.push(`/library/${this.currentLibraryId}/bookshelf?filter=progress.finished`).catch(() => {})
+        this.$router.push(`/library/${this.currentLibraryId}/bookshelf?filter=progress.${this.$encode('finished')}&sort=progress.finishedAt&desc=1`).catch(() => {})
       } else if (shelfId === 'recently-added' || shelfId === 'recent-episodes') {
-        this.$router.push(`/library/${this.currentLibraryId}/bookshelf?sort=addedAt&desc=1`).catch(() => {})
+        this.$router.push(`/library/${this.currentLibraryId}/bookshelf?filter=all&sort=addedAt&desc=1`).catch(() => {})
       } else if (shelfId === 'recent-series') {
-        this.$router.push(`/library/${this.currentLibraryId}/bookshelf/series?sort=addedAt&desc=1`).catch(() => {})
+        this.$router.push(`/library/${this.currentLibraryId}/bookshelf/series?filter=all&sort=addedAt&desc=1`).catch(() => {})
       } else if (shelfId === 'upcoming-series') {
-        this.$router.push(`/library/${this.currentLibraryId}/bookshelf/series?filter=completion.has-upcoming`).catch(() => {})
+        this.$router.push(`/library/${this.currentLibraryId}/bookshelf/series?filter=completion.${this.$encode('has-upcoming')}`).catch(() => {})
       } else if (shelfId === 'newest-authors') {
         this.$router.push(`/library/${this.currentLibraryId}/bookshelf/authors?sort=addedAt&desc=1`).catch(() => {})
       } else if (shelfId === 'continue-series') {
-        this.$router.push(`/library/${this.currentLibraryId}/bookshelf?filter=progress.continue-series`).catch(() => {})
+        this.$router.push(`/library/${this.currentLibraryId}/bookshelf?filter=progress.${this.$encode('continue-series')}`).catch(() => {})
       } else if (shelfId === 'newest-episodes') {
         this.$router.push(`/library/${this.currentLibraryId}/podcast/latest`).catch(() => {})
       } else if (shelfId === 'discover') {
