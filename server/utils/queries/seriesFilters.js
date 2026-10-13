@@ -30,7 +30,7 @@ module.exports = {
     let filterValue = null
     let filterGroup = null
     if (filterBy) {
-      const searchGroups = ['genres', 'tags', 'authors', 'progress', 'narrators', 'publishers', 'languages']
+      const searchGroups = ['genres', 'tags', 'authors', 'progress', 'narrators', 'publishers', 'languages', 'completion']
       const group = searchGroups.find((_group) => filterBy.startsWith(_group + '.'))
       filterGroup = group || filterBy
       filterValue = group ? this.decode(filterBy.replace(`${group}.`, '')) : null
@@ -53,7 +53,7 @@ module.exports = {
 
     // Handle library setting to hide single book series
     // TODO: Merge with existing query
-    if (library.settings.hideSingleBookSeries) {
+    if (library.settings?.hideSingleBookSeries) {
       seriesWhere.push(
         Sequelize.where(Sequelize.literal(`(SELECT count(*) FROM books b, bookSeries bs WHERE bs.seriesId = series.id AND bs.bookId = b.id)`), {
           [Sequelize.Op.gt]: 1
@@ -91,6 +91,25 @@ module.exports = {
       } else if (filterValue === 'in-progress') {
         attrQuery = 'SELECT count(*) FROM books b, bookSeries bs LEFT OUTER JOIN mediaProgresses mp ON mp.mediaItemId = b.id AND mp.userId = :userId WHERE bs.seriesId = series.id AND bs.bookId = b.id AND (mp.currentTime > 0 OR mp.ebookProgress > 0) AND mp.isFinished = 0'
         userPermissionBookWhere.replacements.userId = user.id
+      }
+    } else if (filterGroup === 'completion') {
+      const rawVal = filterBy ? filterBy.replace('completion.', '') : ''
+      const val = (filterValue === 'has-missing' || rawVal === 'has-missing') ? 'has-missing'
+        : (filterValue === 'complete' || rawVal === 'complete') ? 'complete'
+        : (filterValue === 'has-upcoming' || rawVal === 'has-upcoming') ? 'has-upcoming'
+        : filterValue
+
+      if (val === 'has-missing') {
+        const missingQuery = "SELECT count(*) FROM seriesProviderEntries spe WHERE spe.seriesId = series.id AND spe.entryType = 'missing'"
+        seriesWhere.push(Sequelize.where(Sequelize.literal(`(${missingQuery})`), { [Sequelize.Op.gt]: 0 }))
+      } else if (val === 'complete') {
+        const missingQuery = "SELECT count(*) FROM seriesProviderEntries spe WHERE spe.seriesId = series.id AND spe.entryType = 'missing'"
+        const scannedQuery = "SELECT count(*) FROM seriesProviderEntries spe WHERE spe.seriesId = series.id"
+        seriesWhere.push(Sequelize.where(Sequelize.literal(`(${missingQuery})`), 0))
+        seriesWhere.push(Sequelize.where(Sequelize.literal(`(${scannedQuery})`), { [Sequelize.Op.gt]: 0 }))
+      } else if (val === 'has-upcoming') {
+        const upcomingQuery = "SELECT count(*) FROM seriesProviderEntries spe WHERE spe.seriesId = series.id AND spe.entryType = 'upcoming'"
+        seriesWhere.push(Sequelize.where(Sequelize.literal(`(${upcomingQuery})`), { [Sequelize.Op.gt]: 0 }))
       }
     }
 
@@ -146,6 +165,12 @@ module.exports = {
     } else if (sortBy === 'lastBookUpdated') {
       seriesAttributes.include.push([Sequelize.literal('(SELECT MAX(b.updatedAt) FROM books b, bookSeries bs WHERE bs.seriesId = series.id AND b.id = bs.bookId)'), 'mostRecentBookUpdated'])
       order.push(['mostRecentBookUpdated', dir])
+    } else if (sortBy === 'missingBooks') {
+      seriesAttributes.include.push([Sequelize.literal("(SELECT count(*) FROM seriesProviderEntries spe WHERE spe.seriesId = series.id AND spe.entryType = 'missing')"), 'missingBooksCount'])
+      order.push(['missingBooksCount', dir])
+    } else if (sortBy === 'upcomingDate') {
+      seriesAttributes.include.push([Sequelize.literal("(SELECT min(spe.releaseDate) FROM seriesProviderEntries spe WHERE spe.seriesId = series.id AND spe.entryType = 'upcoming')"), 'earliestUpcomingDate'])
+      order.push(['earliestUpcomingDate', dir])
     } else if (sortBy === 'random') {
       order.push(Database.sequelize.random())
     }
@@ -206,12 +231,13 @@ module.exports = {
         })
       })
       oldSeries.books = s.bookSeries.map((bs) => {
-        const libraryItem = bs.book.libraryItem
+        const libraryItem = bs.book?.libraryItem
+        if (!libraryItem) return null
         delete bs.book.libraryItem
         libraryItem.media = bs.book
         const oldLibraryItem = libraryItem.toOldJSONMinified()
         return oldLibraryItem
-      })
+      }).filter(Boolean)
       allOldSeries.push(oldSeries)
     }
 

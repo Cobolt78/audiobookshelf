@@ -19,6 +19,7 @@ const Scanner = require('../scanner/Scanner')
 const Database = require('../Database')
 const Watcher = require('../Watcher')
 const RssFeedManager = require('../managers/RssFeedManager')
+const SeriesProviderManager = require('../managers/SeriesProviderManager')
 
 const libraryFilters = require('../utils/queries/libraryFilters')
 const libraryItemsPodcastFilters = require('../utils/queries/libraryItemsPodcastFilters')
@@ -1507,6 +1508,125 @@ class LibraryController {
     }
 
     next()
+  }
+
+  /**
+   * POST /api/libraries/:id/series-provider/scan
+   * Trigger manual Audible scraper scan for series in library
+   *
+   * @param {LibraryControllerRequest} req
+   * @param {Response} res
+   */
+  async scanSeriesProvider(req, res) {
+    if (!req.user.canUpdate) {
+      Logger.warn(`[LibraryController] User "${req.user.username}" attempted to trigger series provider scan without permission`)
+      return res.sendStatus(403)
+    }
+
+    if (!req.library.isBook) {
+      return res.status(400).send('Only book libraries support series provider scanning')
+    }
+
+    const manager = this.seriesProviderManager || SeriesProviderManager
+    const status = manager.getScanStatus(req.library.id, req.library)
+    if (status.isScanning) {
+      return res.status(409).json({ success: false, message: 'Scan already in progress' })
+    }
+
+    // Trigger asynchronously in background
+    manager.scanLibrary(req.library.id)
+    return res.json({ success: true, message: 'Series provider scan started' })
+  }
+
+  /**
+   * POST /api/libraries/:id/series-provider/cancel
+   * Cancel running Audible scraper scan
+   *
+   * @param {LibraryControllerRequest} req
+   * @param {Response} res
+   */
+  async cancelSeriesProviderScan(req, res) {
+    if (!req.user.canUpdate) {
+      Logger.warn(`[LibraryController] User "${req.user.username}" attempted to cancel series provider scan without permission`)
+      return res.sendStatus(403)
+    }
+
+    const manager = this.seriesProviderManager || SeriesProviderManager
+    const cancelled = manager.cancelScan(req.library.id)
+    return res.json({ success: cancelled })
+  }
+
+  /**
+   * GET /api/libraries/:id/series-provider/status
+   * Get current scan status and last scan metadata
+   *
+   * @param {LibraryControllerRequest} req
+   * @param {Response} res
+   */
+  async getSeriesProviderStatus(req, res) {
+    const manager = this.seriesProviderManager || SeriesProviderManager
+    const status = manager.getScanStatus(req.library.id, req.library)
+    return res.json(status)
+  }
+
+  /**
+   * GET /api/libraries/:id/upcoming-releases
+   * Get library-wide upcoming releases sorted by release date
+   *
+   * @param {LibraryControllerRequest} req
+   * @param {Response} res
+   */
+  async getUpcomingReleases(req, res) {
+    const entries = await Database.seriesProviderEntryModel.findAll({
+      where: {
+        libraryId: req.library.id,
+        entryType: 'upcoming'
+      },
+      order: [
+        ['releaseDate', 'ASC'],
+        ['seriesName', 'ASC']
+      ]
+    })
+
+    const manager = this.seriesProviderManager || SeriesProviderManager
+    const scanStatus = manager.getScanStatus(req.library.id, req.library)
+
+    return res.json({
+      libraryId: req.library.id,
+      upcomingReleases: entries.map((e) => e.toJSON()),
+      total: entries.length,
+      scanStatus
+    })
+  }
+
+  /**
+   * GET /api/libraries/:id/missing-books
+   * Get library-wide missing books grouped or sorted
+   *
+   * @param {LibraryControllerRequest} req
+   * @param {Response} res
+   */
+  async getMissingBooks(req, res) {
+    const entries = await Database.seriesProviderEntryModel.findAll({
+      where: {
+        libraryId: req.library.id,
+        entryType: 'missing'
+      },
+      order: [
+        ['seriesName', 'ASC'],
+        ['releaseDate', 'ASC']
+      ]
+    })
+
+    const manager = this.seriesProviderManager || SeriesProviderManager
+    const scanStatus = manager.getScanStatus(req.library.id, req.library)
+
+    return res.json({
+      libraryId: req.library.id,
+      missingBooks: entries.map((e) => e.toJSON()),
+      total: entries.length,
+      scanStatus
+    })
   }
 }
 module.exports = new LibraryController()

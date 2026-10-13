@@ -55,6 +55,7 @@ class ApiRouter {
     /** @type {import('../managers/EmailManager')} */
     this.emailManager = Server.emailManager
     this.apiCacheManager = Server.apiCacheManager
+    this.seriesProviderManager = Server.seriesProviderManager
 
     this.router = express()
     this.router.disable('x-powered-by')
@@ -95,6 +96,11 @@ class ApiRouter {
     this.router.post('/libraries/:id/remove-metadata', LibraryController.middleware.bind(this), LibraryController.removeAllMetadataFiles.bind(this))
     this.router.get('/libraries/:id/podcast-titles', LibraryController.middleware.bind(this), LibraryController.getPodcastTitles.bind(this))
     this.router.get('/libraries/:id/download', LibraryController.middleware.bind(this), LibraryController.downloadMultiple.bind(this))
+    this.router.post('/libraries/:id/series-provider/scan', LibraryController.middleware.bind(this), LibraryController.scanSeriesProvider.bind(this))
+    this.router.post('/libraries/:id/series-provider/cancel', LibraryController.middleware.bind(this), LibraryController.cancelSeriesProviderScan.bind(this))
+    this.router.get('/libraries/:id/series-provider/status', LibraryController.middleware.bind(this), LibraryController.getSeriesProviderStatus.bind(this))
+    this.router.get('/libraries/:id/upcoming-releases', LibraryController.middleware.bind(this), LibraryController.getUpcomingReleases.bind(this))
+    this.router.get('/libraries/:id/missing-books', LibraryController.middleware.bind(this), LibraryController.getMissingBooks.bind(this))
 
     //
     // Item Routes
@@ -227,6 +233,7 @@ class ApiRouter {
     //
     this.router.get('/series/:id', SeriesController.middleware.bind(this), SeriesController.findOne.bind(this))
     this.router.patch('/series/:id', SeriesController.middleware.bind(this), SeriesController.update.bind(this))
+    this.router.get('/series/:id/provider-entries', SeriesController.middleware.bind(this), SeriesController.getProviderEntries.bind(this))
 
     //
     // Playback Session Routes

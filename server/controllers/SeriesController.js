@@ -87,6 +87,30 @@ class SeriesController {
   }
 
   /**
+   * GET /api/series/:id/provider-entries
+   * Get external provider entries (upcoming & missing) for this series
+   *
+   * @param {SeriesControllerRequest} req
+   * @param {Response} res
+   */
+  async getProviderEntries(req, res) {
+    const entries = await Database.seriesProviderEntryModel.findAll({
+      where: {
+        seriesId: req.series.id
+      },
+      order: [
+        ['entryType', 'ASC'],
+        ['releaseDate', 'ASC']
+      ]
+    })
+    return res.json({
+      seriesId: req.series.id,
+      seriesName: req.series.name,
+      entries: entries.map((e) => e.toJSON())
+    })
+  }
+
+  /**
    *
    * @param {RequestWithUser} req
    * @param {Response} res
