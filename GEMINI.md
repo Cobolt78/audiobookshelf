@@ -3,9 +3,9 @@
 ## Workflow & GitHub Integration Invariants
 
 1. **Automatic Git Tracking & Commits**:
-   - Every time code changes or fixes are implemented and verified, automatically stage and commit them to the local Git repository on branch `v2.37.1-custom`.
-   - Automatically push commits to GitHub: `git push origin v2.37.1-custom` (`https://github.com/Cobolt78/audiobookshelf.git`).
-   - Automatically update `CUSTOM_MODIFICATIONS.md` and regenerate `custom_changes.patch` using `git diff v2.37.1 > custom_changes.patch` so that documentation and patch files are always 100% in sync with zero drift.
+   - Every time code changes or fixes are implemented and verified, automatically stage and commit them to the local Git repository on branch `v2.37.2-custom`.
+   - Automatically push commits to GitHub: `git push origin v2.37.2-custom` (`https://github.com/Cobolt78/audiobookshelf.git`).
+   - Automatically update `CUSTOM_MODIFICATIONS.md` and regenerate `custom_changes.patch` using `git diff v2.37.2 > custom_changes.patch` so that documentation and patch files are always 100% in sync with zero drift.
 
 2. **Releases & Binary Distribution**:
    - When compiling a release:

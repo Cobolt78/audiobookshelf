@@ -1,4 +1,4 @@
-# Audiobookshelf Custom Modifications (`v2.37.1-custom`)
+# Audiobookshelf Custom Modifications (`v2.37.2-custom`)
 
 This document tracks all custom features, fixes, and architectural modifications made to Audiobookshelf in the `Cobolt78/audiobookshelf` repository.
 
@@ -250,7 +250,7 @@ curl.exe http://127.0.0.1:13381/audiobookshelf/ping
 ### Git & Patch Synchronization:
 ```powershell
 # Regenerate patch against upstream baseline
-git diff v2.37.1 > custom_changes.patch
+git diff v2.37.2 > custom_changes.patch
 ```
 
 ---
@@ -261,7 +261,7 @@ git diff v2.37.1 > custom_changes.patch
 | :--- | :--- |
 | `CUSTOM_MODIFICATIONS.md` | Comprehensive documentation of all custom features and modifications |
 | `GEMINI.md` | Antigravity paired-programming invariants and upgrade retention protocol |
-| `custom_changes.patch` | Unified Git diff against upstream `v2.37.1` baseline |
+| `custom_changes.patch` | Unified Git diff against upstream `v2.37.2` baseline |
 | `client/components/app/BookShelfCategorized.vue` | Interactive shelf header clicks, discover re-roll, and encoded filter routing |
 | `client/components/app/BookShelfRow.vue` | Interactive shelf header clicks, placards, and discover refresh button |
 | `client/components/app/BookShelfToolbar.vue` | Audible scan progress bar, quick/full scan menu, cancel listener, and status sync |
