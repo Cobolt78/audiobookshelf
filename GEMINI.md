@@ -16,7 +16,8 @@
    - When deploying locally:
      - Stop running `audiobookshelf` and `AudiobookshelfTray` processes: `Stop-Process -Name "audiobookshelf", "AudiobookshelfTray" -Force -ErrorAction SilentlyContinue`
      - Copy `dist/win/audiobookshelf.exe` to `C:\Users\David\AppData\Local\Programs\Audiobookshelf\audiobookshelf.exe`.
-     - Restart `C:\Users\David\AppData\Local\Programs\Audiobookshelf\AudiobookshelfTray.exe` and verify health with `curl.exe http://127.0.0.1:13381/audiobookshelf/ping`.
+     - Update registry versions to prevent false tray update popups: `Set-ItemProperty -Path "HKCU:\Software\Audiobookshelf" -Name "AppVersion" -Value "<tag>"; Set-ItemProperty -Path "HKCU:\Software\Audiobookshelf" -Name "ServerVersion" -Value "<tag>"`
+     - Restart `C:\Users\David\AppData\Local\Programs\Audiobookshelf\AudiobookshelfTray.exe` with `-WorkingDirectory "C:\Users\David\AppData\Local\Programs\Audiobookshelf"` and verify health with `curl.exe http://127.0.0.1:13381/audiobookshelf/ping`.
 
 3. **Repository Integrity**:
    - Maintain a clean baseline against upstream `https://github.com/advplyr/audiobookshelf.git`.

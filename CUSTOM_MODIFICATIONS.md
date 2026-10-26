@@ -242,7 +242,9 @@ npx pkg --config package.json -t node24-win-x64 -o ./dist/win/audiobookshelf -C 
 Stop-Process -Name "audiobookshelf", "AudiobookshelfTray" -Force -ErrorAction SilentlyContinue
 Start-Sleep -Seconds 2
 Copy-Item -Path ".\dist\win\audiobookshelf.exe" -Destination "C:\Users\David\AppData\Local\Programs\Audiobookshelf\audiobookshelf.exe" -Force
-Start-Process "C:\Users\David\AppData\Local\Programs\Audiobookshelf\AudiobookshelfTray.exe"
+Set-ItemProperty -Path "HKCU:\Software\Audiobookshelf" -Name "AppVersion" -Value "v2.37.2"
+Set-ItemProperty -Path "HKCU:\Software\Audiobookshelf" -Name "ServerVersion" -Value "v2.37.2"
+Start-Process -FilePath "C:\Users\David\AppData\Local\Programs\Audiobookshelf\AudiobookshelfTray.exe" -WorkingDirectory "C:\Users\David\AppData\Local\Programs\Audiobookshelf"
 # Verify server health:
 curl.exe http://127.0.0.1:13381/audiobookshelf/ping
 ```
