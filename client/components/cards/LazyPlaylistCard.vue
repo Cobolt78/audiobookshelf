@@ -5,8 +5,23 @@
       <div class="w-full h-full bg-primary relative rounded-sm overflow-hidden">
         <covers-playlist-cover ref="cover" :items="items" :width="cardWidth" :height="coverHeight" />
       </div>
+
+      <!-- Playlist items count badge in top right corner with faded dark background -->
+      <div
+        v-if="playlist"
+        class="absolute rounded-lg bg-black/75 box-shadow-md z-20 flex items-center px-1.5 py-0.5 pointer-events-none"
+        :style="{ top: 0.375 + 'em', right: 0.375 + 'em' }"
+        :title="`${numItems} ${numItems === 1 ? 'book' : 'books'}`"
+        role="status"
+        :aria-label="`${numItems} ${numItems === 1 ? 'book' : 'books'}`"
+      >
+        <p :style="{ fontSize: 0.75 + 'em' }" class="text-white font-medium leading-none">
+          {{ numItems }}
+        </p>
+      </div>
+
       <div v-show="isHovering && userCanUpdate" class="w-full h-full absolute top-0 left-0 z-10 bg-black/40 pointer-events-none">
-        <div class="absolute pointer-events-auto" :style="{ top: 0.5 + 'em', right: 0.5 + 'em' }" @click.stop.prevent="clickEdit">
+        <div class="absolute pointer-events-auto" :style="{ top: 0.5 + 'em', left: 0.5 + 'em' }" @click.stop.prevent="clickEdit">
           <span class="material-symbols text-white/75 hover:text-white/100" :style="{ fontSize: 1.25 + 'em' }">edit</span>
         </div>
       </div>
@@ -71,6 +86,9 @@ export default {
     },
     items() {
       return this.playlist ? this.playlist.items || [] : []
+    },
+    numItems() {
+      return this.items.length
     },
     store() {
       return this.$store || this.$nuxt.$store

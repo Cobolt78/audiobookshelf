@@ -270,7 +270,20 @@ git diff v2.37.2 > custom_changes.patch
 
 ---
 
-## 10. Modified Files Inventory
+## 10. Playlist Card Book Count Badge
+
+### Summary
+Displays the total number of books in each playlist at a glance on the playlist card cover in the top-right corner on the playlists bookshelf page (`/library/{id}/bookshelf/playlists`).
+
+### Key Details
+- Added a badge at `top: 0.375em, right: 0.375em` on the playlist cover in `LazyPlaylistCard.vue`.
+- Uses a faded dark background (`bg-black/75` with `box-shadow-md`) and crisp white font (`text-white font-medium`) ensuring sharp readability across all covers, including bright and pure white cover art.
+- Moved the hover edit button to the top-left corner (`left: 0.5em`) so it never overlaps or obscures the item count badge.
+- Dynamic scaling: font and padding scale proportionally with the user's `sizeMultiplier` setting.
+
+---
+
+## 11. Modified Files Inventory
 
 | File Path | Description |
 | :--- | :--- |
@@ -282,6 +295,7 @@ git diff v2.37.2 > custom_changes.patch
 | `client/components/app/BookShelfToolbar.vue` | Audible scan progress bar, quick/full scan menu, cancel listener, and status sync |
 | `client/components/app/ConfigSideNav.vue` | Sidebar navigation link to Bandwidth Stats |
 | `client/components/cards/LazySeriesCard.vue` | Series read badges (X/Y Read), missing books count, and upcoming release indicators |
+| `client/components/cards/LazyPlaylistCard.vue` | Playlist cover item count badge in top-right corner with faded dark background |
 | `client/components/controls/LibraryFilterSelect.vue` | Subfilter selection checkmarks, parent category highlight, and Base64 label resolution |
 | `client/components/modals/libraries/ScheduleScan.vue` | Audible series scan automated schedule configuration |
 | `client/components/tables/library/LibrariesTable.vue` | Action tooltips for Scan, Match Books, and Audible Scan |
