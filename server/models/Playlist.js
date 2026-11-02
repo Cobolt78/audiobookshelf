@@ -32,9 +32,10 @@ class Playlist extends Model {
    *
    * @param {string} userId
    * @param {string} libraryId
+   * @param {boolean} [minified=false]
    * @async
    */
-  static async getOldPlaylistsForUserAndLibrary(userId, libraryId) {
+  static async getOldPlaylistsForUserAndLibrary(userId, libraryId, minified = false) {
     if (!userId && !libraryId) return []
 
     const whereQuery = {}
@@ -84,7 +85,7 @@ class Playlist extends Model {
     // Sort by name asc
     playlistsExpanded.sort((a, b) => a.name.localeCompare(b.name))
 
-    return playlistsExpanded.map((playlist) => playlist.toOldJSONExpanded())
+    return playlistsExpanded.map((playlist) => (minified ? playlist.toOldJSONMinified() : playlist.toOldJSONExpanded()))
   }
 
   /**
@@ -330,6 +331,37 @@ class Playlist extends Model {
       return this.playlistMediaItems.some((pmi) => pmi.mediaItemId === episodeId)
     }
     return this.playlistMediaItems.some((pmi) => pmi.mediaItem.libraryItem.id === libraryItemId)
+  }
+
+  toOldJSONMinified() {
+    if (!this.playlistMediaItems) {
+      throw new Error('playlistMediaItems are required to minify Playlist')
+    }
+
+    const json = this.toOldJSON()
+    json.items = this.playlistMediaItems.map((pmi) => {
+      if (pmi.mediaItemType === 'book') {
+        const libraryItem = pmi.mediaItem.libraryItem
+        delete pmi.mediaItem.libraryItem
+        libraryItem.media = pmi.mediaItem
+        return {
+          libraryItemId: libraryItem.id,
+          libraryItem: libraryItem.toOldJSONMinified()
+        }
+      }
+
+      const libraryItem = pmi.mediaItem.podcast.libraryItem
+      delete pmi.mediaItem.podcast.libraryItem
+      libraryItem.media = pmi.mediaItem.podcast
+      return {
+        episodeId: pmi.mediaItemId,
+        episode: pmi.mediaItem.toOldJSONExpanded(libraryItem.id),
+        libraryItemId: libraryItem.id,
+        libraryItem: libraryItem.toOldJSONMinified()
+      }
+    })
+
+    return json
   }
 
   toOldJSON() {

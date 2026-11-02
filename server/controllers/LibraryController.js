@@ -867,13 +867,15 @@ class LibraryController {
    * @param {Response} res
    */
   async getUserPlaylistsForLibrary(req, res) {
-    let playlistsForUser = await Database.playlistModel.getOldPlaylistsForUserAndLibrary(req.user.id, req.library.id)
+    const minified = req.query.minified === '1'
+    let playlistsForUser = await Database.playlistModel.getOldPlaylistsForUserAndLibrary(req.user.id, req.library.id, minified)
 
     const payload = {
       results: [],
       total: playlistsForUser.length,
       limit: req.query.limit || 0,
-      page: req.query.page || 0
+      page: req.query.page || 0,
+      minified
     }
 
     if (payload.limit) {
