@@ -242,7 +242,7 @@ npx pkg --config package.json -t node24-win-x64 -o ./dist/win/audiobookshelf -C 
 Stop-Process -Name "audiobookshelf", "AudiobookshelfTray" -Force -ErrorAction SilentlyContinue
 Start-Sleep -Seconds 2
 Copy-Item -Path ".\dist\win\audiobookshelf.exe" -Destination "C:\Users\David\AppData\Local\Programs\Audiobookshelf\audiobookshelf.exe" -Force
-Set-ItemProperty -Path "HKCU:\Software\Audiobookshelf" -Name "AppVersion" -Value "v2.37.2"
+Set-ItemProperty -Path "HKCU:\Software\Audiobookshelf" -Name "AppVersion" -Value "v2.37.2.1"
 Set-ItemProperty -Path "HKCU:\Software\Audiobookshelf" -Name "ServerVersion" -Value "v2.37.2"
 Start-Process -FilePath "C:\Users\David\AppData\Local\Programs\Audiobookshelf\AudiobookshelfTray.exe" -WorkingDirectory "C:\Users\David\AppData\Local\Programs\Audiobookshelf"
 # Verify server health:
@@ -283,7 +283,26 @@ Displays the total number of books in each playlist at a glance on the playlist 
 
 ---
 
-## 11. Modified Files Inventory
+## 11. Book Details Bitrate Display
+
+### Summary
+Displays the audio bitrate directly on the book details page under the file size.
+
+### Key Details
+- Located in `client/components/content/LibraryItemDetails.vue` below the existing `Size` metadata row.
+- Formats bitrates in standard `kbps` (e.g., `128 kbps`, `64 kbps`).
+- **Multi-Track Support**: For multi-file audiobooks, evaluates all included tracks:
+  - If tracks have uniform bitrates, displays the exact bitrate (`128 kbps`).
+  - If tracks vary across files (or VBR), computes the duration-weighted average (`~128 kbps`) and provides an informative tooltip on hover with the track range and average (e.g. `Tracks vary: 64–128 kbps (avg: 96 kbps)`).
+- **Fallback Calculation**: If audio files lack a direct probed `bitRate` tag in metadata, calculates the effective bitrate from `(media.size * 8) / media.duration`.
+- **eBook / Podcast Awareness**: Automatically hides the row for eBooks or text-only media where audio tracks do not exist.
+
+### Modified Files:
+* `client/components/content/LibraryItemDetails.vue`
+
+---
+
+## 12. Modified Files Inventory
 
 | File Path | Description |
 | :--- | :--- |
@@ -296,6 +315,7 @@ Displays the total number of books in each playlist at a glance on the playlist 
 | `client/components/app/ConfigSideNav.vue` | Sidebar navigation link to Bandwidth Stats |
 | `client/components/cards/LazySeriesCard.vue` | Series read badges (X/Y Read), missing books count, and upcoming release indicators |
 | `client/components/cards/LazyPlaylistCard.vue` | Playlist cover item count badge in top-right corner with faded dark background |
+| `client/components/content/LibraryItemDetails.vue` | Audio bitrate display under Size on book details page |
 | `client/components/controls/LibraryFilterSelect.vue` | Subfilter selection checkmarks, parent category highlight, and Base64 label resolution |
 | `client/components/modals/libraries/ScheduleScan.vue` | Audible series scan automated schedule configuration |
 | `client/components/tables/library/LibrariesTable.vue` | Action tooltips for Scan, Match Books, and Audible Scan |

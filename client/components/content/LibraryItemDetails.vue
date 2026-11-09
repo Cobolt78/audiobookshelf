@@ -81,6 +81,14 @@
         {{ sizePretty }}
       </div>
     </div>
+    <div v-if="bitratePretty" role="paragraph" class="flex py-0.5">
+      <div class="w-34 min-w-34 sm:w-34 sm:min-w-34 break-words">
+        <span class="text-white/60 uppercase text-sm">{{ $strings.LabelBitrate }}</span>
+      </div>
+      <div :title="bitrateTooltip">
+        {{ bitratePretty }}
+      </div>
+    </div>
   </div>
 </template>
 
@@ -160,7 +168,58 @@ export default {
     },
     podcastType() {
       return this.mediaMetadata.type
-    }
+    },
+    bitrateData() {
+      if (this.isPodcast) return null
+      const sourceTracks = this.tracks.length ? this.tracks : (this.media.audioFiles?.length ? this.media.audioFiles : [])
+      if (!sourceTracks.length) return null
+
+      const bitrates = []
+      let totalBits = 0
+      let totalDuration = 0
+
+      for (const t of sourceTracks) {
+        const br = t.bitRate || t.audioFile?.bitRate
+        const dur = t.duration || 0
+        if (br && typeof br === "number" && br > 0) {
+          bitrates.push(br)
+          if (dur > 0) {
+            totalBits += br * dur
+            totalDuration += dur
+          }
+        }
+      }
+
+      if (bitrates.length) {
+        const minKbps = Math.round(Math.min(...bitrates) / 1000)
+        const maxKbps = Math.round(Math.max(...bitrates) / 1000)
+        const avgKbps = totalDuration > 0 ? Math.round(totalBits / totalDuration / 1000) : Math.round(bitrates.reduce((a, b) => a + b, 0) / bitrates.length / 1000)
+
+        const isUniform = Math.abs(maxKbps - minKbps) <= 2
+        return {
+          pretty: isUniform ? `${avgKbps} kbps` : `~${avgKbps} kbps`,
+          tooltip: isUniform ? null : `Tracks vary: ${minKbps}–${maxKbps} kbps (avg: ${avgKbps} kbps)`
+        }
+      }
+
+      if (this.duration && this.media.size) {
+        const calcKbps = Math.round((this.media.size * 8) / this.duration / 1000)
+        if (calcKbps > 0) {
+          return {
+            pretty: `${calcKbps} kbps`,
+            tooltip: null
+          }
+        }
+      }
+
+      return null
+    },
+    bitratePretty() {
+      return this.bitrateData?.pretty || null
+    },
+    bitrateTooltip() {
+      return this.bitrateData?.tooltip || null
+    }
   },
   methods: {},
   mounted() {}
