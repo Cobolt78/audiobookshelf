@@ -283,34 +283,22 @@ Displays the total number of books in each playlist at a glance on the playlist 
 
 ---
 
-## 11. Audio Bitrate Display (Book Details & Cover Badges)
+## 11. Book Details Bitrate Display
 
 ### Summary
-Displays the audio bitrate both on the book details page under the file size and as a discrete pill badge in the top-left corner of book cards across library, bookshelf, series, and collection views.
+Displays the audio bitrate directly on the book details page under the file size.
 
 ### Key Details
-- **Book Details Page** (`client/components/content/LibraryItemDetails.vue`):
-  - Placed below the existing `Size` metadata row.
-  - Formats bitrates in standard `kbps` (e.g., `128 kbps`, `64 kbps`).
-  - **Multi-Track Support**: For multi-file audiobooks, evaluates all included tracks:
-    - If tracks have uniform bitrates, displays the exact bitrate (`128 kbps`).
-    - If tracks vary across files (or VBR), computes the duration-weighted average (`~128 kbps`) and provides an informative tooltip on hover with the track range and average (e.g. `Tracks vary: 64–128 kbps (avg: 96 kbps)`).
-  - **Fallback Calculation**: If audio files lack a direct probed `bitRate` tag in metadata, calculates the effective bitrate from `(media.size * 8) / media.duration`.
-  - **eBook / Podcast Awareness**: Automatically hides the row for eBooks or text-only media where audio tracks do not exist.
-- **Book Cover Cards** (`client/components/cards/LazyBookCard.vue`):
-  - Positioned in the **top-left corner** (`top: 0.375em, left: 0.375em`), symmetrically mirroring the series sequence badge (`#1`, `#2`) situated in the top-right corner.
-  - Matches the aesthetic of the series badge: semi-translucent dark pill (`bg-black/90 box-shadow-md z-10`) with crisp white typography (`text-white font-medium`) and `whitespace-nowrap`.
-  - Fades out cleanly on mouse hover or batch selection mode (`!isHovering && !isSelectionMode`) so it never conflicts with card controls (play button, selection radio, edit).
-  - Dynamically offsets `mediaItemShare` and `rssFeed` indicators if present to guarantee zero visual collisions.
-  - Automatically hidden for eBooks, podcast feeds, or collapsed series cards.
-- **Server Model Optimization** (`server/models/Book.js`):
-  - Added `get bitRate()` getter calculating the weighted average or single track bitrate directly from `this.includedAudioFiles`.
-  - Added `bitRate: this.bitRate` to `toOldJSONMinified()` so shelf, series, and list endpoints provide bitrate directly without extra client queries.
+- Located in `client/components/content/LibraryItemDetails.vue` below the existing `Size` metadata row.
+- Formats bitrates in standard `kbps` (e.g., `128 kbps`, `64 kbps`).
+- **Multi-Track Support**: For multi-file audiobooks, evaluates all included tracks:
+  - If tracks have uniform bitrates, displays the exact bitrate (`128 kbps`).
+  - If tracks vary across files (or VBR), computes the duration-weighted average (`~128 kbps`) and provides an informative tooltip on hover with the track range and average (e.g. `Tracks vary: 64–128 kbps (avg: 96 kbps)`).
+- **Fallback Calculation**: If audio files lack a direct probed `bitRate` tag in metadata, calculates the effective bitrate from `(media.size * 8) / media.duration`.
+- **eBook / Podcast Awareness**: Automatically hides the row for eBooks or text-only media where audio tracks do not exist.
 
 ### Modified Files:
 * `client/components/content/LibraryItemDetails.vue`
-* `client/components/cards/LazyBookCard.vue`
-* `server/models/Book.js`
 
 ---
 
@@ -325,7 +313,6 @@ Displays the audio bitrate both on the book details page under the file size and
 | `client/components/app/BookShelfRow.vue` | Interactive shelf header clicks, placards, and discover refresh button |
 | `client/components/app/BookShelfToolbar.vue` | Audible scan progress bar, quick/full scan menu, cancel listener, and status sync |
 | `client/components/app/ConfigSideNav.vue` | Sidebar navigation link to Bandwidth Stats |
-| `client/components/cards/LazyBookCard.vue` | Audio bitrate badge in top-left of cover art (symmetrical to series sequence badge) |
 | `client/components/cards/LazySeriesCard.vue` | Series read badges (X/Y Read), missing books count, and upcoming release indicators |
 | `client/components/cards/LazyPlaylistCard.vue` | Playlist cover item count badge in top-right corner with faded dark background |
 | `client/components/content/LibraryItemDetails.vue` | Audio bitrate display under Size on book details page |
@@ -336,7 +323,6 @@ Displays the audio bitrate both on the book details page under the file size and
 | `client/components/widgets/SeriesProviderEntries.vue` | Series upcoming releases and missing books cards with Audible links |
 | `client/pages/config.vue` | Route title mapper & full-width layout for bandwidth dashboard |
 | `client/pages/config/bandwidth.vue` | Responsive Bandwidth Stats dashboard with 48h SVG waveform, 24h hourly breakdown, item breakdown, and date filters |
-| `server/models/Book.js` | Added `bitRate` getter and exposed in `toOldJSONMinified()` for shelf/list bitrate badges |
 | `client/pages/config/index.vue` | Bandwidth tracking toggle and custom local LAN subnets/IPs input in Settings > General |
 | `client/pages/config/users/_id/index.vue` | Data transferred stat on user profile card |
 | `client/pages/library/_library/series/_id.vue` | Mounts external series tracking panel on series details page |

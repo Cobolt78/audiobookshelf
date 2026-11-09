@@ -1,9 +1,9 @@
 diff --git a/CUSTOM_MODIFICATIONS.md b/CUSTOM_MODIFICATIONS.md
 new file mode 100644
-index 00000000..7f122220
+index 00000000..60f2ec30
 --- /dev/null
 +++ b/CUSTOM_MODIFICATIONS.md
-@@ -0,0 +1,366 @@
+@@ -0,0 +1,352 @@
 +# Audiobookshelf Custom Modifications (`v2.37.2-custom`)
 +
 +This document tracks all custom features, fixes, and architectural modifications made to Audiobookshelf in the `Cobolt78/audiobookshelf` repository.
@@ -289,34 +289,22 @@ index 00000000..7f122220
 +
 +---
 +
-+## 11. Audio Bitrate Display (Book Details & Cover Badges)
++## 11. Book Details Bitrate Display
 +
 +### Summary
-+Displays the audio bitrate both on the book details page under the file size and as a discrete pill badge in the top-left corner of book cards across library, bookshelf, series, and collection views.
++Displays the audio bitrate directly on the book details page under the file size.
 +
 +### Key Details
-+- **Book Details Page** (`client/components/content/LibraryItemDetails.vue`):
-+  - Placed below the existing `Size` metadata row.
-+  - Formats bitrates in standard `kbps` (e.g., `128 kbps`, `64 kbps`).
-+  - **Multi-Track Support**: For multi-file audiobooks, evaluates all included tracks:
-+    - If tracks have uniform bitrates, displays the exact bitrate (`128 kbps`).
-+    - If tracks vary across files (or VBR), computes the duration-weighted average (`~128 kbps`) and provides an informative tooltip on hover with the track range and average (e.g. `Tracks vary: 64–128 kbps (avg: 96 kbps)`).
-+  - **Fallback Calculation**: If audio files lack a direct probed `bitRate` tag in metadata, calculates the effective bitrate from `(media.size * 8) / media.duration`.
-+  - **eBook / Podcast Awareness**: Automatically hides the row for eBooks or text-only media where audio tracks do not exist.
-+- **Book Cover Cards** (`client/components/cards/LazyBookCard.vue`):
-+  - Positioned in the **top-left corner** (`top: 0.375em, left: 0.375em`), symmetrically mirroring the series sequence badge (`#1`, `#2`) situated in the top-right corner.
-+  - Matches the aesthetic of the series badge: semi-translucent dark pill (`bg-black/90 box-shadow-md z-10`) with crisp white typography (`text-white font-medium`) and `whitespace-nowrap`.
-+  - Fades out cleanly on mouse hover or batch selection mode (`!isHovering && !isSelectionMode`) so it never conflicts with card controls (play button, selection radio, edit).
-+  - Dynamically offsets `mediaItemShare` and `rssFeed` indicators if present to guarantee zero visual collisions.
-+  - Automatically hidden for eBooks, podcast feeds, or collapsed series cards.
-+- **Server Model Optimization** (`server/models/Book.js`):
-+  - Added `get bitRate()` getter calculating the weighted average or single track bitrate directly from `this.includedAudioFiles`.
-+  - Added `bitRate: this.bitRate` to `toOldJSONMinified()` so shelf, series, and list endpoints provide bitrate directly without extra client queries.
++- Located in `client/components/content/LibraryItemDetails.vue` below the existing `Size` metadata row.
++- Formats bitrates in standard `kbps` (e.g., `128 kbps`, `64 kbps`).
++- **Multi-Track Support**: For multi-file audiobooks, evaluates all included tracks:
++  - If tracks have uniform bitrates, displays the exact bitrate (`128 kbps`).
++  - If tracks vary across files (or VBR), computes the duration-weighted average (`~128 kbps`) and provides an informative tooltip on hover with the track range and average (e.g. `Tracks vary: 64–128 kbps (avg: 96 kbps)`).
++- **Fallback Calculation**: If audio files lack a direct probed `bitRate` tag in metadata, calculates the effective bitrate from `(media.size * 8) / media.duration`.
++- **eBook / Podcast Awareness**: Automatically hides the row for eBooks or text-only media where audio tracks do not exist.
 +
 +### Modified Files:
 +* `client/components/content/LibraryItemDetails.vue`
-+* `client/components/cards/LazyBookCard.vue`
-+* `server/models/Book.js`
 +
 +---
 +
@@ -331,7 +319,6 @@ index 00000000..7f122220
 +| `client/components/app/BookShelfRow.vue` | Interactive shelf header clicks, placards, and discover refresh button |
 +| `client/components/app/BookShelfToolbar.vue` | Audible scan progress bar, quick/full scan menu, cancel listener, and status sync |
 +| `client/components/app/ConfigSideNav.vue` | Sidebar navigation link to Bandwidth Stats |
-+| `client/components/cards/LazyBookCard.vue` | Audio bitrate badge in top-left of cover art (symmetrical to series sequence badge) |
 +| `client/components/cards/LazySeriesCard.vue` | Series read badges (X/Y Read), missing books count, and upcoming release indicators |
 +| `client/components/cards/LazyPlaylistCard.vue` | Playlist cover item count badge in top-right corner with faded dark background |
 +| `client/components/content/LibraryItemDetails.vue` | Audio bitrate display under Size on book details page |
@@ -342,7 +329,6 @@ index 00000000..7f122220
 +| `client/components/widgets/SeriesProviderEntries.vue` | Series upcoming releases and missing books cards with Audible links |
 +| `client/pages/config.vue` | Route title mapper & full-width layout for bandwidth dashboard |
 +| `client/pages/config/bandwidth.vue` | Responsive Bandwidth Stats dashboard with 48h SVG waveform, 24h hourly breakdown, item breakdown, and date filters |
-+| `server/models/Book.js` | Added `bitRate` getter and exposed in `toOldJSONMinified()` for shelf/list bitrate badges |
 +| `client/pages/config/index.vue` | Bandwidth tracking toggle and custom local LAN subnets/IPs input in Settings > General |
 +| `client/pages/config/users/_id/index.vue` | Data transferred stat on user profile card |
 +| `client/pages/library/_library/series/_id.vue` | Mounts external series tracking panel on series details page |
@@ -1027,63 +1013,6 @@ index 9ec492a8..57876cb3 100644
      <widgets-cover-size-widget class="fixed right-4 z-50" :style="{ bottom: streamLibraryItem ? '181px' : '16px' }" />
    </div>
  </template>
-diff --git a/client/components/cards/LazyBookCard.vue b/client/components/cards/LazyBookCard.vue
-index 51f657db..0ebe935e 100644
---- a/client/components/cards/LazyBookCard.vue
-+++ b/client/components/cards/LazyBookCard.vue
-@@ -89,10 +89,15 @@
-           <span class="material-symbols" aria-hidden="true" :style="{ fontSize: 1.5 + 'em' }">rss_feed</span>
-         </div>
-         <!-- media item shared icon -->
--        <div cy-id="mediaItemShare" v-if="mediaItemShare && !isSelectionMode && !isHovering" class="absolute text-success left-0 z-10" :style="{ padding: 0.375 + 'em', top: rssFeed ? '2em' : '0px' }">
-+        <div cy-id="mediaItemShare" v-if="mediaItemShare && !isSelectionMode && !isHovering" class="absolute text-success left-0 z-10" :style="{ padding: 0.375 + 'em', top: (rssFeed && bitratePretty ? '3.6em' : (rssFeed || bitratePretty) ? '2em' : '0px') }">
-           <span class="material-symbols" aria-hidden="true" :style="{ fontSize: 1.5 + 'em' }">public</span>
-         </div>
- 
-+        <!-- Audio bitrate -->
-+        <div cy-id="audioBitrate" v-if="bitratePretty && !isHovering && !isSelectionMode" class="absolute rounded-lg bg-black/90 box-shadow-md z-10 text-white font-medium" :style="{ top: (rssFeed ? 2 : 0.375) + 'em', left: 0.375 + 'em', padding: `${0.1}em ${0.3}em` }">
-+          <p class="whitespace-nowrap" :style="{ fontSize: 0.8 + 'em' }">{{ bitratePretty }}</p>
-+        </div>
-+
-         <!-- Series sequence -->
-         <div cy-id="seriesSequence" v-if="seriesSequence && !isHovering && !isSelectionMode" class="absolute rounded-lg bg-black/90 box-shadow-md z-10" :style="{ top: 0.375 + 'em', right: 0.375 + 'em', padding: `${0.1}em ${0.25}em` }">
-           <p :style="{ fontSize: 0.8 + 'em' }">#{{ seriesSequence }}</p>
-@@ -256,6 +261,35 @@ export default {
-       if (this.media.tracks) return this.media.tracks.length
-       return this.media.numTracks || 0 // toJSONMinified
-     },
-+    bitratePretty() {
-+      if (this.isPodcast || this.booksInSeries) return null
-+      if (!this.numTracks && !this.media.tracks?.length) return null
-+
-+      let br = this.media.bitRate
-+      if (!br && this.media.tracks?.length) {
-+        let totalBits = 0
-+        let totalDuration = 0
-+        for (const t of this.media.tracks) {
-+          const trackBr = t.bitRate || t.audioFile?.bitRate
-+          const dur = t.duration || 0
-+          if (trackBr && dur > 0) {
-+            totalBits += trackBr * dur
-+            totalDuration += dur
-+          }
-+        }
-+        if (totalDuration > 0 && totalBits > 0) {
-+          br = Math.round(totalBits / totalDuration)
-+        }
-+      }
-+      if (!br && this.media.duration && this.media.size) {
-+        br = Math.round((this.media.size * 8) / this.media.duration)
-+      }
-+      if (!br || typeof br !== 'number' || br <= 0) return null
-+
-+      const kbps = Math.round(br / 1000)
-+      if (kbps <= 0) return null
-+      return `${kbps} kbps`
-+    },
-     numEpisodes() {
-       return this.media.numEpisodes || 0
-     },
 diff --git a/client/components/cards/LazyPlaylistCard.vue b/client/components/cards/LazyPlaylistCard.vue
 index af0cd957..dc51cae8 100644
 --- a/client/components/cards/LazyPlaylistCard.vue
@@ -3806,16 +3735,16 @@ index d9d6325e..b27769d7 100644
    "ToastItemDetailsUpdateSuccess": "Item details updated",
 diff --git a/custom_changes.patch b/custom_changes.patch
 new file mode 100644
-index 00000000..b5b3e150
+index 00000000..bd31b6b9
 --- /dev/null
 +++ b/custom_changes.patch
-@@ -0,0 +1,3651 @@
+@@ -0,0 +1,3591 @@
 +diff --git a/CUSTOM_MODIFICATIONS.md b/CUSTOM_MODIFICATIONS.md
 +new file mode 100644
-+index 00000000..7f122220
++index 00000000..60f2ec30
 +--- /dev/null
 ++++ b/CUSTOM_MODIFICATIONS.md
-+@@ -0,0 +1,366 @@
++@@ -0,0 +1,352 @@
 ++# Audiobookshelf Custom Modifications (`v2.37.2-custom`)
 ++
 ++This document tracks all custom features, fixes, and architectural modifications made to Audiobookshelf in the `Cobolt78/audiobookshelf` repository.
@@ -4101,34 +4030,22 @@ index 00000000..b5b3e150
 ++
 ++---
 ++
-++## 11. Audio Bitrate Display (Book Details & Cover Badges)
+++## 11. Book Details Bitrate Display
 ++
 ++### Summary
-++Displays the audio bitrate both on the book details page under the file size and as a discrete pill badge in the top-left corner of book cards across library, bookshelf, series, and collection views.
+++Displays the audio bitrate directly on the book details page under the file size.
 ++
 ++### Key Details
-++- **Book Details Page** (`client/components/content/LibraryItemDetails.vue`):
-++  - Placed below the existing `Size` metadata row.
-++  - Formats bitrates in standard `kbps` (e.g., `128 kbps`, `64 kbps`).
-++  - **Multi-Track Support**: For multi-file audiobooks, evaluates all included tracks:
-++    - If tracks have uniform bitrates, displays the exact bitrate (`128 kbps`).
-++    - If tracks vary across files (or VBR), computes the duration-weighted average (`~128 kbps`) and provides an informative tooltip on hover with the track range and average (e.g. `Tracks vary: 64–128 kbps (avg: 96 kbps)`).
-++  - **Fallback Calculation**: If audio files lack a direct probed `bitRate` tag in metadata, calculates the effective bitrate from `(media.size * 8) / media.duration`.
-++  - **eBook / Podcast Awareness**: Automatically hides the row for eBooks or text-only media where audio tracks do not exist.
-++- **Book Cover Cards** (`client/components/cards/LazyBookCard.vue`):
-++  - Positioned in the **top-left corner** (`top: 0.375em, left: 0.375em`), symmetrically mirroring the series sequence badge (`#1`, `#2`) situated in the top-right corner.
-++  - Matches the aesthetic of the series badge: semi-translucent dark pill (`bg-black/90 box-shadow-md z-10`) with crisp white typography (`text-white font-medium`) and `whitespace-nowrap`.
-++  - Fades out cleanly on mouse hover or batch selection mode (`!isHovering && !isSelectionMode`) so it never conflicts with card controls (play button, selection radio, edit).
-++  - Dynamically offsets `mediaItemShare` and `rssFeed` indicators if present to guarantee zero visual collisions.
-++  - Automatically hidden for eBooks, podcast feeds, or collapsed series cards.
-++- **Server Model Optimization** (`server/models/Book.js`):
-++  - Added `get bitRate()` getter calculating the weighted average or single track bitrate directly from `this.includedAudioFiles`.
-++  - Added `bitRate: this.bitRate` to `toOldJSONMinified()` so shelf, series, and list endpoints provide bitrate directly without extra client queries.
+++- Located in `client/components/content/LibraryItemDetails.vue` below the existing `Size` metadata row.
+++- Formats bitrates in standard `kbps` (e.g., `128 kbps`, `64 kbps`).
+++- **Multi-Track Support**: For multi-file audiobooks, evaluates all included tracks:
+++  - If tracks have uniform bitrates, displays the exact bitrate (`128 kbps`).
+++  - If tracks vary across files (or VBR), computes the duration-weighted average (`~128 kbps`) and provides an informative tooltip on hover with the track range and average (e.g. `Tracks vary: 64–128 kbps (avg: 96 kbps)`).
+++- **Fallback Calculation**: If audio files lack a direct probed `bitRate` tag in metadata, calculates the effective bitrate from `(media.size * 8) / media.duration`.
+++- **eBook / Podcast Awareness**: Automatically hides the row for eBooks or text-only media where audio tracks do not exist.
 ++
 ++### Modified Files:
 ++* `client/components/content/LibraryItemDetails.vue`
-++* `client/components/cards/LazyBookCard.vue`
-++* `server/models/Book.js`
 ++
 ++---
 ++
@@ -4143,7 +4060,6 @@ index 00000000..b5b3e150
 ++| `client/components/app/BookShelfRow.vue` | Interactive shelf header clicks, placards, and discover refresh button |
 ++| `client/components/app/BookShelfToolbar.vue` | Audible scan progress bar, quick/full scan menu, cancel listener, and status sync |
 ++| `client/components/app/ConfigSideNav.vue` | Sidebar navigation link to Bandwidth Stats |
-++| `client/components/cards/LazyBookCard.vue` | Audio bitrate badge in top-left of cover art (symmetrical to series sequence badge) |
 ++| `client/components/cards/LazySeriesCard.vue` | Series read badges (X/Y Read), missing books count, and upcoming release indicators |
 ++| `client/components/cards/LazyPlaylistCard.vue` | Playlist cover item count badge in top-right corner with faded dark background |
 ++| `client/components/content/LibraryItemDetails.vue` | Audio bitrate display under Size on book details page |
@@ -4154,7 +4070,6 @@ index 00000000..b5b3e150
 ++| `client/components/widgets/SeriesProviderEntries.vue` | Series upcoming releases and missing books cards with Audible links |
 ++| `client/pages/config.vue` | Route title mapper & full-width layout for bandwidth dashboard |
 ++| `client/pages/config/bandwidth.vue` | Responsive Bandwidth Stats dashboard with 48h SVG waveform, 24h hourly breakdown, item breakdown, and date filters |
-++| `server/models/Book.js` | Added `bitRate` getter and exposed in `toOldJSONMinified()` for shelf/list bitrate badges |
 ++| `client/pages/config/index.vue` | Bandwidth tracking toggle and custom local LAN subnets/IPs input in Settings > General |
 ++| `client/pages/config/users/_id/index.vue` | Data transferred stat on user profile card |
 ++| `client/pages/library/_library/series/_id.vue` | Mounts external series tracking panel on series details page |
@@ -4839,63 +4754,6 @@ index 00000000..b5b3e150
 +     <widgets-cover-size-widget class="fixed right-4 z-50" :style="{ bottom: streamLibraryItem ? '181px' : '16px' }" />
 +   </div>
 + </template>
-+diff --git a/client/components/cards/LazyBookCard.vue b/client/components/cards/LazyBookCard.vue
-+index 51f657db..0ebe935e 100644
-+--- a/client/components/cards/LazyBookCard.vue
-++++ b/client/components/cards/LazyBookCard.vue
-+@@ -89,10 +89,15 @@
-+           <span class="material-symbols" aria-hidden="true" :style="{ fontSize: 1.5 + 'em' }">rss_feed</span>
-+         </div>
-+         <!-- media item shared icon -->
-+-        <div cy-id="mediaItemShare" v-if="mediaItemShare && !isSelectionMode && !isHovering" class="absolute text-success left-0 z-10" :style="{ padding: 0.375 + 'em', top: rssFeed ? '2em' : '0px' }">
-++        <div cy-id="mediaItemShare" v-if="mediaItemShare && !isSelectionMode && !isHovering" class="absolute text-success left-0 z-10" :style="{ padding: 0.375 + 'em', top: (rssFeed && bitratePretty ? '3.6em' : (rssFeed || bitratePretty) ? '2em' : '0px') }">
-+           <span class="material-symbols" aria-hidden="true" :style="{ fontSize: 1.5 + 'em' }">public</span>
-+         </div>
-+ 
-++        <!-- Audio bitrate -->
-++        <div cy-id="audioBitrate" v-if="bitratePretty && !isHovering && !isSelectionMode" class="absolute rounded-lg bg-black/90 box-shadow-md z-10 text-white font-medium" :style="{ top: (rssFeed ? 2 : 0.375) + 'em', left: 0.375 + 'em', padding: `${0.1}em ${0.3}em` }">
-++          <p class="whitespace-nowrap" :style="{ fontSize: 0.8 + 'em' }">{{ bitratePretty }}</p>
-++        </div>
-++
-+         <!-- Series sequence -->
-+         <div cy-id="seriesSequence" v-if="seriesSequence && !isHovering && !isSelectionMode" class="absolute rounded-lg bg-black/90 box-shadow-md z-10" :style="{ top: 0.375 + 'em', right: 0.375 + 'em', padding: `${0.1}em ${0.25}em` }">
-+           <p :style="{ fontSize: 0.8 + 'em' }">#{{ seriesSequence }}</p>
-+@@ -256,6 +261,35 @@ export default {
-+       if (this.media.tracks) return this.media.tracks.length
-+       return this.media.numTracks || 0 // toJSONMinified
-+     },
-++    bitratePretty() {
-++      if (this.isPodcast || this.booksInSeries) return null
-++      if (!this.numTracks && !this.media.tracks?.length) return null
-++
-++      let br = this.media.bitRate
-++      if (!br && this.media.tracks?.length) {
-++        let totalBits = 0
-++        let totalDuration = 0
-++        for (const t of this.media.tracks) {
-++          const trackBr = t.bitRate || t.audioFile?.bitRate
-++          const dur = t.duration || 0
-++          if (trackBr && dur > 0) {
-++            totalBits += trackBr * dur
-++            totalDuration += dur
-++          }
-++        }
-++        if (totalDuration > 0 && totalBits > 0) {
-++          br = Math.round(totalBits / totalDuration)
-++        }
-++      }
-++      if (!br && this.media.duration && this.media.size) {
-++        br = Math.round((this.media.size * 8) / this.media.duration)
-++      }
-++      if (!br || typeof br !== 'number' || br <= 0) return null
-++
-++      const kbps = Math.round(br / 1000)
-++      if (kbps <= 0) return null
-++      return `${kbps} kbps`
-++    },
-+     numEpisodes() {
-+       return this.media.numEpisodes || 0
-+     },
 +diff --git a/client/components/cards/LazyPlaylistCard.vue b/client/components/cards/LazyPlaylistCard.vue
 +index af0cd957..dc51cae8 100644
 +--- a/client/components/cards/LazyPlaylistCard.vue
@@ -7460,7 +7318,18 @@ index 00000000..b5b3e150
 +   data() {
 +diff --git a/client/plugins/init.client.js b/client/plugins/init.client.js
 +index 015cd919..054b97de 100644
-+--
++--- a/client/plugins/init.client.js
+++++ b/client/plugins/init.client.js
++@@ -169,7 +169,18 @@ Vue.prototype.$xmlToJson = xmlToJson
++ 
++ const encode = (text) => encodeURIComponent(Buffer.from(text).toString('base64'))
++ Vue.prototype.$encode = encode
++-const decode = (text) => Buffer.from(decodeURIComponent(text), 'base64').toString()
+++const decode = (text) => {
+++  if (!text) return ''
+++  try {
+++    const decoded = Buffer.from(decodeURIComponent(text), 'base64').toString()
+++    if (encodeURIComponent(Buffer.from(decoded).toString('base64')) === encodeURIComponent(text) || Buffer.fro
 \ No newline at end of file
 diff --git a/server/Database.js b/server/Database.js
 index 50ff714e..ad03b32c 100644
@@ -10516,64 +10385,6 @@ index 00000000..e28898fd
 +}
 +
 +module.exports = BandwidthTimeStat
-diff --git a/server/models/Book.js b/server/models/Book.js
-index 19923750..6564cd78 100644
---- a/server/models/Book.js
-+++ b/server/models/Book.js
-@@ -258,7 +258,44 @@ class Book extends Model {
-   }
- 
-   get includedAudioFiles() {
--    return this.audioFiles.filter((af) => !af.exclude)
-+    return (this.audioFiles || []).filter((af) => !af.exclude)
-+  }
-+
-+  get bitRate() {
-+    const audioFiles = this.includedAudioFiles || []
-+    if (audioFiles.length) {
-+      let totalBits = 0
-+      let totalDuration = 0
-+      let count = 0
-+      let sumBr = 0
-+
-+      for (const af of audioFiles) {
-+        const br = af.bitRate
-+        const dur = af.duration || 0
-+        if (br && typeof br === 'number' && br > 0) {
-+          count++
-+          sumBr += br
-+          if (dur > 0) {
-+            totalBits += br * dur
-+            totalDuration += dur
-+          }
-+        }
-+      }
-+
-+      if (totalDuration > 0 && totalBits > 0) {
-+        return Math.round(totalBits / totalDuration)
-+      }
-+      if (count > 0) {
-+        return Math.round(sumBr / count)
-+      }
-+    }
-+
-+    if (this.duration && this.size) {
-+      const calc = Math.round((this.size * 8) / this.duration)
-+      if (calc > 0) return calc
-+    }
-+
-+    return null
-   }
- 
-   get hasMediaFiles() {
-@@ -655,6 +692,7 @@ class Book extends Model {
-       numChapters: this.chapters?.length || 0,
-       duration: this.duration,
-       size: this.size,
-+      bitRate: this.bitRate,
-       ebookFormat: this.ebookFile?.ebookFormat
-     }
-   }
 diff --git a/server/models/Library.js b/server/models/Library.js
 index 708880aa..bd57825d 100644
 --- a/server/models/Library.js

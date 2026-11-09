@@ -89,13 +89,8 @@
           <span class="material-symbols" aria-hidden="true" :style="{ fontSize: 1.5 + 'em' }">rss_feed</span>
         </div>
         <!-- media item shared icon -->
-        <div cy-id="mediaItemShare" v-if="mediaItemShare && !isSelectionMode && !isHovering" class="absolute text-success left-0 z-10" :style="{ padding: 0.375 + 'em', top: (rssFeed && bitratePretty ? '3.6em' : (rssFeed || bitratePretty) ? '2em' : '0px') }">
+        <div cy-id="mediaItemShare" v-if="mediaItemShare && !isSelectionMode && !isHovering" class="absolute text-success left-0 z-10" :style="{ padding: 0.375 + 'em', top: rssFeed ? '2em' : '0px' }">
           <span class="material-symbols" aria-hidden="true" :style="{ fontSize: 1.5 + 'em' }">public</span>
-        </div>
-
-        <!-- Audio bitrate -->
-        <div cy-id="audioBitrate" v-if="bitratePretty && !isHovering && !isSelectionMode" class="absolute rounded-lg bg-black/90 box-shadow-md z-10 text-white font-medium" :style="{ top: (rssFeed ? 2 : 0.375) + 'em', left: 0.375 + 'em', padding: `${0.1}em ${0.3}em` }">
-          <p class="whitespace-nowrap" :style="{ fontSize: 0.8 + 'em' }">{{ bitratePretty }}</p>
         </div>
 
         <!-- Series sequence -->
@@ -260,35 +255,6 @@ export default {
     numTracks() {
       if (this.media.tracks) return this.media.tracks.length
       return this.media.numTracks || 0 // toJSONMinified
-    },
-    bitratePretty() {
-      if (this.isPodcast || this.booksInSeries) return null
-      if (!this.numTracks && !this.media.tracks?.length) return null
-
-      let br = this.media.bitRate
-      if (!br && this.media.tracks?.length) {
-        let totalBits = 0
-        let totalDuration = 0
-        for (const t of this.media.tracks) {
-          const trackBr = t.bitRate || t.audioFile?.bitRate
-          const dur = t.duration || 0
-          if (trackBr && dur > 0) {
-            totalBits += trackBr * dur
-            totalDuration += dur
-          }
-        }
-        if (totalDuration > 0 && totalBits > 0) {
-          br = Math.round(totalBits / totalDuration)
-        }
-      }
-      if (!br && this.media.duration && this.media.size) {
-        br = Math.round((this.media.size * 8) / this.media.duration)
-      }
-      if (!br || typeof br !== 'number' || br <= 0) return null
-
-      const kbps = Math.round(br / 1000)
-      if (kbps <= 0) return null
-      return `${kbps} kbps`
     },
     numEpisodes() {
       return this.media.numEpisodes || 0

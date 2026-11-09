@@ -258,44 +258,7 @@ class Book extends Model {
   }
 
   get includedAudioFiles() {
-    return (this.audioFiles || []).filter((af) => !af.exclude)
-  }
-
-  get bitRate() {
-    const audioFiles = this.includedAudioFiles || []
-    if (audioFiles.length) {
-      let totalBits = 0
-      let totalDuration = 0
-      let count = 0
-      let sumBr = 0
-
-      for (const af of audioFiles) {
-        const br = af.bitRate
-        const dur = af.duration || 0
-        if (br && typeof br === 'number' && br > 0) {
-          count++
-          sumBr += br
-          if (dur > 0) {
-            totalBits += br * dur
-            totalDuration += dur
-          }
-        }
-      }
-
-      if (totalDuration > 0 && totalBits > 0) {
-        return Math.round(totalBits / totalDuration)
-      }
-      if (count > 0) {
-        return Math.round(sumBr / count)
-      }
-    }
-
-    if (this.duration && this.size) {
-      const calc = Math.round((this.size * 8) / this.duration)
-      if (calc > 0) return calc
-    }
-
-    return null
+    return this.audioFiles.filter((af) => !af.exclude)
   }
 
   get hasMediaFiles() {
@@ -692,7 +655,6 @@ class Book extends Model {
       numChapters: this.chapters?.length || 0,
       duration: this.duration,
       size: this.size,
-      bitRate: this.bitRate,
       ebookFormat: this.ebookFile?.ebookFormat
     }
   }
