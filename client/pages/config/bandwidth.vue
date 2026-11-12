@@ -637,7 +637,10 @@
               <span class="material-symbols text-sm mr-1">close</span>
               Clear Date Filter
             </ui-btn>
-            <p class="text-xs text-gray-400">{{ userBreakdown.length }} Users</p>
+            <p class="text-xs text-gray-400">
+              {{ userBreakdown.length }} {{ userBreakdown.length === 1 ? 'User' : 'Users' }}
+              <span v-if="breakdownTotalBytes > 0" class="font-mono text-gray-300"> • {{ $bytesPretty(breakdownTotalBytes) }}</span>
+            </p>
           </div>
         </div>
 
@@ -657,7 +660,9 @@
             </thead>
             <tbody class="divide-y divide-white/5">
               <tr v-if="!userBreakdown.length">
-                <td colspan="8" class="text-center py-8 text-gray-400 text-sm">No user data recorded for this time frame.</td>
+                <td colspan="8" class="text-center py-8 text-gray-400 text-sm">
+                  {{ selectedDate ? `No user data recorded for ${selectedDate}.` : 'No user data recorded for this time frame.' }}
+                </td>
               </tr>
               <tr
                 v-for="user in userBreakdown"
@@ -769,6 +774,7 @@ export default {
       waveformPeakBytes: 0,
       waveformPeakMbps: 0,
       filteredTotalBytes: 0,
+      breakdownTotalBytes: 0,
       allUsers: []
     }
   },
@@ -1030,6 +1036,7 @@ export default {
           this.waveformPeakBytes = data.waveformPeakBytes || 0
           this.waveformPeakMbps = data.waveformPeakMbps || 0
           this.filteredTotalBytes = data.rangeTotalBytes || 0
+          this.breakdownTotalBytes = data.breakdownTotalBytes || 0
         }
       } catch (err) {
         console.error('Failed to load bandwidth stats:', err)

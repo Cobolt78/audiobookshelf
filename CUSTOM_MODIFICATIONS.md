@@ -45,8 +45,10 @@ This document tracks all custom features, fixes, and architectural modifications
      - Added `BandwidthItemStat` model and `bandwidthItemStats` table tracking per-user, per-day, and per-book egress (`libraryItemId`, `itemName`, `category`, `bytesLocal`, `bytesInternet`, `bytesTotal`, `requests`).
      - Identifies titles and items from `/api/items/:id/...`, active playback sessions (`/public/session/:id/track/:index`), and HLS streams (`/hls/:stream/:file`) with in-memory caching.
      - Displays dedicated "Book & Media Activity Breakdown" table when a user is selected or date is filtered.
-  9. **Interactive Date Bar Filtering & Tooltip Clarity**:
-     - Clicking any bar in the timeline chart filters stats and book activity specifically to that single date, with a one-click "✕ Clear Date Filter" button.
+  9. **Interactive Date Bar Filtering & User Breakdown**:
+     - Clicking any bar in the timeline chart filters stats, user breakdown, and book activity specifically to that single date, with a one-click "✕ Clear Date Filter" button.
+     - Fixed user breakdown aggregation to strictly filter by selected date and compute user percentage against the selected date's traffic volume (or overall range total when no date is selected).
+     - Displays total data volume and user count on the selected date breakdown header.
      - Fixed tooltips and summary metrics to dynamically reflect the selected traffic filter (All, Internet WAN, or Local LAN) with explicit notices for historical data recorded prior to LAN/WAN separation.
   10. **Streamlined Navigation & Clickable Users**:
       - Clicking any user in the "Data Usage Breakdown by User" table immediately selects and navigates to that user's detailed view.
@@ -86,6 +88,7 @@ This document tracks all custom features, fixes, and architectural modifications
 * `client/pages/config.vue`
 * `client/pages/config/bandwidth.vue`
 * `client/pages/config/users/_id/index.vue`
+* `test/server/managers/BandwidthManager.test.js`
 
 ---
 
@@ -350,3 +353,4 @@ Displays the audio bitrate directly on the book details page under the file size
 | `server/utils/queries/libraryFilters.js` | Series upcoming home shelf feed, and dual Base64/plain-text decoder |
 | `server/utils/queries/libraryItemsBookFilters.js` | Series discovery filtering & removed single-item limit |
 | `server/utils/queries/seriesFilters.js` | Series completion filters (Has Missing, Complete, Has Upcoming) and sorting |
+| `test/server/managers/BandwidthManager.test.js` | Automated unit test suite verifying bandwidth user breakdown date and trafficType filtering |

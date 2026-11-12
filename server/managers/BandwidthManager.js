@@ -976,12 +976,33 @@ class BandwidthManager {
       usernameMap.set(u.id, u.username)
     }
 
+    // Compute rangeTotalBytes from the timeline records
     for (const rec of filteredRecords) {
+      if (options.trafficType === 'internet') {
+        rangeTotalBytes += Number(rec.bytesInternet || 0)
+      } else if (options.trafficType === 'local') {
+        rangeTotalBytes += Number(rec.bytesLocal || 0)
+      } else {
+        rangeTotalBytes += Number(rec.bytesTotal || 0)
+      }
+    }
+
+    // When a specific date is selected, aggregate user breakdown strictly for that date
+    const userRecords = options.date
+      ? allRecords.filter((rec) => {
+          if (rec.date !== options.date) return false
+          if (options.userId && rec.userId !== options.userId) return false
+          return true
+        })
+      : filteredRecords
+
+    let breakdownTotalBytes = 0
+    for (const rec of userRecords) {
       let userEntry = userMap.get(rec.userId)
       if (!userEntry) {
         userEntry = {
           userId: rec.userId,
-          username: rec.userId === 'anonymous' ? 'Anonymous / Unauthenticated' : usernameMap.get(rec.userId) || 'Unknown User',
+          username: rec.userId === 'anonymous' ? 'Anonymous / Public' : usernameMap.get(rec.userId) || 'Unknown User',
           bytesStream: 0,
           bytesDownload: 0,
           bytesOther: 0,
@@ -1002,11 +1023,11 @@ class BandwidthManager {
       userEntry.requests += Number(rec.requests || 0)
 
       if (options.trafficType === 'internet') {
-        rangeTotalBytes += Number(rec.bytesInternet || 0)
+        breakdownTotalBytes += Number(rec.bytesInternet || 0)
       } else if (options.trafficType === 'local') {
-        rangeTotalBytes += Number(rec.bytesLocal || 0)
+        breakdownTotalBytes += Number(rec.bytesLocal || 0)
       } else {
-        rangeTotalBytes += Number(rec.bytesTotal || 0)
+        breakdownTotalBytes += Number(rec.bytesTotal || 0)
       }
     }
 
@@ -1016,7 +1037,7 @@ class BandwidthManager {
         if (options.trafficType === 'internet') userTrafficBytes = u.bytesInternet
         else if (options.trafficType === 'local') userTrafficBytes = u.bytesLocal
 
-        u.percentOfTotal = rangeTotalBytes > 0 ? Number(((userTrafficBytes / rangeTotalBytes) * 100).toFixed(1)) : 0
+        u.percentOfTotal = breakdownTotalBytes > 0 ? Number(((userTrafficBytes / breakdownTotalBytes) * 100).toFixed(1)) : 0
         return u
       })
       .sort((a, b) => {
@@ -1273,7 +1294,8 @@ class BandwidthManager {
       waveform10m,
       waveformPeakBytes,
       waveformPeakMbps,
-      rangeTotalBytes
+      rangeTotalBytes,
+      breakdownTotalBytes
     }
   }
 
