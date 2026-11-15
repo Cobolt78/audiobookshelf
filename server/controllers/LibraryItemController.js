@@ -19,6 +19,7 @@ const RssFeedManager = require('../managers/RssFeedManager')
 const CacheManager = require('../managers/CacheManager')
 const CoverManager = require('../managers/CoverManager')
 const ShareManager = require('../managers/ShareManager')
+const SeriesProviderManager = require('../managers/SeriesProviderManager')
 
 /**
  * @typedef RequestUserObject
@@ -281,7 +282,6 @@ class LibraryItemController {
 
       if (req.libraryItem.isBook && req.libraryItem.media) {
         try {
-          const SeriesProviderManager = require('../managers/SeriesProviderManager')
           await SeriesProviderManager.reconcileBookAgainstProviderEntries(req.libraryItem.media, req.libraryItem.libraryId)
         } catch (reconcileErr) {
           Logger.warn(`[LibraryItemController] Failed reconciling series provider entries for book "${req.libraryItem.media.title}": ${reconcileErr.message}`)
@@ -720,6 +720,12 @@ class LibraryItemController {
         await libraryItem.save()
 
         await libraryItem.saveMetadataFile()
+
+        if (libraryItem.isBook) {
+          await SeriesProviderManager.reconcileBookAgainstProviderEntries(libraryItem.media, libraryItem.libraryId).catch((err) => {
+            Logger.error(`[LibraryItemController] Failed to reconcile book against provider entries in batchUpdate: ${err.message}`)
+          })
+        }
 
         Logger.debug(`[LibraryItemController] Updated library item media "${libraryItem.media.title}"`)
         SocketAuthority.libraryItemEmitter('item_updated', libraryItem)

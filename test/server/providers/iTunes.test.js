@@ -34,6 +34,8 @@ describe('iTunes Series Provider', () => {
     it('rejects candidate when author does not match series authors', () => {
       expect(itunes.matchesAuthor('Stephen King', ['Brandon Sanderson'])).to.be.false
       expect(itunes.matchesAuthor('Joe Abercrombie', ['Brandon Sanderson', 'Robert Jordan'])).to.be.false
+      expect(itunes.matchesAuthor('Stephen Fry', ['Stephen King'])).to.be.false
+      expect(itunes.matchesAuthor('Stanley King', ['Stephen King'])).to.be.false
     })
   })
 
@@ -50,6 +52,7 @@ describe('iTunes Series Provider', () => {
     it('rejects unrelated series or standalone titles', () => {
       expect(itunes.matchesSeries('Elantris (Unabridged)', 'The Stormlight Archive')).to.be.false
       expect(itunes.matchesSeries('Warbreaker', 'Mistborn')).to.be.false
+      expect(itunes.matchesSeries('Aftermath of War', 'Aftermath', false)).to.be.false
     })
   })
 
@@ -59,12 +62,13 @@ describe('iTunes Series Provider', () => {
       expect(itunes.extractPosition('Edgedancer: From Arcanum Unbounded, Book 2.5')).to.equal('2.5')
       expect(itunes.extractPosition('Rhythm of War: Book 4')).to.equal('4')
       expect(itunes.extractPosition('Dawnshard #3.5')).to.equal('3.5')
+      expect(itunes.extractPosition('The Dragons of Dorcastle (Pillars of Reality, Book One)')).to.equal('1')
       expect(itunes.extractPosition('Standalone Novel')).to.be.null
     })
   })
 
   describe('isBookOwned', () => {
-    it('identifies owned books by title or sequence', () => {
+    it('identifies owned books by title or sequence without eponymous series false-positives', () => {
       const ownedBooks = [
         { title: 'The Way of Kings', sequence: '1' },
         { title: 'Words of Radiance', sequence: '2' }
@@ -73,6 +77,7 @@ describe('iTunes Series Provider', () => {
       expect(itunes.isBookOwned({ collectionName: 'The Way of Kings: The Stormlight Archive, Book 1' }, ownedBooks, 'The Stormlight Archive')).to.be.true
       expect(itunes.isBookOwned({ collectionName: 'The Stormlight Archive: Book 2' }, ownedBooks, 'The Stormlight Archive')).to.be.true
       expect(itunes.isBookOwned({ collectionName: 'Oathbringer: The Stormlight Archive, Book 3' }, ownedBooks, 'The Stormlight Archive')).to.be.false
+      expect(itunes.isBookOwned({ collectionName: 'Foundation and Empire (Foundation, Book 2)' }, [{ title: 'Foundation', sequence: '1' }], 'Foundation')).to.be.false
     })
   })
 

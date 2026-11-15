@@ -183,20 +183,125 @@ class iTunes {
   }
 
   /**
-   * Clean a title by removing series prefix and common audio format tags
+   * Strip series name prefixes/suffixes, book number tags, and audio format markers
+   * while preserving the book's actual distinctive title.
+   * @param {string} title
+   * @param {string} [seriesName]
+   * @returns {string}
+   */
+  stripSeriesAndBookTags(title, seriesName) {
+    if (!title || typeof title !== 'string') return ''
+    let s = title.trim()
+
+    // Remove parenthetical/bracketed format markers
+    s = s.replace(/\s*[\(\[](?:unabridged|abridged|audiobook|dramatized[^)\]]*)[\)\]]/gi, '').trim()
+
+    if (seriesName && typeof seriesName === 'string') {
+      const rawVariants = new Set([
+        seriesName.trim(),
+        seriesName.replace(/^the\s+/i, '').trim(),
+        seriesName.replace(/\b(series|trilogy|saga|chronicles|chronicle|duology|quartet)\b/gi, '').trim(),
+        seriesName
+          .replace(/^the\s+/i, '')
+          .replace(/\b(series|trilogy|saga|chronicles|chronicle|duology|quartet)\b/gi, '')
+          .trim()
+      ])
+
+      for (const variant of rawVariants) {
+        if (!variant || variant.length < 2) continue
+        const escaped = variant.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+
+        // 1. Strip trailing parenthetical series tag, e.g. "Title (The Series Name, Book 3)"
+        const parenSuffixRe = new RegExp(`\\s*[\\(\\[](?:the\\s+)?${escaped}(?:\\s*[,:\\-–—]?\\s*(?:book|bk\\.?|vol\\.?|volume|part|#)?\\s*[a-z0-9.]+)?[\\)\\]]\\s*$`, 'i')
+        const withoutParen = s.replace(parenSuffixRe, '').trim()
+        if (withoutParen.length >= 2) s = withoutParen
+
+        // 2. Strip trailing colon/dash series tag, e.g. "Title: The Series Name, Book 3"
+        const colonSuffixRe = new RegExp(`\\s*[:\\-–—,]\\s*(?:the\\s+)?${escaped}(?:\\s*[,:\\-–—]?\\s*(?:book|bk\\.?|vol\\.?|volume|part|#)\\s*[a-z0-9.]+)?\\s*$`, 'i')
+        const withoutColonSuffix = s.replace(colonSuffixRe, '').trim()
+        if (withoutColonSuffix.length >= 2) s = withoutColonSuffix
+
+        // 3. Strip leading series prefix, e.g. "The Series Name: Book Title"
+        const prefixRe = new RegExp(`^(?:the\\s+)?${escaped}(?:\\s*[,:\\-–—]?\\s*(?:book|bk\\.?|vol\\.?|volume|part|#)\\s*[a-z0-9.]+)?\\s*[:\\-–—]\\s*`, 'i')
+        const withoutPrefix = s.replace(prefixRe, '').trim()
+        if (withoutPrefix.length >= 2) s = withoutPrefix
+      }
+    }
+
+    // Strip standalone trailing book number tags, e.g. "(Book 3)" or ", Book 3"
+    const withoutBookTag = s
+      .replace(/\s*[\(\[](?:book|bk\.?|vol\.?|volume|part)\s*#?\s*[a-z0-9.]+[\)\]]\s*$/i, '')
+      .replace(/\s*[,:\-–—]\s*(?:book|bk\.?|vol\.?|volume|part)\s*#?\s*[a-z0-9.]+\s*$/i, '')
+      .trim()
+    if (withoutBookTag.length >= 2) s = withoutBookTag
+
+    return s
+  }
+
+  /**
+   * Extract normalized base title (before subtitle separator) after stripping series/book tags.
+   * Returns empty string if the base title is just the series name itself while the full title is longer.
+   * @param {string} title
+   * @param {string} [seriesName]
+   * @returns {string}
+   */
+  extractSafeBaseTitle(title, seriesName) {
+    const stripped = this.stripSeriesAndBookTags(title, seriesName)
+    if (!stripped) return ''
+    const basePart = stripped.split(/[:\-–—]/)[0].trim()
+    const normBase = this.normalizedTitle(basePart)
+    const normFull = this.normalizedTitle(stripped)
+    const normSeries = seriesName ? this.normalizedTitle(seriesName) : ''
+
+    if (!normBase || normBase.length < 3) return ''
+    if (normSeries && normBase === normSeries && normFull !== normSeries) {
+      return ''
+    }
+    return normBase
+  }
+
+  /**
+   * Clean a title by removing series prefix/suffix and common audio format tags
    * @param {string} title
    * @param {string} [seriesName]
    * @returns {string}
    */
   cleanTitle(title, seriesName) {
     if (!title || typeof title !== 'string') return ''
-    let s = title.toLowerCase()
-    if (seriesName) {
-      const escaped = seriesName.replace(/[^a-z0-9]/gi, '\\$&')
-      s = s.replace(new RegExp('^' + escaped + '[:\\s-]*', 'i'), '')
-    }
+    let s = this.stripSeriesAndBookTags(title, seriesName).toLowerCase()
     s = s.replace(/\b(short story|novella|audiobook|unabridged|abridged)\b/gi, '')
-    return s.replace(/[^a-z0-9]/g, '')
+    return s.replace(/[^a-z0-9]/g, '').replace(/^the/, '')
+  }
+
+  /**
+   * Clean redundant "(Unabridged)" / "[Unabridged]" markers from iTunes display title
+   * @param {string} rawTitle
+   * @returns {string}
+   */
+  formatDisplayTitle(rawTitle) {
+    if (!rawTitle || typeof rawTitle !== 'string') return ''
+    return rawTitle
+      .replace(/\s*[\(\[]unabridged[\)\]]\s*/gi, ' ')
+      .replace(/\s{2,}/g, ' ')
+      .trim()
+  }
+
+  /**
+   * Score an iTunes audiobook edition so Unabridged editions with rich metadata win deduplication
+   * @param {object} data
+   * @returns {number}
+   */
+  editionScore(data) {
+    if (!data) return 0
+    const rawTitle = data.collectionName || ''
+    let score = 0
+    if (/\bunabridged\b/i.test(rawTitle)) score += 10
+    if (/\babridged\b/i.test(rawTitle) && !/\bunabridged\b/i.test(rawTitle)) score -= 20
+    if (/\b(dramatized|sampler|excerpt|preview)\b/i.test(rawTitle)) score -= 15
+    if (data.artworkUrl100) score += 2
+    if (data.description) score += 2
+    if (data.trackTimeMillis) score += data.trackTimeMillis / 1000000
+    return score
   }
 
   /**
@@ -218,6 +323,34 @@ class iTunes {
         return match[1]
       }
     }
+
+    const wordNumbers = {
+      one: '1',
+      two: '2',
+      three: '3',
+      four: '4',
+      five: '5',
+      six: '6',
+      seven: '7',
+      eight: '8',
+      nine: '9',
+      ten: '10',
+      eleven: '11',
+      twelve: '12',
+      thirteen: '13',
+      fourteen: '14',
+      fifteen: '15',
+      sixteen: '16',
+      seventeen: '17',
+      eighteen: '18',
+      nineteen: '19',
+      twenty: '20'
+    }
+    const wordMatch = collectionName.match(/\b(?:book|bk\.?|volume|vol\.?|part)\s+(one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty)\b/i)
+    if (wordMatch && wordMatch[1]) {
+      return wordNumbers[wordMatch[1].toLowerCase()] || null
+    }
+
     return null
   }
 
@@ -231,29 +364,70 @@ class iTunes {
     if (!seriesAuthors || !seriesAuthors.length) return true
     if (!artistName || typeof artistName !== 'string') return false
 
-    const cleanArtist = artistName.toLowerCase().replace(/[^a-z0-9\s,]/g, ' ')
-    const artistTokens = cleanArtist.split(/[\s,]+/).filter(Boolean)
+    const suffixes = new Set(['jr', 'sr', 'ii', 'iii', 'iv', 'phd', 'md', 'esq'])
+    const cleanArtist = artistName
+      .toLowerCase()
+      .replace(/[^a-z0-9\s]/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim()
+    const artistTokens = cleanArtist.split(' ').filter((t) => t && !suffixes.has(t))
+    if (!artistTokens.length) return false
 
     for (const author of seriesAuthors) {
       if (!author || typeof author !== 'string') continue
-      const cleanAuthor = author.toLowerCase().replace(/[^a-z0-9\s,]/g, ' ')
+      const cleanAuthor = author
+        .toLowerCase()
+        .replace(/[^a-z0-9\s]/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim()
+      if (!cleanAuthor) continue
 
-      // Substring match
-      if (cleanArtist.includes(cleanAuthor) || cleanAuthor.includes(cleanArtist)) {
+      // Direct full-name containment check
+      if (cleanArtist.includes(cleanAuthor) || (cleanArtist.length >= 4 && cleanAuthor.includes(cleanArtist))) {
         return true
       }
 
-      const authorTokens = cleanAuthor.split(/[\s,]+/).filter(Boolean)
-      if (!authorTokens.length) continue
+      let surname = ''
+      let firstToken = ''
 
-      // Identify surname (longest token) and first initial
-      const surname = authorTokens.reduce((longest, t) => (t.length > longest.length ? t : longest), '')
-      const firstToken = authorTokens[0]
-      const firstInitial = firstToken[0]
+      if (author.includes(',')) {
+        // "Last, First Middle" format
+        const [lastPart, firstPart] = author.toLowerCase().split(',', 2)
+        const lastTokens = lastPart
+          .replace(/[^a-z0-9\s]/g, ' ')
+          .split(/\s+/)
+          .filter((t) => t && !suffixes.has(t))
+        const firstTokens = (firstPart || '')
+          .replace(/[^a-z0-9\s]/g, ' ')
+          .split(/\s+/)
+          .filter((t) => t && !suffixes.has(t))
+        surname = lastTokens[lastTokens.length - 1] || ''
+        firstToken = firstTokens[0] || ''
+      } else {
+        // "First Middle Last" format
+        const authorTokens = cleanAuthor.split(' ').filter((t) => t && !suffixes.has(t))
+        if (!authorTokens.length) continue
+        if (authorTokens.length === 1) {
+          if (artistTokens.includes(authorTokens[0])) return true
+          continue
+        }
+        firstToken = authorTokens[0]
+        surname = authorTokens[authorTokens.length - 1]
+      }
 
-      if (surname && artistTokens.includes(surname)) {
-        const hasInitialOrFirst = artistTokens.some((t) => t === firstToken || t.startsWith(firstInitial))
-        if (hasInitialOrFirst) return true
+      if (!surname) continue
+
+      // Require artistTokens to match surname AND a separate token matching firstToken (or initial when one side is an initial)
+      for (let sIdx = 0; sIdx < artistTokens.length; sIdx++) {
+        if (artistTokens[sIdx] !== surname) continue
+        const hasDistinctFirstMatch = artistTokens.some((t, fIdx) => {
+          if (fIdx === sIdx) return false
+          if (t === firstToken) return true
+          if (firstToken.length === 1 && t.startsWith(firstToken)) return true
+          if (t.length === 1 && firstToken.startsWith(t)) return true
+          return false
+        })
+        if (hasDistinctFirstMatch) return true
       }
     }
 
@@ -264,13 +438,21 @@ class iTunes {
    * Check if collectionName explicitly contains the normalized seriesName
    * @param {string} collectionName
    * @param {string} seriesName
+   * @param {boolean} [hasKnownAuthors=true]
    * @returns {boolean}
    */
-  matchesSeries(collectionName, seriesName) {
+  matchesSeries(collectionName, seriesName, hasKnownAuthors = true) {
     if (!collectionName || !seriesName) return false
     const normCollection = this.normalizedTitle(collectionName)
     const normSeries = this.normalizedTitle(seriesName)
     if (!normSeries) return false
+
+    // When a series in ABS has no author metadata and a short single-word title,
+    // require an explicit book/sequence indicator to avoid unrelated keyword hits.
+    if (!hasKnownAuthors && normSeries.length < 10) {
+      const hasPos = this.extractPosition(collectionName, seriesName) !== null
+      if (!hasPos) return false
+    }
 
     if (normCollection.includes(normSeries)) {
       return true
@@ -296,33 +478,38 @@ class iTunes {
   isBookOwned(candidate, ownedBooks = [], seriesName) {
     const candTitle = candidate.collectionName || ''
     const normCandTitle = this.normalizedTitle(candTitle)
-    const candBase = candTitle.split(/[:\-–—]/)[0].trim()
-    const normCandBase = this.normalizedTitle(candBase)
+    const normCandBase = this.extractSafeBaseTitle(candTitle, seriesName)
     const candClean = this.cleanTitle(candTitle, seriesName)
     const candPos = this.extractPosition(candTitle, seriesName)
     const candPosNum = candPos ? parseFloat(candPos) : null
+    const normSeries = seriesName ? this.normalizedTitle(seriesName) : ''
 
     for (const owned of ownedBooks) {
       if (!owned) continue
-      if (owned.title) {
-        const normOwned = this.normalizedTitle(owned.title)
-        if (normOwned && (normOwned === normCandTitle || normOwned === normCandBase)) {
-          return true
-        }
-        const ownedBase = owned.title.split(/[:\-–—]/)[0].trim()
-        const normOwnedBase = this.normalizedTitle(ownedBase)
-        if (normOwnedBase && (normOwnedBase === normCandTitle || normOwnedBase === normCandBase)) {
-          return true
-        }
-        const ownedClean = this.cleanTitle(owned.title, seriesName)
-        if (candClean && ownedClean && (candClean === ownedClean || candClean.includes(ownedClean) || ownedClean.includes(candClean))) {
-          return true
-        }
-      }
       if (candPosNum !== null && !isNaN(candPosNum) && owned.sequence !== null && owned.sequence !== undefined) {
         const ownedSeqNum = parseFloat(owned.sequence)
         if (!isNaN(ownedSeqNum) && ownedSeqNum === candPosNum) {
           return true
+        }
+      }
+      if (owned.title) {
+        const normOwned = this.normalizedTitle(owned.title)
+        if (normOwned && (normOwned === normCandTitle || (normCandBase && normOwned === normCandBase))) {
+          return true
+        }
+        const ownedClean = this.cleanTitle(owned.title, seriesName)
+        if (candClean && ownedClean && candClean === ownedClean) {
+          return true
+        }
+        const normOwnedBase = this.extractSafeBaseTitle(owned.title, seriesName)
+        if (normOwnedBase && (normOwnedBase === normCandTitle || normOwnedBase === candClean || (normCandBase && normOwnedBase === normCandBase))) {
+          return true
+        }
+        // Only allow prefix containment when neither side is just the eponymous series title
+        if (candClean && ownedClean && candClean !== normSeries && ownedClean !== normSeries && candClean.length >= 6 && ownedClean.length >= 6) {
+          if (candClean.startsWith(ownedClean) || ownedClean.startsWith(candClean)) {
+            return true
+          }
         }
       }
     }
@@ -390,17 +577,18 @@ class iTunes {
     }
 
     // Strict anti-false-positive filtering
+    const hasKnownAuthors = Boolean(seriesAuthors && seriesAuthors.length > 0)
     const validCandidates = []
     for (const item of results) {
       if (!item.collectionName) continue
 
       // 1. Author check
-      if (seriesAuthors && seriesAuthors.length > 0 && !this.matchesAuthor(item.artistName, seriesAuthors)) {
+      if (hasKnownAuthors && !this.matchesAuthor(item.artistName, seriesAuthors)) {
         continue
       }
 
       // 2. Series match check
-      if (!this.matchesSeries(item.collectionName, seriesName)) {
+      if (!this.matchesSeries(item.collectionName, seriesName, hasKnownAuthors)) {
         continue
       }
 
@@ -427,7 +615,7 @@ class iTunes {
       const isUpcoming = Boolean(releaseDate && releaseDate > todayIso)
 
       return {
-        title: data.collectionName.trim(),
+        title: this.formatDisplayTitle(data.collectionName),
         author,
         narrator: null,
         position: !isNaN(posNum) && posNum !== null ? position : null,
@@ -440,25 +628,25 @@ class iTunes {
         provider: 'itunes',
         entryType: isUpcoming ? 'upcoming' : 'missing',
         isReleased: !isUpcoming,
-        trackTimeMillis: data.trackTimeMillis || 0
+        score: this.editionScore(data)
       }
     })
 
-    // Deduplicate: If multiple editions exist for the same sequence position, pick one with longest track time
+    // Deduplicate: If multiple editions exist for the same sequence position or cleaned title, keep highest-scored edition
     const numberedGrouped = new Map()
     const unnumberedGrouped = new Map()
 
     for (const c of parsedCandidates) {
       if (c.posNum !== null) {
         const existing = numberedGrouped.get(c.posNum)
-        if (!existing || c.trackTimeMillis > existing.trackTimeMillis) {
+        if (!existing || c.score > existing.score) {
           numberedGrouped.set(c.posNum, c)
         }
       } else {
-        const normTitle = this.normalizedTitle(c.title)
-        const existing = unnumberedGrouped.get(normTitle)
-        if (!existing || c.trackTimeMillis > existing.trackTimeMillis) {
-          unnumberedGrouped.set(normTitle, c)
+        const cleanKey = this.cleanTitle(c.title, seriesName) || this.normalizedTitle(c.title)
+        const existing = unnumberedGrouped.get(cleanKey)
+        if (!existing || c.score > existing.score) {
+          unnumberedGrouped.set(cleanKey, c)
         }
       }
     }

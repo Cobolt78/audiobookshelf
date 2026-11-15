@@ -200,20 +200,95 @@ class Audible {
   }
 
   /**
-   * Clean a title by removing series prefix and common audio format tags
+   * Strip series name prefixes/suffixes, book number tags, and audio format markers
+   * while preserving the book's actual distinctive title.
+   * @param {string} title
+   * @param {string} [seriesName]
+   * @returns {string}
+   */
+  stripSeriesAndBookTags(title, seriesName) {
+    if (!title || typeof title !== 'string') return ''
+    let s = title.trim()
+
+    // Remove parenthetical/bracketed format markers
+    s = s.replace(/\s*[\(\[](?:unabridged|abridged|audiobook|dramatized[^)\]]*)[\)\]]/gi, '').trim()
+
+    if (seriesName && typeof seriesName === 'string') {
+      const rawVariants = new Set([
+        seriesName.trim(),
+        seriesName.replace(/^the\s+/i, '').trim(),
+        seriesName.replace(/\b(series|trilogy|saga|chronicles|chronicle|duology|quartet)\b/gi, '').trim(),
+        seriesName
+          .replace(/^the\s+/i, '')
+          .replace(/\b(series|trilogy|saga|chronicles|chronicle|duology|quartet)\b/gi, '')
+          .trim()
+      ])
+
+      for (const variant of rawVariants) {
+        if (!variant || variant.length < 2) continue
+        const escaped = variant.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+
+        // 1. Strip trailing parenthetical series tag, e.g. "Title (The Series Name, Book 3)"
+        const parenSuffixRe = new RegExp(`\\s*[\\(\\[](?:the\\s+)?${escaped}(?:\\s*[,:\\-–—]?\\s*(?:book|bk\\.?|vol\\.?|volume|part|#)?\\s*[a-z0-9.]+)?[\\)\\]]\\s*$`, 'i')
+        const withoutParen = s.replace(parenSuffixRe, '').trim()
+        if (withoutParen.length >= 2) s = withoutParen
+
+        // 2. Strip trailing colon/dash series tag, e.g. "Title: The Series Name, Book 3"
+        const colonSuffixRe = new RegExp(`\\s*[:\\-–—,]\\s*(?:the\\s+)?${escaped}(?:\\s*[,:\\-–—]?\\s*(?:book|bk\\.?|vol\\.?|volume|part|#)\\s*[a-z0-9.]+)?\\s*$`, 'i')
+        const withoutColonSuffix = s.replace(colonSuffixRe, '').trim()
+        if (withoutColonSuffix.length >= 2) s = withoutColonSuffix
+
+        // 3. Strip leading series prefix, e.g. "The Series Name: Book Title" or "Series Name, Book 2: Book Title"
+        const prefixRe = new RegExp(`^(?:the\\s+)?${escaped}(?:\\s*[,:\\-–—]?\\s*(?:book|bk\\.?|vol\\.?|volume|part|#)\\s*[a-z0-9.]+)?\\s*[:\\-–—]\\s*`, 'i')
+        const withoutPrefix = s.replace(prefixRe, '').trim()
+        if (withoutPrefix.length >= 2) s = withoutPrefix
+      }
+    }
+
+    // Strip standalone trailing book number tags, e.g. "(Book 3)" or ", Book 3"
+    const withoutBookTag = s
+      .replace(/\s*[\(\[](?:book|bk\.?|vol\.?|volume|part)\s*#?\s*[a-z0-9.]+[\)\]]\s*$/i, '')
+      .replace(/\s*[,:\-–—]\s*(?:book|bk\.?|vol\.?|volume|part)\s*#?\s*\d+(?:\.\d+)?\s*$/i, '')
+      .trim()
+    if (withoutBookTag.length >= 2) s = withoutBookTag
+
+    return s
+  }
+
+  /**
+   * Extract normalized base title (before subtitle separator) after stripping series/book tags.
+   * Returns empty string if the base title is just the series name itself while the full title is longer.
+   * @param {string} title
+   * @param {string} [seriesName]
+   * @returns {string}
+   */
+  extractSafeBaseTitle(title, seriesName) {
+    const stripped = this.stripSeriesAndBookTags(title, seriesName)
+    if (!stripped) return ''
+    const basePart = stripped.split(/[:\-–—]/)[0].trim()
+    const normBase = this.normalizedTitle(basePart)
+    const normFull = this.normalizedTitle(stripped)
+    const normSeries = seriesName ? this.normalizedTitle(seriesName) : ''
+
+    if (!normBase || normBase.length < 3) return ''
+    // Never reduce a multi-part title down to just the series name
+    if (normSeries && normBase === normSeries && normFull !== normSeries) {
+      return ''
+    }
+    return normBase
+  }
+
+  /**
+   * Clean a title by removing series prefix/suffix and common audio format tags
    * @param {string} title
    * @param {string} [seriesName]
    * @returns {string}
    */
   cleanTitle(title, seriesName) {
     if (!title || typeof title !== 'string') return ''
-    let s = title.toLowerCase()
-    if (seriesName) {
-      const escaped = seriesName.replace(/[^a-z0-9]/gi, '\\$&')
-      s = s.replace(new RegExp('^' + escaped + '[:\\s-]*', 'i'), '')
-    }
-    s = s.replace(/\b(short story|novella|audiobook|unabridged)\b/gi, '')
-    return s.replace(/[^a-z0-9]/g, '')
+    let s = this.stripSeriesAndBookTags(title, seriesName).toLowerCase()
+    s = s.replace(/\b(short story|novella|audiobook|unabridged|abridged)\b/gi, '')
+    return s.replace(/[^a-z0-9]/g, '').replace(/^the/, '')
   }
 
   /**
@@ -298,13 +373,13 @@ class Audible {
       return true
     }
 
-    const candBase = candidate.title.split(/[:\-–—]/)[0].trim()
-    const normCandBase = this.normalizedTitle(candBase)
+    const normCandBase = this.extractSafeBaseTitle(candidate.title, seriesName)
     if (normCandBase && normCandBase !== normCandTitle && ownedTitleSet.has(normCandBase)) {
       return true
     }
 
     const candClean = this.cleanTitle(candidate.title, seriesName)
+    const normSeries = seriesName ? this.normalizedTitle(seriesName) : ''
 
     for (const owned of ownedBooks) {
       if (candidate.posNum !== null && owned.sequence !== null && owned.sequence !== undefined) {
@@ -314,15 +389,22 @@ class Audible {
         }
       }
 
-      if (candClean && owned.title) {
+      if (owned.title) {
         const ownedClean = this.cleanTitle(owned.title, seriesName)
-        if (ownedClean && (candClean === ownedClean || candClean.includes(ownedClean) || ownedClean.includes(candClean))) {
+        if (candClean && ownedClean && candClean === ownedClean) {
           return true
         }
-        const ownedBase = owned.title.split(/[:\-–—]/)[0].trim()
-        const normOwnedBase = this.normalizedTitle(ownedBase)
-        if (normOwnedBase && (normOwnedBase === normCandTitle || normOwnedBase === normCandBase)) {
+
+        const normOwnedBase = this.extractSafeBaseTitle(owned.title, seriesName)
+        if (normOwnedBase && (normOwnedBase === normCandTitle || normOwnedBase === candClean || (normCandBase && normOwnedBase === normCandBase))) {
           return true
+        }
+
+        // Only allow substring containment when neither side is just the eponymous series title
+        if (candClean && ownedClean && candClean !== normSeries && ownedClean !== normSeries && candClean.length >= 6 && ownedClean.length >= 6) {
+          if (candClean.startsWith(ownedClean) || ownedClean.startsWith(candClean)) {
+            return true
+          }
         }
       }
     }

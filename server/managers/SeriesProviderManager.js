@@ -644,7 +644,7 @@ class SeriesProviderManager {
           }
         }
 
-        // 3. Title match (normalized, cleaned, or base title)
+        // 3. Title match (normalized, cleaned, or safe base title after stripping series/book tags)
         if (title && entry.title) {
           const normEntryTitle = this.audible.normalizedTitle(entry.title)
           if (normBookTitle && normEntryTitle && normBookTitle === normEntryTitle) {
@@ -659,10 +659,8 @@ class SeriesProviderManager {
             continue
           }
 
-          const baseEntry = entry.title.split(/[:\-–—]/)[0].trim()
-          const baseBook = title.split(/[:\-–—]/)[0].trim()
-          const normBaseEntry = this.audible.normalizedTitle(baseEntry)
-          const normBaseBook = this.audible.normalizedTitle(baseBook)
+          const normBaseEntry = this.audible.extractSafeBaseTitle(entry.title, seriesName)
+          const normBaseBook = this.audible.extractSafeBaseTitle(title, seriesName)
           if (normBaseEntry && normBaseBook && normBaseEntry === normBaseBook) {
             idsToDelete.push(entry.id)
             continue
@@ -676,6 +674,12 @@ class SeriesProviderManager {
           where: { id: idsToDelete }
         })
         totalDeleted += idsToDelete.length
+        SocketAuthority.emitter('series_provider_scan_completed', {
+          seriesId,
+          libraryId,
+          reconciled: true,
+          removedCount: idsToDelete.length
+        })
       }
     }
 
