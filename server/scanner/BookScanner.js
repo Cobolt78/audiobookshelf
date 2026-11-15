@@ -8,6 +8,7 @@ const parseEbookMetadata = require('../utils/parsers/parseEbookMetadata')
 const globals = require('../utils/globals')
 const { readTextFile, filePathToPOSIX, getFileTimestampsWithIno } = require('../utils/fileUtils')
 const htmlSanitizer = require('../utils/htmlSanitizer')
+const Logger = require('../Logger')
 
 const AudioFileScanner = require('./AudioFileScanner')
 const Database = require('../Database')
@@ -431,9 +432,19 @@ class BookScanner {
     libraryScan.seriesRemovedFromBooks.push(...bookSeriesRemoved)
     libraryScan.authorsRemovedFromBooks.push(...bookAuthorsRemoved)
 
+    const wasUpdated = hasMediaChanges || libraryItemUpdated || seriesUpdated || authorsUpdated
+    if (wasUpdated && existingLibraryItem.media) {
+      try {
+        const SeriesProviderManager = require('../managers/SeriesProviderManager')
+        await SeriesProviderManager.reconcileBookAgainstProviderEntries(existingLibraryItem.media, existingLibraryItem.libraryId)
+      } catch (reconcileErr) {
+        Logger.warn(`[BookScanner] Failed reconciling series provider entries for book "${existingLibraryItem.media.title}": ${reconcileErr.message}`)
+      }
+    }
+
     return {
       libraryItem: existingLibraryItem,
-      wasUpdated: hasMediaChanges || libraryItemUpdated || seriesUpdated || authorsUpdated
+      wasUpdated
     }
   }
 
@@ -642,6 +653,15 @@ class BookScanner {
     if (global.ServerSettings.storeMetadataWithItem && !libraryItem.isFile) {
       libraryItem.changed('libraryFiles', true)
       await libraryItem.save()
+    }
+
+    if (libraryItem.media) {
+      try {
+        const SeriesProviderManager = require('../managers/SeriesProviderManager')
+        await SeriesProviderManager.reconcileBookAgainstProviderEntries(libraryItem.media, libraryItemData.libraryId)
+      } catch (reconcileErr) {
+        Logger.warn(`[BookScanner] Failed reconciling series provider entries for new book "${libraryItem.media.title}": ${reconcileErr.message}`)
+      }
     }
 
     return libraryItem

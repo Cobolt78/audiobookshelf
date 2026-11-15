@@ -68,6 +68,8 @@ describe('Series Provider Endpoints & Completion Filters', () => {
       seriesId: series1.id,
       seriesName: series1.name,
       title: 'Words of Radiance',
+      author: 'Brandon Sanderson',
+      narrator: 'Michael Kramer, Kate Reading',
       position: '2',
       releaseDate: '2014-03-04',
       asin: 'B00HQ8XW5W',
@@ -132,6 +134,8 @@ describe('Series Provider Endpoints & Completion Filters', () => {
       seriesId: series3.id,
       seriesName: series3.name,
       title: 'Red God',
+      author: 'Pierce Brown',
+      narrator: 'Tim Gerard Reynolds',
       position: '7',
       releaseDate: '2027-05-01',
       asin: 'B0XYZ99999',
@@ -304,6 +308,8 @@ describe('Series Provider Endpoints & Completion Filters', () => {
       const data = res.json.firstCall.args[0]
       expect(data.upcomingReleases).to.have.lengthOf(1)
       expect(data.upcomingReleases[0].title).to.equal('Red God')
+      expect(data.upcomingReleases[0].author).to.equal('Pierce Brown')
+      expect(data.upcomingReleases[0].narrator).to.equal('Tim Gerard Reynolds')
       expect(data.total).to.equal(1)
       expect(data.scanStatus).to.exist
     })
@@ -321,6 +327,8 @@ describe('Series Provider Endpoints & Completion Filters', () => {
       const data = res.json.firstCall.args[0]
       expect(data.missingBooks).to.have.lengthOf(1)
       expect(data.missingBooks[0].title).to.equal('Words of Radiance')
+      expect(data.missingBooks[0].author).to.equal('Brandon Sanderson')
+      expect(data.missingBooks[0].narrator).to.equal('Michael Kramer, Kate Reading')
       expect(data.total).to.equal(1)
       expect(data.scanStatus).to.exist
     })
@@ -342,6 +350,8 @@ describe('Series Provider Endpoints & Completion Filters', () => {
       expect(data.seriesName).to.equal('The Stormlight Archive')
       expect(data.entries).to.have.lengthOf(1)
       expect(data.entries[0].title).to.equal('Words of Radiance')
+      expect(data.entries[0].author).to.equal('Brandon Sanderson')
+      expect(data.entries[0].narrator).to.equal('Michael Kramer, Kate Reading')
     })
   })
 })

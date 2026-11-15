@@ -77,6 +77,8 @@ describe('SeriesProviderManager & Cron Integration', () => {
       upcoming: [
         {
           title: 'The Lost Metal',
+          author: 'Brandon Sanderson',
+          narrator: 'Michael Kramer',
           position: '7',
           releaseDate: '2027-11-15',
           asin: 'B09XYZ1234',
@@ -88,6 +90,8 @@ describe('SeriesProviderManager & Cron Integration', () => {
       missing: [
         {
           title: 'The Well of Ascension',
+          author: 'Brandon Sanderson',
+          narrator: 'Michael Kramer',
           position: '2',
           releaseDate: '2007-08-21',
           asin: 'B002V0QKEW',
@@ -113,10 +117,14 @@ describe('SeriesProviderManager & Cron Integration', () => {
 
     const upcoming = entries.find((e) => e.entryType === 'upcoming')
     expect(upcoming.title).to.equal('The Lost Metal')
+    expect(upcoming.author).to.equal('Brandon Sanderson')
+    expect(upcoming.narrator).to.equal('Michael Kramer')
     expect(upcoming.isReleased).to.be.false
 
     const missing = entries.find((e) => e.entryType === 'missing')
     expect(missing.title).to.equal('The Well of Ascension')
+    expect(missing.author).to.equal('Brandon Sanderson')
+    expect(missing.narrator).to.equal('Michael Kramer')
     expect(missing.isReleased).to.be.true
 
     // Verify library settings updated
@@ -143,6 +151,123 @@ describe('SeriesProviderManager & Cron Integration', () => {
     const reloadedLib = await Database.libraryModel.findByPk(bookLibrary.id)
     expect(reloadedLib.settings.seriesScraperLastScan.status).to.equal('rate-limited')
     expect(socketEmitterStub.calledWith('series_provider_scan_failed')).to.be.true
+  })
+
+  it('falls back to iTunes when Audible skips series without matches', async () => {
+    sinon.stub(SeriesProviderManager.audible, 'fetchSeriesProviderEntries').resolves({
+      skipped: true,
+      reason: 'Series not found on Audible'
+    })
+
+    const itunesStub = sinon.stub(SeriesProviderManager.itunes, 'fetchSeriesProviderEntries').resolves({
+      skipped: false,
+      provider: 'itunes',
+      upcoming: [
+        {
+          title: 'Mistborn Secret History 2',
+          author: 'Brandon Sanderson',
+          narrator: null,
+          position: '3.6',
+          releaseDate: '2028-05-01',
+          asin: null,
+          providerUrl: 'https://books.apple.com/audiobook/secret-history/id999',
+          provider: 'itunes',
+          entryType: 'upcoming',
+          isReleased: false
+        }
+      ],
+      missing: []
+    })
+
+    const result = await SeriesProviderManager.scanSingleSeries(bookLibrary.id, testSeries.id)
+    expect(result.success).to.be.true
+    expect(itunesStub.calledOnce).to.be.true
+    expect(result.summary.upcomingFound).to.equal(1)
+
+    const entries = await Database.seriesProviderEntryModel.findAll({
+      where: { seriesId: testSeries.id }
+    })
+    expect(entries).to.have.lengthOf(1)
+    expect(entries[0].provider).to.equal('itunes')
+    expect(entries[0].title).to.equal('Mistborn Secret History 2')
+    expect(entries[0].author).to.equal('Brandon Sanderson')
+  })
+
+  it('reconciles book against provider entries and removes matching stale entries scoped to series', async () => {
+    const otherSeries = await Database.seriesModel.create({
+      name: 'Unrelated Series',
+      libraryId: bookLibrary.id
+    })
+
+    // 1. Entry in testSeries to be removed by ASIN / position / title
+    const entry1 = await Database.seriesProviderEntryModel.create({
+      libraryId: bookLibrary.id,
+      seriesId: testSeries.id,
+      seriesName: testSeries.name,
+      title: 'The Hero of Ages',
+      position: '3',
+      asin: 'B002V0QK99',
+      provider: 'audible',
+      entryType: 'missing',
+      isReleased: true,
+      lastScannedAt: Date.now()
+    })
+
+    // 2. Unrelated entry in testSeries that should remain
+    const entry2 = await Database.seriesProviderEntryModel.create({
+      libraryId: bookLibrary.id,
+      seriesId: testSeries.id,
+      seriesName: testSeries.name,
+      title: 'The Alloy of Law',
+      position: '4',
+      asin: 'B00547087A',
+      provider: 'audible',
+      entryType: 'missing',
+      isReleased: true,
+      lastScannedAt: Date.now()
+    })
+
+    // 3. Entry with matching title/asin in otherSeries (should NOT be removed)
+    const entry3 = await Database.seriesProviderEntryModel.create({
+      libraryId: bookLibrary.id,
+      seriesId: otherSeries.id,
+      seriesName: otherSeries.name,
+      title: 'The Hero of Ages',
+      position: '3',
+      asin: 'B002V0QK99',
+      provider: 'audible',
+      entryType: 'missing',
+      isReleased: true,
+      lastScannedAt: Date.now()
+    })
+
+    // Create a new book matching entry1 and associate it with testSeries
+    const matchedBook = await Database.bookModel.create({
+      title: 'The Hero of Ages',
+      asin: 'B002V0QK99'
+    })
+    await Database.bookSeriesModel.create({
+      bookId: matchedBook.id,
+      seriesId: testSeries.id,
+      sequence: '3'
+    })
+
+    const deletedCount = await SeriesProviderManager.reconcileBookAgainstProviderEntries(matchedBook)
+    expect(deletedCount).to.equal(1)
+
+    // Entry 1 removed
+    const remainingTestSeriesEntries = await Database.seriesProviderEntryModel.findAll({
+      where: { seriesId: testSeries.id }
+    })
+    expect(remainingTestSeriesEntries).to.have.lengthOf(1)
+    expect(remainingTestSeriesEntries[0].id).to.equal(entry2.id)
+
+    // Entry 3 in otherSeries remains untouched
+    const remainingOtherEntries = await Database.seriesProviderEntryModel.findAll({
+      where: { seriesId: otherSeries.id }
+    })
+    expect(remainingOtherEntries).to.have.lengthOf(1)
+    expect(remainingOtherEntries[0].id).to.equal(entry3.id)
   })
 
   it('manages cron lifecycle in CronManager for series provider', () => {

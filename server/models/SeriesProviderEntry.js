@@ -7,6 +7,8 @@ const { DataTypes, Model } = require('sequelize')
  * @property {UUIDV4} seriesId
  * @property {string} seriesName
  * @property {string} title
+ * @property {string} [author]
+ * @property {string} [narrator]
  * @property {string} [position]
  * @property {string} [releaseDate]
  * @property {string} [asin]
@@ -37,6 +39,10 @@ class SeriesProviderEntry extends Model {
     this.seriesName
     /** @type {string} */
     this.title
+    /** @type {string} */
+    this.author
+    /** @type {string} */
+    this.narrator
     /** @type {string} */
     this.position
     /** @type {string} */
@@ -90,6 +96,14 @@ class SeriesProviderEntry extends Model {
         title: {
           type: DataTypes.STRING,
           allowNull: false
+        },
+        author: {
+          type: DataTypes.TEXT,
+          allowNull: true
+        },
+        narrator: {
+          type: DataTypes.TEXT,
+          allowNull: true
         },
         position: {
           type: DataTypes.STRING,
@@ -179,6 +193,8 @@ class SeriesProviderEntry extends Model {
       seriesId: this.seriesId,
       seriesName: this.seriesName,
       title: this.title,
+      author: this.author || null,
+      narrator: this.narrator || null,
       position: this.position,
       releaseDate: this.releaseDate,
       asin: this.asin,

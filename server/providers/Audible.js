@@ -257,7 +257,7 @@ class Audible {
 
     for (const q of queries) {
       try {
-        let url = `https://api.audible${tld}/1.0/catalog/products?title=${encodeURIComponent(q)}&response_groups=product_attrs,rating,media,price&image_sizes=500&num_results=5`
+        let url = `https://api.audible${tld}/1.0/catalog/products?title=${encodeURIComponent(q)}&response_groups=contributors,product_attrs,rating,media,price&image_sizes=500&num_results=5`
         if (author) {
           url += `&author=${encodeURIComponent(author)}`
         }
@@ -482,7 +482,7 @@ class Audible {
 
     for (let i = 0; i < childAsins.length; i += batchSize) {
       const chunk = childAsins.slice(i, i + batchSize)
-      const productsUrl = `https://api.audible${tld}/1.0/catalog/products?asins=${chunk.join(',')}&response_groups=product_attrs,rating,media,price&image_sizes=500`
+      const productsUrl = `https://api.audible${tld}/1.0/catalog/products?asins=${chunk.join(',')}&response_groups=contributors,product_attrs,rating,media,price&image_sizes=500`
       const batchData = await this.requestAudible(productsUrl)
       if (Array.isArray(batchData?.products)) {
         hydratedProducts.push(...batchData.products)
@@ -521,10 +521,14 @@ class Audible {
       const numRatings = p.rating?.overall_distribution?.numRatings || p.rating?.overall_distribution?.num_ratings || 0
       const coverUrl = p.product_images?.['500'] || (p.product_images && Object.values(p.product_images)[0]) || null
       const summary = p.publisher_summary || p.merchandising_summary || p.summary || null
+      const author = Array.isArray(p.authors) ? p.authors.map((a) => a.name).filter(Boolean).join(', ') || null : null
+      const narrator = Array.isArray(p.narrators) ? p.narrators.map((n) => n.name).filter(Boolean).join(', ') || null : null
 
       return {
         asin,
         title: p.title.trim(),
+        author,
+        narrator,
         position: !isNaN(posNum) && posNum !== null ? position : null,
         posNum: !isNaN(posNum) ? posNum : null,
         releaseDate,
@@ -591,6 +595,8 @@ class Audible {
 
       const entry = {
         title: candidate.title,
+        author: candidate.author || null,
+        narrator: candidate.narrator || null,
         position: candidate.position,
         releaseDate: candidate.releaseDate,
         asin: candidate.asin,

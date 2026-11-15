@@ -1,9 +1,9 @@
 diff --git a/CUSTOM_MODIFICATIONS.md b/CUSTOM_MODIFICATIONS.md
 new file mode 100644
-index 00000000..69d80f0b
+index 00000000..678e34f1
 --- /dev/null
 +++ b/CUSTOM_MODIFICATIONS.md
-@@ -0,0 +1,356 @@
+@@ -0,0 +1,395 @@
 +# Audiobookshelf Custom Modifications (`v2.37.2-custom`)
 +
 +This document tracks all custom features, fixes, and architectural modifications made to Audiobookshelf in the `Cobolt78/audiobookshelf` repository.
@@ -98,28 +98,57 @@ index 00000000..69d80f0b
 +
 +---
 +
-+## 3. Audible Series Scraper & External Metadata Engine
++## 3. Series Metadata Scanner, iTunes Fallback & Real-Time Reconciliation
 +
 +### Summary
-+* **Problem**: Upstream Audiobookshelf has no visibility into missing books within a series or upcoming audiobook releases. Users had no way to know if new entries in their active series were releasing soon on Audible or if books were missing between existing volumes.
++* **Problem**: Upstream Audiobookshelf has no visibility into missing books within a series or upcoming audiobook releases. External applications (such as Books On Demand) and users had no automated mechanism to know when books were missing, lacked author and narrator details in provider feeds, had no fallback when Audible lacks a series entry, and had to wait for periodic scans to clear entries after adding or matching missing books.
 +* **Feature**:
 +  1. **Audible Metadata Provider Integration (`server/providers/Audible.js`)**:
 +     - Queries Audible search and series catalog APIs across configurable regions (`us`, `uk`, `de`, `fr`, `jp`, etc.).
-+     - Parses series structure, volume numbering, release dates, ASINs, and covers.
++     - Parses series structure, volume numbering, release dates, ASINs, covers, and contributors (`authors` and `narrators`).
++     - Extracts comma-separated author and narrator names for every candidate book.
 +     - Categorizes books into `owned` (already in library), `missing` (released books missing from library), and `upcoming` (future release dates).
-+  2. **SeriesProviderEntry Model & Migration (`server/models/SeriesProviderEntry.js`)**:
-+     - Database table `seriesProviderEntries` persists entries with `libraryId`, `seriesId`, `seriesName`, `title`, `position`, `releaseDate`, `asin`, `coverUrl`, `summary`, and `entryType` (`upcoming` vs `missing`).
-+  3. **SeriesProviderManager (`server/managers/SeriesProviderManager.js`)**:
++  2. **SeriesProviderEntry Model, Migration & Idempotent Schema Check (`server/models/SeriesProviderEntry.js`)**:
++     - Database table `seriesProviderEntries` persists entries with `libraryId`, `seriesId`, `seriesName`, `title`, `author` (`TEXT`), `narrator` (`TEXT`), `position`, `releaseDate`, `asin`, `coverUrl`, `summary`, `provider` (`'audible'` | `'itunes'`), and `entryType` (`upcoming` vs `missing`).
++     - Added migration `server/migrations/v2.37.3-add-author-narrator-to-series-provider-entries.js` to add `author` and `narrator` columns cleanly.
++     - Implemented idempotent startup column verification in `Database.ensureSeriesProviderColumns()` and `SeriesProviderManager.ensureColumns()` so legacy databases without a version bump never encounter `no such column` runtime errors.
++  3. **iTunes Fallback Scraper with Anti-False-Positive Validation (`server/providers/iTunes.js`)**:
++     - Fallback mechanism triggered in `SeriesProviderManager` when Audible returns no series matches or child entries.
++     - Queries iTunes audiobook search (`media: 'audiobook'`, `entity: 'audiobook'`) with polite backoff and rate-limit (HTTP 429) retry handling.
++     - **Strict Validation**:
++       1. **Author Verification**: If series authors are known, matches candidate's `artistName` against known authors by exact match, substring, or surname + first-initial.
++       2. **Series Match**: Verifies collection name contains the normalized series title or core series name without common suffixes (trilogy, saga, chronicles).
++       3. **Ownership Check**: Cross-references against library owned books by normalized title, base title, clean title, or sequence number.
++     - Standardizes entry shape with `provider: 'itunes'` and `asin: null`.
++  4. **Automatic Real-Time Reconciliation (`SeriesProviderManager.reconcileBookAgainstProviderEntries`)**:
++     - When a book is added, quick-matched, or metadata-edited, immediately reconciles against `seriesProviderEntries` to purge stale entries without waiting for scheduled scans.
++     - **Strict Series Scoping**: Scoped strictly to the book's assigned `seriesId`(s) in `bookSeries` so unassigned books do not prematurely clear provider entries.
++     - Deletes matching entries by ASIN (case-insensitive), sequence (numeric equality), or title (normalized, clean, or base title).
++     - Hooked into:
++       - `server/controllers/LibraryItemController.js`: `updateMedia`
++       - `server/scanner/Scanner.js`: `quickMatchLibraryItem`
++       - `server/scanner/BookScanner.js`: `scanExistingBookLibraryItem` and `scanNewBookLibraryItem`
++  5. **SeriesProviderManager (`server/managers/SeriesProviderManager.js`)**:
 +     - Manages background scan execution, cancellation, live rate limiting protection, and real-time WebSocket progress broadcasts (`series_provider_scan_progress`, `series_provider_scan_completed`, `series_provider_scan_cancelled`, `series_provider_scan_failed`).
 +     - Exposes REST endpoints `/api/libraries/:id/series-provider/scan`, `/cancel`, `/status`, and `/api/libraries/:id/upcoming-releases`.
 +
 +### Modified Files:
 +* `server/providers/Audible.js`
++* `server/providers/iTunes.js`
 +* `server/models/SeriesProviderEntry.js`
 +* `server/migrations/v2.37.1-create-series-provider-entries.js`
++* `server/migrations/v2.37.3-add-author-narrator-to-series-provider-entries.js`
 +* `server/managers/SeriesProviderManager.js`
 +* `server/controllers/LibraryController.js`
++* `server/controllers/LibraryItemController.js`
 +* `server/controllers/SeriesController.js`
++* `server/scanner/BookScanner.js`
++* `server/scanner/Scanner.js`
++* `test/server/providers/iTunes.test.js`
++* `test/server/providers/Audible.test.js`
++* `test/server/models/SeriesProviderEntry.test.js`
++* `test/server/managers/SeriesProviderManager.test.js`
++* `test/server/controllers/SeriesProviderEndpoints.test.js`
 +
 +---
 +
@@ -337,29 +366,39 @@ index 00000000..69d80f0b
 +| `client/pages/library/_library/series/_id.vue` | Mounts external series tracking panel on series details page |
 +| `client/plugins/init.client.js` | Resilient Base64 decode fallback to plain text |
 +| `client/strings/en-us.json` | English string localizations for scan actions, series badges, and tooltips |
-+| `server/Database.js` | Registered Bandwidth and SeriesProviderEntry models and schema sync |
++| `server/Database.js` | Registered Bandwidth and SeriesProviderEntry models, schema sync, and idempotent column verification |
 +| `server/Server.js` | Global middleware hook and shutdown flush for BandwidthManager |
-+| `server/controllers/LibraryController.js` | Series provider scan, cancel, status, and upcoming releases endpoints |
++| `server/controllers/LibraryController.js` | Series provider scan, cancel, status, upcoming releases, and missing books endpoints |
++| `server/controllers/LibraryItemController.js` | Media updates with real-time series provider reconciliation hook |
 +| `server/controllers/SeriesController.js` | Series detail response extended with provider tracking data |
 +| `server/controllers/StatsController.js` | REST controller methods for bandwidth stats with trafficType and date params |
 +| `server/managers/BandwidthManager.js` | In-memory buffering, request categorization, 10m/hourly buckets, auto-pruning, public WAN IP detection, and CIDR evaluation |
 +| `server/managers/CronManager.js` | Scheduled cron job for automated Audible series scraper sync |
-+| `server/managers/SeriesProviderManager.js` | Background scan execution, quick scan delta logic, rate limiting, and WebSocket events |
++| `server/managers/SeriesProviderManager.js` | Background scan execution, quick scan delta logic, iTunes fallback, real-time book reconciliation, rate limiting, and WebSocket events |
 +| `server/migrations/v2.37.1-create-series-provider-entries.js` | Sequelize database migration creating `seriesProviderEntries` table |
++| `server/migrations/v2.37.3-add-author-narrator-to-series-provider-entries.js` | Sequelize migration adding author and narrator columns to `seriesProviderEntries` |
 +| `server/models/BandwidthHourlyStat.js` | Sequelize model and table definition for 24-hour hourly bandwidth stats |
 +| `server/models/BandwidthItemStat.js` | Sequelize model and table definition for per-item/book bandwidth stats |
 +| `server/models/BandwidthStat.js` | Sequelize model and table definition for user bandwidth stats |
 +| `server/models/BandwidthTimeStat.js` | Sequelize model and table definition for rolling 48-hour 10-minute bandwidth stats |
 +| `server/models/Library.js` | Added `seriesScraperSchedule` and `seriesScraperLastScan` settings |
 +| `server/models/Playlist.js` | Added `toOldJSONMinified()` and optional minification parameter to `getOldPlaylistsForUserAndLibrary` |
-+| `server/models/SeriesProviderEntry.js` | Model definition for upcoming and missing series entries |
++| `server/models/SeriesProviderEntry.js` | Model definition for upcoming and missing series entries with author and narrator fields |
 +| `server/objects/settings/ServerSettings.js` | `enableBandwidthTracking` and `bandwidthLocalSubnets` settings |
-+| `server/providers/Audible.js` | Audible series catalog scraper, hierarchy parser, and release categorization |
++| `server/providers/Audible.js` | Audible series catalog scraper, contributor parsing (author/narrator), hierarchy parser, and release categorization |
++| `server/providers/iTunes.js` | iTunes audiobook series scraper, anti-false-positive author & series matching, ownership filtering, and rate pacing |
 +| `server/routers/ApiRouter.js` | Route definitions for `/stats/bandwidth` and series-provider endpoints |
++| `server/scanner/BookScanner.js` | Book scan paths with real-time series provider reconciliation hook |
++| `server/scanner/Scanner.js` | Quick match item update path with real-time series provider reconciliation hook |
 +| `server/utils/queries/libraryFilters.js` | Series upcoming home shelf feed, and dual Base64/plain-text decoder |
 +| `server/utils/queries/libraryItemsBookFilters.js` | Series discovery filtering & removed single-item limit |
 +| `server/utils/queries/seriesFilters.js` | Series completion filters (Has Missing, Complete, Has Upcoming) and sorting |
++| `test/server/controllers/SeriesProviderEndpoints.test.js` | Automated unit tests for series provider endpoints and completion filters |
 +| `test/server/managers/BandwidthManager.test.js` | Automated unit test suite verifying bandwidth user breakdown date and trafficType filtering |
++| `test/server/managers/SeriesProviderManager.test.js` | Automated unit tests for SeriesProviderManager scan, iTunes fallback, and real-time reconciliation |
++| `test/server/models/SeriesProviderEntry.test.js` | Automated unit tests for SeriesProviderEntry model, migrations, and schema |
++| `test/server/providers/Audible.test.js` | Automated unit tests for Audible series catalog and contributor parsing |
++| `test/server/providers/iTunes.test.js` | Automated unit tests for iTunes series scraper, anti-false-positive filtering, and position parsing |
 diff --git a/GEMINI.md b/GEMINI.md
 new file mode 100644
 index 00000000..466d46bd
@@ -3745,7 +3784,7 @@ index d9d6325e..b27769d7 100644
    "ToastItemDeletedSuccess": "Deleted item",
    "ToastItemDetailsUpdateSuccess": "Item details updated",
 diff --git a/server/Database.js b/server/Database.js
-index 50ff714e..ad03b32c 100644
+index 50ff714e..99b1f512 100644
 --- a/server/Database.js
 +++ b/server/Database.js
 @@ -72,6 +72,11 @@ class Database {
@@ -3787,7 +3826,15 @@ index 50ff714e..ad03b32c 100644
    /**
     * Check if db file exists
     * @returns {boolean}
-@@ -326,6 +351,7 @@ class Database {
+@@ -194,6 +219,7 @@ class Database {
+ 
+     await this.buildModels(force)
+     Logger.info(`[Database] Db initialized with models:`, Object.keys(this.sequelize.models).join(', '))
++    await this.ensureSeriesProviderColumns()
+ 
+     await this.addTriggers()
+ 
+@@ -326,6 +352,7 @@ class Database {
      require('./models/LibraryItem').init(this.sequelize)
      require('./models/MediaProgress').init(this.sequelize)
      require('./models/Series').init(this.sequelize)
@@ -3795,7 +3842,7 @@ index 50ff714e..ad03b32c 100644
      require('./models/BookSeries').init(this.sequelize)
      require('./models/Author').init(this.sequelize)
      require('./models/BookAuthor').init(this.sequelize)
-@@ -340,6 +366,10 @@ class Database {
+@@ -340,10 +367,44 @@ class Database {
      require('./models/Setting').init(this.sequelize)
      require('./models/CustomMetadataProvider').init(this.sequelize)
      require('./models/MediaItemShare').init(this.sequelize)
@@ -3806,6 +3853,40 @@ index 50ff714e..ad03b32c 100644
  
      return this.sequelize.sync({ force, alter: false })
    }
+ 
++  /**
++   * Idempotently ensure optional seriesProviderEntries columns exist on legacy databases
++   */
++  async ensureSeriesProviderColumns() {
++    try {
++      if (!this.sequelize) return
++      const qi = this.sequelize.getQueryInterface()
++      if (await qi.tableExists('seriesProviderEntries')) {
++        const table = await qi.describeTable('seriesProviderEntries')
++        const DataTypes = this.sequelize.Sequelize.DataTypes
++        if (!table.author) {
++          Logger.info('[Database] Adding missing "author" column to seriesProviderEntries')
++          await qi.addColumn('seriesProviderEntries', 'author', {
++            type: DataTypes.TEXT,
++            allowNull: true
++          })
++        }
++        if (!table.narrator) {
++          Logger.info('[Database] Adding missing "narrator" column to seriesProviderEntries')
++          await qi.addColumn('seriesProviderEntries', 'narrator', {
++            type: DataTypes.TEXT,
++            allowNull: true
++          })
++        }
++      }
++    } catch (error) {
++      Logger.error('[Database] Failed ensuring seriesProviderEntries columns:', error)
++    }
++  }
++
+   /**
+    * Compare two server versions
+    * @param {string} v1
 diff --git a/server/Server.js b/server/Server.js
 index 30d2c8c3..3f079bf2 100644
 --- a/server/Server.js
@@ -4093,6 +4174,26 @@ index 6bf36a7b..6621cca7 100644
 +  }
  }
  module.exports = new LibraryController()
+diff --git a/server/controllers/LibraryItemController.js b/server/controllers/LibraryItemController.js
+index 18b1dc26..1ed78a52 100644
+--- a/server/controllers/LibraryItemController.js
++++ b/server/controllers/LibraryItemController.js
+@@ -278,6 +278,15 @@ class LibraryItemController {
+ 
+       Logger.debug(`[LibraryItemController] Updated library item media ${req.libraryItem.media.title}`)
+       SocketAuthority.libraryItemEmitter('item_updated', req.libraryItem)
++
++      if (req.libraryItem.isBook && req.libraryItem.media) {
++        try {
++          const SeriesProviderManager = require('../managers/SeriesProviderManager')
++          await SeriesProviderManager.reconcileBookAgainstProviderEntries(req.libraryItem.media, req.libraryItem.libraryId)
++        } catch (reconcileErr) {
++          Logger.warn(`[LibraryItemController] Failed reconciling series provider entries for book "${req.libraryItem.media.title}": ${reconcileErr.message}`)
++        }
++      }
+     }
+     res.json({
+       updated: hasUpdates,
 diff --git a/server/controllers/SeriesController.js b/server/controllers/SeriesController.js
 index 21c93f33..f52bc737 100644
 --- a/server/controllers/SeriesController.js
@@ -5684,14 +5785,15 @@ index 7138d26a..c6e6ff24 100644
     */
 diff --git a/server/managers/SeriesProviderManager.js b/server/managers/SeriesProviderManager.js
 new file mode 100644
-index 00000000..14bc9e8f
+index 00000000..01587346
 --- /dev/null
 +++ b/server/managers/SeriesProviderManager.js
-@@ -0,0 +1,479 @@
+@@ -0,0 +1,686 @@
 +const Database = require('../Database')
 +const Logger = require('../Logger')
 +const SocketAuthority = require('../SocketAuthority')
 +const Audible = require('../providers/Audible')
++const iTunes = require('../providers/iTunes')
 +
 +/**
 + * @typedef ScanSummary
@@ -5707,6 +5809,7 @@ index 00000000..14bc9e8f
 +class SeriesProviderManager {
 +  constructor() {
 +    this.audible = new Audible()
++    this.itunes = new iTunes()
 +    /** @type {Map<string, { current: number, total: number, seriesName: string, startedAt: number, cancelled: boolean }>} */
 +    this.activeScans = new Map()
 +  }
@@ -5734,7 +5837,37 @@ index 00000000..14bc9e8f
 +  }
 +
 +  /**
-+   * Scan a single series against external metadata provider (Audible)
++   * Idempotently ensure optional seriesProviderEntries columns exist on legacy databases
++   */
++  async ensureColumns() {
++    try {
++      if (!Database.sequelize) return
++      const queryInterface = Database.sequelize.getQueryInterface()
++      if (await queryInterface.tableExists('seriesProviderEntries')) {
++        const table = await queryInterface.describeTable('seriesProviderEntries')
++        const DataTypes = Database.sequelize.Sequelize.DataTypes
++        if (!table.author) {
++          Logger.info('[SeriesProvider] Ensuring column "author" exists on seriesProviderEntries')
++          await queryInterface.addColumn('seriesProviderEntries', 'author', {
++            type: DataTypes.TEXT,
++            allowNull: true
++          })
++        }
++        if (!table.narrator) {
++          Logger.info('[SeriesProvider] Ensuring column "narrator" exists on seriesProviderEntries')
++          await queryInterface.addColumn('seriesProviderEntries', 'narrator', {
++            type: DataTypes.TEXT,
++            allowNull: true
++          })
++        }
++      }
++    } catch (err) {
++      Logger.warn(`[SeriesProvider] ensureColumns check warning: ${err.message}`)
++    }
++  }
++
++  /**
++   * Scan a single series against external metadata provider (Audible with iTunes fallback)
 +   * @param {string} libraryId
 +   * @param {string} seriesId
 +   * @returns {Promise<{ success: boolean, summary?: ScanSummary, message?: string, error?: string }>}
@@ -5744,6 +5877,8 @@ index 00000000..14bc9e8f
 +      Logger.warn(`[SeriesProvider] Scan already running for library ${libraryId}`)
 +      return { success: false, message: 'Scan already in progress' }
 +    }
++
++    await this.ensureColumns()
 +
 +    const library = await Database.libraryModel.findByPk(libraryId)
 +    if (!library || library.mediaType !== 'book') {
@@ -5756,7 +5891,13 @@ index 00000000..14bc9e8f
 +        {
 +          model: Database.bookModel,
 +          attributes: ['id', 'title', 'asin', 'updatedAt', 'createdAt'],
-+          through: { attributes: ['sequence'] }
++          through: { attributes: ['sequence'] },
++          include: [
++            {
++              model: Database.authorModel,
++              attributes: ['id', 'name']
++            }
++          ]
 +        }
 +      ]
 +    })
@@ -5781,8 +5922,17 @@ index 00000000..14bc9e8f
 +      const ownedBooks = (series.books || []).map((b) => ({
 +        asin: b.asin,
 +        title: b.title,
-+        sequence: b.bookSeries?.sequence || null
++        sequence: b.bookSeries?.sequence || null,
++        authors: (b.authors || []).map((a) => a.name)
 +      }))
++
++      const seriesAuthors = Array.from(
++        new Set(
++          (series.books || [])
++            .flatMap((b) => (b.authors || []).map((a) => a.name))
++            .filter(Boolean)
++        )
++      )
 +
 +      const onProgress = ({ current, total }) => {
 +        if (scanState.cancelled) return
@@ -5798,7 +5948,19 @@ index 00000000..14bc9e8f
 +        })
 +      }
 +
-+      const result = await this.audible.fetchSeriesProviderEntries(series.name, ownedBooks, region, onProgress)
++      let result = await this.audible.fetchSeriesProviderEntries(series.name, ownedBooks, region, onProgress)
++
++      if (result?.skipped && !scanState.cancelled) {
++        Logger.info(`[SeriesProvider] Audible skipped series "${series.name}" (${result.reason || 'No match'}). Falling back to iTunes...`)
++        try {
++          const itunesResult = await this.itunes.fetchSeriesProviderEntries(series.name, ownedBooks, seriesAuthors, region)
++          if (itunesResult && !itunesResult.skipped) {
++            result = itunesResult
++          }
++        } catch (itunesErr) {
++          Logger.warn(`[SeriesProvider] iTunes fallback error for series "${series.name}": ${itunesErr.message}`)
++        }
++      }
 +
 +      if (result && !result.skipped && !scanState.cancelled) {
 +        // Destroy old entries
@@ -5813,13 +5975,15 @@ index 00000000..14bc9e8f
 +            seriesId: series.id,
 +            seriesName: series.name,
 +            title: item.title,
++            author: item.author || null,
++            narrator: item.narrator || null,
 +            position: item.position || null,
 +            releaseDate: item.releaseDate || null,
 +            asin: item.asin || null,
 +            coverUrl: item.coverUrl || null,
 +            providerUrl: item.providerUrl || null,
 +            summary: item.summary || null,
-+            provider: 'audible',
++            provider: item.provider || 'audible',
 +            entryType: 'upcoming',
 +            isReleased: false,
 +            lastScannedAt: Date.now()
@@ -5834,13 +5998,15 @@ index 00000000..14bc9e8f
 +            seriesId: series.id,
 +            seriesName: series.name,
 +            title: item.title,
++            author: item.author || null,
++            narrator: item.narrator || null,
 +            position: item.position || null,
 +            releaseDate: item.releaseDate || null,
 +            asin: item.asin || null,
 +            coverUrl: item.coverUrl || null,
 +            providerUrl: item.providerUrl || null,
 +            summary: item.summary || null,
-+            provider: 'audible',
++            provider: item.provider || 'audible',
 +            entryType: 'missing',
 +            isReleased: item.isReleased !== false,
 +            lastScannedAt: Date.now()
@@ -5911,6 +6077,8 @@ index 00000000..14bc9e8f
 +      return { success: false, message: 'Scan already in progress' }
 +    }
 +
++    await this.ensureColumns()
++
 +    const library = await Database.libraryModel.findByPk(libraryId)
 +    if (!library) {
 +      Logger.error(`[SeriesProvider] Library not found: ${libraryId}`)
@@ -5946,7 +6114,13 @@ index 00000000..14bc9e8f
 +          {
 +            model: Database.bookModel,
 +            attributes: ['id', 'title', 'asin', 'updatedAt', 'createdAt'],
-+            through: { attributes: ['sequence'] }
++            through: { attributes: ['sequence'] },
++            include: [
++              {
++                model: Database.authorModel,
++                attributes: ['id', 'name']
++              }
++            ]
 +          }
 +        ],
 +        order: [['updatedAt', 'DESC']]
@@ -6027,8 +6201,17 @@ index 00000000..14bc9e8f
 +        const ownedBooks = (series.books || []).map((b) => ({
 +          asin: b.asin,
 +          title: b.title,
-+          sequence: b.bookSeries?.sequence || null
++          sequence: b.bookSeries?.sequence || null,
++          authors: (b.authors || []).map((a) => a.name)
 +        }))
++
++        const seriesAuthors = Array.from(
++          new Set(
++            (series.books || [])
++              .flatMap((b) => (b.authors || []).map((a) => a.name))
++              .filter(Boolean)
++          )
++        )
 +
 +        let result
 +        try {
@@ -6038,8 +6221,18 @@ index 00000000..14bc9e8f
 +            throw err
 +          }
 +          Logger.error(`[SeriesProvider] Error scraping series "${series.name}": ${err.message}`)
-+          skippedCount++
-+          continue
++        }
++
++        if ((!result || result.skipped) && !scanState.cancelled) {
++          Logger.info(`[SeriesProvider] Audible skipped series "${series.name}". Attempting iTunes fallback...`)
++          try {
++            const itunesResult = await this.itunes.fetchSeriesProviderEntries(series.name, ownedBooks, seriesAuthors, region)
++            if (itunesResult && !itunesResult.skipped) {
++              result = itunesResult
++            }
++          } catch (itunesErr) {
++            Logger.warn(`[SeriesProvider] iTunes fallback error for series "${series.name}": ${itunesErr.message}`)
++          }
 +        }
 +
 +        if (!result || result.skipped) {
@@ -6060,6 +6253,8 @@ index 00000000..14bc9e8f
 +            seriesId: series.id,
 +            seriesName: series.name,
 +            title: item.title,
++            author: item.author || null,
++            narrator: item.narrator || null,
 +            position: item.position || null,
 +            releaseDate: item.releaseDate || null,
 +            asin: item.asin || null,
@@ -6082,6 +6277,8 @@ index 00000000..14bc9e8f
 +            seriesId: series.id,
 +            seriesName: series.name,
 +            title: item.title,
++            author: item.author || null,
++            narrator: item.narrator || null,
 +            position: item.position || null,
 +            releaseDate: item.releaseDate || null,
 +            asin: item.asin || null,
@@ -6164,15 +6361,126 @@ index 00000000..14bc9e8f
 +      this.activeScans.delete(libraryId)
 +    }
 +  }
++
++  /**
++   * Reconcile a book against seriesProviderEntries, immediately removing
++   * matching provider entries from the series this book is assigned to.
++   * @param {string|import('../models/Book')} bookOrId
++   * @param {string} [libraryId]
++   * @returns {Promise<number>} Number of deleted entries
++   */
++  async reconcileBookAgainstProviderEntries(bookOrId, libraryId = null) {
++    if (!bookOrId) return 0
++    const bookId = typeof bookOrId === 'string' ? bookOrId : bookOrId.id
++    if (!bookId) return 0
++
++    let title = typeof bookOrId === 'object' ? bookOrId.title : null
++    let asin = typeof bookOrId === 'object' ? bookOrId.asin : null
++
++    // Fetch all series assigned to this book
++    const bookSeriesList = await Database.bookSeriesModel.findAll({
++      where: { bookId },
++      include: [
++        {
++          model: Database.seriesModel,
++          attributes: ['id', 'name']
++        }
++      ]
++    })
++
++    if (!bookSeriesList || !bookSeriesList.length) {
++      return 0
++    }
++
++    if (!title) {
++      const bookRecord = await Database.bookModel.findByPk(bookId, { attributes: ['id', 'title', 'asin'] })
++      if (bookRecord) {
++        title = bookRecord.title
++        if (!asin) asin = bookRecord.asin
++      }
++    }
++
++    if (!title && !asin) return 0
++
++    const normBookTitle = this.audible.normalizedTitle(title)
++    const bookAsinNorm = asin ? asin.toUpperCase().trim() : null
++    let totalDeleted = 0
++
++    for (const bs of bookSeriesList) {
++      const seriesId = bs.seriesId
++      const seriesName = bs.series?.name || ''
++      const cleanSeq = bs.sequence ? this.audible.cleanSeriesSequence(seriesName, bs.sequence) : null
++      const seqNum = cleanSeq ? parseFloat(cleanSeq) : null
++
++      const entries = await Database.seriesProviderEntryModel.findAll({
++        where: { seriesId }
++      })
++
++      const idsToDelete = []
++
++      for (const entry of entries) {
++        // 1. ASIN match (case-insensitive)
++        if (bookAsinNorm && entry.asin && entry.asin.toUpperCase().trim() === bookAsinNorm) {
++          idsToDelete.push(entry.id)
++          continue
++        }
++
++        // 2. Position match (numeric equality)
++        if (seqNum !== null && !isNaN(seqNum) && entry.position) {
++          const entryCleanSeq = this.audible.cleanSeriesSequence(seriesName, entry.position)
++          const entryPosNum = entryCleanSeq ? parseFloat(entryCleanSeq) : null
++          if (entryPosNum !== null && !isNaN(entryPosNum) && entryPosNum === seqNum) {
++            idsToDelete.push(entry.id)
++            continue
++          }
++        }
++
++        // 3. Title match (normalized, cleaned, or base title)
++        if (title && entry.title) {
++          const normEntryTitle = this.audible.normalizedTitle(entry.title)
++          if (normBookTitle && normEntryTitle && normBookTitle === normEntryTitle) {
++            idsToDelete.push(entry.id)
++            continue
++          }
++
++          const cleanEntryTitle = this.audible.cleanTitle(entry.title, seriesName)
++          const cleanBookWithSeries = this.audible.cleanTitle(title, seriesName)
++          if (cleanEntryTitle && cleanBookWithSeries && cleanEntryTitle === cleanBookWithSeries) {
++            idsToDelete.push(entry.id)
++            continue
++          }
++
++          const baseEntry = entry.title.split(/[:\-–—]/)[0].trim()
++          const baseBook = title.split(/[:\-–—]/)[0].trim()
++          const normBaseEntry = this.audible.normalizedTitle(baseEntry)
++          const normBaseBook = this.audible.normalizedTitle(baseBook)
++          if (normBaseEntry && normBaseBook && normBaseEntry === normBaseBook) {
++            idsToDelete.push(entry.id)
++            continue
++          }
++        }
++      }
++
++      if (idsToDelete.length) {
++        Logger.info(`[SeriesProvider] Reconciled book "${title}" (ID: ${bookId}) - removing ${idsToDelete.length} stale provider entries in series "${seriesName || seriesId}"`)
++        await Database.seriesProviderEntryModel.destroy({
++          where: { id: idsToDelete }
++        })
++        totalDeleted += idsToDelete.length
++      }
++    }
++
++    return totalDeleted
++  }
 +}
 +
 +module.exports = new SeriesProviderManager()
 diff --git a/server/migrations/v2.37.1-create-series-provider-entries.js b/server/migrations/v2.37.1-create-series-provider-entries.js
 new file mode 100644
-index 00000000..cd116e06
+index 00000000..bae1eedf
 --- /dev/null
 +++ b/server/migrations/v2.37.1-create-series-provider-entries.js
-@@ -0,0 +1,182 @@
+@@ -0,0 +1,190 @@
 +/**
 + * @typedef MigrationContext
 + * @property {import('sequelize').QueryInterface} queryInterface - a sequelize QueryInterface object.
@@ -6253,6 +6561,14 @@ index 00000000..cd116e06
 +      title: {
 +        type: DataTypes.STRING,
 +        allowNull: false
++      },
++      author: {
++        type: DataTypes.TEXT,
++        allowNull: true
++      },
++      narrator: {
++        type: DataTypes.TEXT,
++        allowNull: true
 +      },
 +      position: {
 +        type: DataTypes.STRING,
@@ -6352,6 +6668,95 @@ index 00000000..cd116e06
 +  } catch (err) {
 +    logger.warn(`${loggerPrefix} failed to check/add index ${index.name} on ${index.table}: ${err.message}`)
 +  }
++}
++
++module.exports = { up, down }
+diff --git a/server/migrations/v2.37.3-add-author-narrator-to-series-provider-entries.js b/server/migrations/v2.37.3-add-author-narrator-to-series-provider-entries.js
+new file mode 100644
+index 00000000..996bb5f8
+--- /dev/null
++++ b/server/migrations/v2.37.3-add-author-narrator-to-series-provider-entries.js
+@@ -0,0 +1,83 @@
++/**
++ * @typedef MigrationContext
++ * @property {import('sequelize').QueryInterface} queryInterface - a sequelize QueryInterface object.
++ * @property {import('../Logger')} logger - a Logger object.
++ *
++ * @typedef MigrationOptions
++ * @property {MigrationContext} context - an object containing the migration context.
++ */
++
++const migrationVersion = '2.37.3'
++const migrationName = `${migrationVersion}-add-author-narrator-to-series-provider-entries`
++const loggerPrefix = `[${migrationVersion} migration]`
++
++/**
++ * Upward migration adds author and narrator columns to seriesProviderEntries.
++ *
++ * @param {MigrationOptions} options - an object containing the migration context.
++ * @returns {Promise<void>}
++ */
++async function up({ context: { queryInterface, logger } }) {
++  logger.info(`${loggerPrefix} UPGRADE BEGIN: ${migrationName}`)
++
++  if (await queryInterface.tableExists('seriesProviderEntries')) {
++    const table = await queryInterface.describeTable('seriesProviderEntries')
++    const DataTypes = queryInterface.sequelize.Sequelize.DataTypes
++
++    if (!table.author) {
++      logger.info(`${loggerPrefix} adding column "author" to "seriesProviderEntries"`)
++      await queryInterface.addColumn('seriesProviderEntries', 'author', {
++        type: DataTypes.TEXT,
++        allowNull: true
++      })
++      logger.info(`${loggerPrefix} added column "author" to "seriesProviderEntries"`)
++    } else {
++      logger.info(`${loggerPrefix} column "author" already exists on "seriesProviderEntries"`)
++    }
++
++    if (!table.narrator) {
++      logger.info(`${loggerPrefix} adding column "narrator" to "seriesProviderEntries"`)
++      await queryInterface.addColumn('seriesProviderEntries', 'narrator', {
++        type: DataTypes.TEXT,
++        allowNull: true
++      })
++      logger.info(`${loggerPrefix} added column "narrator" to "seriesProviderEntries"`)
++    } else {
++      logger.info(`${loggerPrefix} column "narrator" already exists on "seriesProviderEntries"`)
++    }
++  } else {
++    logger.info(`${loggerPrefix} table "seriesProviderEntries" does not exist`)
++  }
++
++  logger.info(`${loggerPrefix} UPGRADE END: ${migrationName}`)
++}
++
++/**
++ * Downward migration script removes author and narrator columns.
++ *
++ * @param {MigrationOptions} options - an object containing the migration context.
++ * @returns {Promise<void>}
++ */
++async function down({ context: { queryInterface, logger } }) {
++  logger.info(`${loggerPrefix} DOWNGRADE BEGIN: ${migrationName}`)
++
++  if (await queryInterface.tableExists('seriesProviderEntries')) {
++    const table = await queryInterface.describeTable('seriesProviderEntries')
++    if (table.author) {
++      logger.info(`${loggerPrefix} removing column "author" from "seriesProviderEntries"`)
++      await queryInterface.removeColumn('seriesProviderEntries', 'author')
++      logger.info(`${loggerPrefix} removed column "author" from "seriesProviderEntries"`)
++    }
++    if (table.narrator) {
++      logger.info(`${loggerPrefix} removing column "narrator" from "seriesProviderEntries"`)
++      await queryInterface.removeColumn('seriesProviderEntries', 'narrator')
++      logger.info(`${loggerPrefix} removed column "narrator" from "seriesProviderEntries"`)
++    }
++  } else {
++    logger.info(`${loggerPrefix} table "seriesProviderEntries" does not exist`)
++  }
++
++  logger.info(`${loggerPrefix} DOWNGRADE END: ${migrationName}`)
 +}
 +
 +module.exports = { up, down }
@@ -6957,10 +7362,10 @@ index 35bd6c99..504f4758 100644
        id: this.id,
 diff --git a/server/models/SeriesProviderEntry.js b/server/models/SeriesProviderEntry.js
 new file mode 100644
-index 00000000..e31bab60
+index 00000000..6e460580
 --- /dev/null
 +++ b/server/models/SeriesProviderEntry.js
-@@ -0,0 +1,198 @@
+@@ -0,0 +1,214 @@
 +const { DataTypes, Model } = require('sequelize')
 +
 +/**
@@ -6970,6 +7375,8 @@ index 00000000..e31bab60
 + * @property {UUIDV4} seriesId
 + * @property {string} seriesName
 + * @property {string} title
++ * @property {string} [author]
++ * @property {string} [narrator]
 + * @property {string} [position]
 + * @property {string} [releaseDate]
 + * @property {string} [asin]
@@ -7000,6 +7407,10 @@ index 00000000..e31bab60
 +    this.seriesName
 +    /** @type {string} */
 +    this.title
++    /** @type {string} */
++    this.author
++    /** @type {string} */
++    this.narrator
 +    /** @type {string} */
 +    this.position
 +    /** @type {string} */
@@ -7053,6 +7464,14 @@ index 00000000..e31bab60
 +        title: {
 +          type: DataTypes.STRING,
 +          allowNull: false
++        },
++        author: {
++          type: DataTypes.TEXT,
++          allowNull: true
++        },
++        narrator: {
++          type: DataTypes.TEXT,
++          allowNull: true
 +        },
 +        position: {
 +          type: DataTypes.STRING,
@@ -7142,6 +7561,8 @@ index 00000000..e31bab60
 +      seriesId: this.seriesId,
 +      seriesName: this.seriesName,
 +      title: this.title,
++      author: this.author || null,
++      narrator: this.narrator || null,
 +      position: this.position,
 +      releaseDate: this.releaseDate,
 +      asin: this.asin,
@@ -7202,10 +7623,10 @@ index 0454161e..d6f90d2e 100644
        version: this.version,
        buildNumber: this.buildNumber,
 diff --git a/server/providers/Audible.js b/server/providers/Audible.js
-index cf1a15ff..1fb2b479 100644
+index cf1a15ff..fae2c151 100644
 --- a/server/providers/Audible.js
 +++ b/server/providers/Audible.js
-@@ -170,6 +170,452 @@ class Audible {
+@@ -170,6 +170,458 @@ class Audible {
      }
      return items.filter(Boolean).map((item) => this.cleanResult(item)) || []
    }
@@ -7296,7 +7717,7 @@ index cf1a15ff..1fb2b479 100644
 +
 +    for (const q of queries) {
 +      try {
-+        let url = `https://api.audible${tld}/1.0/catalog/products?title=${encodeURIComponent(q)}&response_groups=product_attrs,rating,media,price&image_sizes=500&num_results=5`
++        let url = `https://api.audible${tld}/1.0/catalog/products?title=${encodeURIComponent(q)}&response_groups=contributors,product_attrs,rating,media,price&image_sizes=500&num_results=5`
 +        if (author) {
 +          url += `&author=${encodeURIComponent(author)}`
 +        }
@@ -7521,7 +7942,7 @@ index cf1a15ff..1fb2b479 100644
 +
 +    for (let i = 0; i < childAsins.length; i += batchSize) {
 +      const chunk = childAsins.slice(i, i + batchSize)
-+      const productsUrl = `https://api.audible${tld}/1.0/catalog/products?asins=${chunk.join(',')}&response_groups=product_attrs,rating,media,price&image_sizes=500`
++      const productsUrl = `https://api.audible${tld}/1.0/catalog/products?asins=${chunk.join(',')}&response_groups=contributors,product_attrs,rating,media,price&image_sizes=500`
 +      const batchData = await this.requestAudible(productsUrl)
 +      if (Array.isArray(batchData?.products)) {
 +        hydratedProducts.push(...batchData.products)
@@ -7560,10 +7981,14 @@ index cf1a15ff..1fb2b479 100644
 +      const numRatings = p.rating?.overall_distribution?.numRatings || p.rating?.overall_distribution?.num_ratings || 0
 +      const coverUrl = p.product_images?.['500'] || (p.product_images && Object.values(p.product_images)[0]) || null
 +      const summary = p.publisher_summary || p.merchandising_summary || p.summary || null
++      const author = Array.isArray(p.authors) ? p.authors.map((a) => a.name).filter(Boolean).join(', ') || null : null
++      const narrator = Array.isArray(p.narrators) ? p.narrators.map((n) => n.name).filter(Boolean).join(', ') || null : null
 +
 +      return {
 +        asin,
 +        title: p.title.trim(),
++        author,
++        narrator,
 +        position: !isNaN(posNum) && posNum !== null ? position : null,
 +        posNum: !isNaN(posNum) ? posNum : null,
 +        releaseDate,
@@ -7630,6 +8055,8 @@ index cf1a15ff..1fb2b479 100644
 +
 +      const entry = {
 +        title: candidate.title,
++        author: candidate.author || null,
++        narrator: candidate.narrator || null,
 +        position: candidate.position,
 +        releaseDate: candidate.releaseDate,
 +        asin: candidate.asin,
@@ -7658,6 +8085,357 @@ index cf1a15ff..1fb2b479 100644
  }
  
  module.exports = Audible
+diff --git a/server/providers/iTunes.js b/server/providers/iTunes.js
+index 87695c58..26350d51 100644
+--- a/server/providers/iTunes.js
++++ b/server/providers/iTunes.js
+@@ -29,6 +29,8 @@ const htmlSanitizer = require('../utils/htmlSanitizer')
+ 
+ class iTunes {
+   #responseTimeout = 10000
++  #lastRequestTime = 0
++  #minRequestInterval = 300
+ 
+   constructor() {}
+ 
+@@ -166,5 +168,337 @@ class iTunes {
+       return results.map(this.cleanPodcast.bind(this))
+     })
+   }
++
++  /**
++   * Normalize a title for comparison (case-insensitive, alphanumeric only, strip leading "the")
++   * @param {string} str
++   * @returns {string}
++   */
++  normalizedTitle(str) {
++    if (!str || typeof str !== 'string') return ''
++    return str
++      .toLowerCase()
++      .replace(/[^a-z0-9]/g, '')
++      .replace(/^the/, '')
++  }
++
++  /**
++   * Clean a title by removing series prefix and common audio format tags
++   * @param {string} title
++   * @param {string} [seriesName]
++   * @returns {string}
++   */
++  cleanTitle(title, seriesName) {
++    if (!title || typeof title !== 'string') return ''
++    let s = title.toLowerCase()
++    if (seriesName) {
++      const escaped = seriesName.replace(/[^a-z0-9]/gi, '\\$&')
++      s = s.replace(new RegExp('^' + escaped + '[:\\s-]*', 'i'), '')
++    }
++    s = s.replace(/\b(short story|novella|audiobook|unabridged|abridged)\b/gi, '')
++    return s.replace(/[^a-z0-9]/g, '')
++  }
++
++  /**
++   * Extract book position/sequence number from iTunes collection title
++   * @param {string} collectionName
++   * @param {string} [seriesName]
++   * @returns {string|null}
++   */
++  extractPosition(collectionName, seriesName) {
++    if (!collectionName || typeof collectionName !== 'string') return null
++    const patterns = [
++      /(?:book|bk\.?|volume|vol\.?|part)\s*#?\s*(\d+(?:\.\d+)?)/i,
++      /#\s*(\d+(?:\.\d+)?)/,
++      /\b(\d+(?:\.\d+)?)\s*(?:st|nd|rd|th)?\s*installment\b/i
++    ]
++    for (const pat of patterns) {
++      const match = collectionName.match(pat)
++      if (match && match[1]) {
++        return match[1]
++      }
++    }
++    return null
++  }
++
++  /**
++   * Check if iTunes artistName matches at least one known series author cleanly
++   * @param {string} artistName
++   * @param {Array<string>} seriesAuthors
++   * @returns {boolean}
++   */
++  matchesAuthor(artistName, seriesAuthors = []) {
++    if (!seriesAuthors || !seriesAuthors.length) return true
++    if (!artistName || typeof artistName !== 'string') return false
++
++    const cleanArtist = artistName.toLowerCase().replace(/[^a-z0-9\s,]/g, ' ')
++    const artistTokens = cleanArtist.split(/[\s,]+/).filter(Boolean)
++
++    for (const author of seriesAuthors) {
++      if (!author || typeof author !== 'string') continue
++      const cleanAuthor = author.toLowerCase().replace(/[^a-z0-9\s,]/g, ' ')
++
++      // Substring match
++      if (cleanArtist.includes(cleanAuthor) || cleanAuthor.includes(cleanArtist)) {
++        return true
++      }
++
++      const authorTokens = cleanAuthor.split(/[\s,]+/).filter(Boolean)
++      if (!authorTokens.length) continue
++
++      // Identify surname (longest token) and first initial
++      const surname = authorTokens.reduce((longest, t) => (t.length > longest.length ? t : longest), '')
++      const firstToken = authorTokens[0]
++      const firstInitial = firstToken[0]
++
++      if (surname && artistTokens.includes(surname)) {
++        const hasInitialOrFirst = artistTokens.some((t) => t === firstToken || t.startsWith(firstInitial))
++        if (hasInitialOrFirst) return true
++      }
++    }
++
++    return false
++  }
++
++  /**
++   * Check if collectionName explicitly contains the normalized seriesName
++   * @param {string} collectionName
++   * @param {string} seriesName
++   * @returns {boolean}
++   */
++  matchesSeries(collectionName, seriesName) {
++    if (!collectionName || !seriesName) return false
++    const normCollection = this.normalizedTitle(collectionName)
++    const normSeries = this.normalizedTitle(seriesName)
++    if (!normSeries) return false
++
++    if (normCollection.includes(normSeries)) {
++      return true
++    }
++
++    // Try stripping common series suffixes ("series", "trilogy", "saga", "chronicles", "chronicle")
++    const coreSeries = seriesName.replace(/\b(series|trilogy|saga|chronicles|chronicle|duology|quartet)\b/gi, '').trim()
++    const normCore = this.normalizedTitle(coreSeries)
++    if (normCore && normCore.length >= 3 && normCollection.includes(normCore)) {
++      return true
++    }
++
++    return false
++  }
++
++  /**
++   * Check if candidate product is already owned in library using title or sequence
++   * @param {object} candidate
++   * @param {Array<object>} ownedBooks
++   * @param {string} seriesName
++   * @returns {boolean}
++   */
++  isBookOwned(candidate, ownedBooks = [], seriesName) {
++    const candTitle = candidate.collectionName || ''
++    const normCandTitle = this.normalizedTitle(candTitle)
++    const candBase = candTitle.split(/[:\-–—]/)[0].trim()
++    const normCandBase = this.normalizedTitle(candBase)
++    const candClean = this.cleanTitle(candTitle, seriesName)
++    const candPos = this.extractPosition(candTitle, seriesName)
++    const candPosNum = candPos ? parseFloat(candPos) : null
++
++    for (const owned of ownedBooks) {
++      if (!owned) continue
++      if (owned.title) {
++        const normOwned = this.normalizedTitle(owned.title)
++        if (normOwned && (normOwned === normCandTitle || normOwned === normCandBase)) {
++          return true
++        }
++        const ownedBase = owned.title.split(/[:\-–—]/)[0].trim()
++        const normOwnedBase = this.normalizedTitle(ownedBase)
++        if (normOwnedBase && (normOwnedBase === normCandTitle || normOwnedBase === normCandBase)) {
++          return true
++        }
++        const ownedClean = this.cleanTitle(owned.title, seriesName)
++        if (candClean && ownedClean && (candClean === ownedClean || candClean.includes(ownedClean) || ownedClean.includes(candClean))) {
++          return true
++        }
++      }
++      if (candPosNum !== null && !isNaN(candPosNum) && owned.sequence !== null && owned.sequence !== undefined) {
++        const ownedSeqNum = parseFloat(owned.sequence)
++        if (!isNaN(ownedSeqNum) && ownedSeqNum === candPosNum) {
++          return true
++        }
++      }
++    }
++    return false
++  }
++
++  /**
++   * Fetch upcoming and missing series provider entries from iTunes
++   * @param {string} seriesName
++   * @param {Array<object>} [ownedBooks]
++   * @param {Array<string>} [seriesAuthors]
++   * @param {string} [region]
++   * @returns {Promise<{ upcoming: Array, missing: Array, skipped: boolean, reason?: string, provider: string }>}
++   */
++  async fetchSeriesProviderEntries(seriesName, ownedBooks = [], seriesAuthors = [], region = 'us') {
++    if (!seriesName) {
++      return { upcoming: [], missing: [], skipped: true, reason: 'Empty series name', provider: 'itunes' }
++    }
++
++    // Polite rate pacing to avoid triggering iTunes 429 limits (~20 req/min)
++    const now = Date.now()
++    const elapsed = now - this.#lastRequestTime
++    if (elapsed < this.#minRequestInterval) {
++      await new Promise((resolve) => setTimeout(resolve, this.#minRequestInterval - elapsed))
++    }
++    this.#lastRequestTime = Date.now()
++
++    let results = []
++    const query = {
++      term: seriesName,
++      media: 'audiobook',
++      entity: 'audiobook',
++      country: region || 'us',
++      limit: 50
++    }
++
++    try {
++      const res = await axios.get('https://itunes.apple.com/search', {
++        params: query,
++        timeout: this.#responseTimeout
++      })
++      results = res.data?.results || []
++    } catch (err) {
++      if (err.response?.status === 429) {
++        Logger.warn(`[iTunes] Rate limited (429) searching series "${seriesName}", backing off 2s`)
++        await new Promise((resolve) => setTimeout(resolve, 2000))
++        try {
++          const resRetry = await axios.get('https://itunes.apple.com/search', {
++            params: query,
++            timeout: this.#responseTimeout
++          })
++          results = resRetry.data?.results || []
++        } catch (retryErr) {
++          Logger.error(`[iTunes] Rate limited again searching series "${seriesName}": ${retryErr.message}`)
++          return { upcoming: [], missing: [], skipped: true, reason: 'iTunes rate limited (429)', provider: 'itunes' }
++        }
++      } else {
++        Logger.error(`[iTunes] Search error for series "${seriesName}": ${err.message}`)
++        return { upcoming: [], missing: [], skipped: true, reason: err.message, provider: 'itunes' }
++      }
++    }
++
++    if (!results.length) {
++      return { upcoming: [], missing: [], skipped: true, reason: 'No results found on iTunes', provider: 'itunes' }
++    }
++
++    // Strict anti-false-positive filtering
++    const validCandidates = []
++    for (const item of results) {
++      if (!item.collectionName) continue
++
++      // 1. Author check
++      if (seriesAuthors && seriesAuthors.length > 0 && !this.matchesAuthor(item.artistName, seriesAuthors)) {
++        continue
++      }
++
++      // 2. Series match check
++      if (!this.matchesSeries(item.collectionName, seriesName)) {
++        continue
++      }
++
++      // 3. Not already owned check
++      if (this.isBookOwned(item, ownedBooks, seriesName)) {
++        continue
++      }
++
++      validCandidates.push(item)
++    }
++
++    if (!validCandidates.length) {
++      return { upcoming: [], missing: [], skipped: true, reason: 'No matching unowned series entries on iTunes', provider: 'itunes' }
++    }
++
++    const todayIso = new Date().toISOString().substring(0, 10)
++    const parsedCandidates = validCandidates.map((data) => {
++      const position = this.extractPosition(data.collectionName, seriesName)
++      const posNum = position ? parseFloat(position) : null
++      const releaseDate = data.releaseDate ? data.releaseDate.substring(0, 10) : null
++      const author = (data.artistName || '').split(' & ').join(', ') || null
++      const coverUrl = this.getCoverArtwork(data) || null
++      const summary = data.description ? htmlSanitizer.stripAllTags(data.description) : null
++      const isUpcoming = Boolean(releaseDate && releaseDate > todayIso)
++
++      return {
++        title: data.collectionName.trim(),
++        author,
++        narrator: null,
++        position: !isNaN(posNum) && posNum !== null ? position : null,
++        posNum: !isNaN(posNum) ? posNum : null,
++        releaseDate: releaseDate || null,
++        asin: null,
++        coverUrl,
++        providerUrl: data.collectionViewUrl || null,
++        summary,
++        provider: 'itunes',
++        entryType: isUpcoming ? 'upcoming' : 'missing',
++        isReleased: !isUpcoming,
++        trackTimeMillis: data.trackTimeMillis || 0
++      }
++    })
++
++    // Deduplicate: If multiple editions exist for the same sequence position, pick one with longest track time
++    const numberedGrouped = new Map()
++    const unnumberedGrouped = new Map()
++
++    for (const c of parsedCandidates) {
++      if (c.posNum !== null) {
++        const existing = numberedGrouped.get(c.posNum)
++        if (!existing || c.trackTimeMillis > existing.trackTimeMillis) {
++          numberedGrouped.set(c.posNum, c)
++        }
++      } else {
++        const normTitle = this.normalizedTitle(c.title)
++        const existing = unnumberedGrouped.get(normTitle)
++        if (!existing || c.trackTimeMillis > existing.trackTimeMillis) {
++          unnumberedGrouped.set(normTitle, c)
++        }
++      }
++    }
++
++    const uniqueCandidates = [
++      ...Array.from(numberedGrouped.values()).sort((a, b) => (a.posNum || 0) - (b.posNum || 0)),
++      ...Array.from(unnumberedGrouped.values()).sort((a, b) => (a.releaseDate || '').localeCompare(b.releaseDate || ''))
++    ]
++
++    const upcoming = []
++    const missing = []
++
++    for (const c of uniqueCandidates) {
++      const entry = {
++        title: c.title,
++        author: c.author,
++        narrator: c.narrator,
++        position: c.position,
++        releaseDate: c.releaseDate,
++        asin: c.asin,
++        coverUrl: c.coverUrl,
++        providerUrl: c.providerUrl,
++        summary: c.summary,
++        provider: 'itunes',
++        entryType: c.entryType,
++        isReleased: c.isReleased
++      }
++      if (c.entryType === 'upcoming') {
++        upcoming.push(entry)
++      } else {
++        missing.push(entry)
++      }
++    }
++
++    return {
++      upcoming,
++      missing,
++      skipped: false,
++      provider: 'itunes'
++    }
++  }
+ }
+ module.exports = iTunes
 diff --git a/server/routers/ApiRouter.js b/server/routers/ApiRouter.js
 index 7c89126b..62bdf2f5 100644
 --- a/server/routers/ApiRouter.js
@@ -7699,6 +8477,75 @@ index 7c89126b..62bdf2f5 100644
  
      //
      // API Key Routes
+diff --git a/server/scanner/BookScanner.js b/server/scanner/BookScanner.js
+index 2b106cdc..4971e68b 100644
+--- a/server/scanner/BookScanner.js
++++ b/server/scanner/BookScanner.js
+@@ -8,6 +8,7 @@ const parseEbookMetadata = require('../utils/parsers/parseEbookMetadata')
+ const globals = require('../utils/globals')
+ const { readTextFile, filePathToPOSIX, getFileTimestampsWithIno } = require('../utils/fileUtils')
+ const htmlSanitizer = require('../utils/htmlSanitizer')
++const Logger = require('../Logger')
+ 
+ const AudioFileScanner = require('./AudioFileScanner')
+ const Database = require('../Database')
+@@ -431,9 +432,19 @@ class BookScanner {
+     libraryScan.seriesRemovedFromBooks.push(...bookSeriesRemoved)
+     libraryScan.authorsRemovedFromBooks.push(...bookAuthorsRemoved)
+ 
++    const wasUpdated = hasMediaChanges || libraryItemUpdated || seriesUpdated || authorsUpdated
++    if (wasUpdated && existingLibraryItem.media) {
++      try {
++        const SeriesProviderManager = require('../managers/SeriesProviderManager')
++        await SeriesProviderManager.reconcileBookAgainstProviderEntries(existingLibraryItem.media, existingLibraryItem.libraryId)
++      } catch (reconcileErr) {
++        Logger.warn(`[BookScanner] Failed reconciling series provider entries for book "${existingLibraryItem.media.title}": ${reconcileErr.message}`)
++      }
++    }
++
+     return {
+       libraryItem: existingLibraryItem,
+-      wasUpdated: hasMediaChanges || libraryItemUpdated || seriesUpdated || authorsUpdated
++      wasUpdated
+     }
+   }
+ 
+@@ -644,6 +655,15 @@ class BookScanner {
+       await libraryItem.save()
+     }
+ 
++    if (libraryItem.media) {
++      try {
++        const SeriesProviderManager = require('../managers/SeriesProviderManager')
++        await SeriesProviderManager.reconcileBookAgainstProviderEntries(libraryItem.media, libraryItemData.libraryId)
++      } catch (reconcileErr) {
++        Logger.warn(`[BookScanner] Failed reconciling series provider entries for new book "${libraryItem.media.title}": ${reconcileErr.message}`)
++      }
++    }
++
+     return libraryItem
+   }
+ 
+diff --git a/server/scanner/Scanner.js b/server/scanner/Scanner.js
+index af440598..265717ad 100644
+--- a/server/scanner/Scanner.js
++++ b/server/scanner/Scanner.js
+@@ -127,6 +127,15 @@ class Scanner {
+       await libraryItem.saveMetadataFile()
+ 
+       SocketAuthority.libraryItemEmitter('item_updated', libraryItem)
++
++      if (libraryItem.isBook && libraryItem.media) {
++        try {
++          const SeriesProviderManager = require('../managers/SeriesProviderManager')
++          await SeriesProviderManager.reconcileBookAgainstProviderEntries(libraryItem.media, libraryItem.libraryId)
++        } catch (reconcileErr) {
++          Logger.warn(`[Scanner] Failed reconciling series provider entries for book "${libraryItem.media.title}": ${reconcileErr.message}`)
++        }
++      }
+     }
+ 
+     return {
 diff --git a/server/utils/queries/libraryFilters.js b/server/utils/queries/libraryFilters.js
 index 240e3345..5d955e24 100644
 --- a/server/utils/queries/libraryFilters.js
@@ -8016,10 +8863,10 @@ index c8ebb0d7..d3eacffd 100644
  
 diff --git a/test/server/controllers/SeriesProviderEndpoints.test.js b/test/server/controllers/SeriesProviderEndpoints.test.js
 new file mode 100644
-index 00000000..be1fb883
+index 00000000..16a6b150
 --- /dev/null
 +++ b/test/server/controllers/SeriesProviderEndpoints.test.js
-@@ -0,0 +1,347 @@
+@@ -0,0 +1,357 @@
 +const { expect } = require('chai')
 +const sinon = require('sinon')
 +const { Sequelize } = require('sequelize')
@@ -8090,6 +8937,8 @@ index 00000000..be1fb883
 +      seriesId: series1.id,
 +      seriesName: series1.name,
 +      title: 'Words of Radiance',
++      author: 'Brandon Sanderson',
++      narrator: 'Michael Kramer, Kate Reading',
 +      position: '2',
 +      releaseDate: '2014-03-04',
 +      asin: 'B00HQ8XW5W',
@@ -8154,6 +9003,8 @@ index 00000000..be1fb883
 +      seriesId: series3.id,
 +      seriesName: series3.name,
 +      title: 'Red God',
++      author: 'Pierce Brown',
++      narrator: 'Tim Gerard Reynolds',
 +      position: '7',
 +      releaseDate: '2027-05-01',
 +      asin: 'B0XYZ99999',
@@ -8326,6 +9177,8 @@ index 00000000..be1fb883
 +      const data = res.json.firstCall.args[0]
 +      expect(data.upcomingReleases).to.have.lengthOf(1)
 +      expect(data.upcomingReleases[0].title).to.equal('Red God')
++      expect(data.upcomingReleases[0].author).to.equal('Pierce Brown')
++      expect(data.upcomingReleases[0].narrator).to.equal('Tim Gerard Reynolds')
 +      expect(data.total).to.equal(1)
 +      expect(data.scanStatus).to.exist
 +    })
@@ -8343,6 +9196,8 @@ index 00000000..be1fb883
 +      const data = res.json.firstCall.args[0]
 +      expect(data.missingBooks).to.have.lengthOf(1)
 +      expect(data.missingBooks[0].title).to.equal('Words of Radiance')
++      expect(data.missingBooks[0].author).to.equal('Brandon Sanderson')
++      expect(data.missingBooks[0].narrator).to.equal('Michael Kramer, Kate Reading')
 +      expect(data.total).to.equal(1)
 +      expect(data.scanStatus).to.exist
 +    })
@@ -8364,6 +9219,8 @@ index 00000000..be1fb883
 +      expect(data.seriesName).to.equal('The Stormlight Archive')
 +      expect(data.entries).to.have.lengthOf(1)
 +      expect(data.entries[0].title).to.equal('Words of Radiance')
++      expect(data.entries[0].author).to.equal('Brandon Sanderson')
++      expect(data.entries[0].narrator).to.equal('Michael Kramer, Kate Reading')
 +    })
 +  })
 +})
@@ -8570,10 +9427,10 @@ index 00000000..812ee6ca
 +})
 diff --git a/test/server/managers/SeriesProviderManager.test.js b/test/server/managers/SeriesProviderManager.test.js
 new file mode 100644
-index 00000000..12a66f17
+index 00000000..181baecc
 --- /dev/null
 +++ b/test/server/managers/SeriesProviderManager.test.js
-@@ -0,0 +1,215 @@
+@@ -0,0 +1,340 @@
 +const { expect } = require('chai')
 +const sinon = require('sinon')
 +const { Sequelize } = require('sequelize')
@@ -8653,6 +9510,8 @@ index 00000000..12a66f17
 +      upcoming: [
 +        {
 +          title: 'The Lost Metal',
++          author: 'Brandon Sanderson',
++          narrator: 'Michael Kramer',
 +          position: '7',
 +          releaseDate: '2027-11-15',
 +          asin: 'B09XYZ1234',
@@ -8664,6 +9523,8 @@ index 00000000..12a66f17
 +      missing: [
 +        {
 +          title: 'The Well of Ascension',
++          author: 'Brandon Sanderson',
++          narrator: 'Michael Kramer',
 +          position: '2',
 +          releaseDate: '2007-08-21',
 +          asin: 'B002V0QKEW',
@@ -8689,10 +9550,14 @@ index 00000000..12a66f17
 +
 +    const upcoming = entries.find((e) => e.entryType === 'upcoming')
 +    expect(upcoming.title).to.equal('The Lost Metal')
++    expect(upcoming.author).to.equal('Brandon Sanderson')
++    expect(upcoming.narrator).to.equal('Michael Kramer')
 +    expect(upcoming.isReleased).to.be.false
 +
 +    const missing = entries.find((e) => e.entryType === 'missing')
 +    expect(missing.title).to.equal('The Well of Ascension')
++    expect(missing.author).to.equal('Brandon Sanderson')
++    expect(missing.narrator).to.equal('Michael Kramer')
 +    expect(missing.isReleased).to.be.true
 +
 +    // Verify library settings updated
@@ -8719,6 +9584,123 @@ index 00000000..12a66f17
 +    const reloadedLib = await Database.libraryModel.findByPk(bookLibrary.id)
 +    expect(reloadedLib.settings.seriesScraperLastScan.status).to.equal('rate-limited')
 +    expect(socketEmitterStub.calledWith('series_provider_scan_failed')).to.be.true
++  })
++
++  it('falls back to iTunes when Audible skips series without matches', async () => {
++    sinon.stub(SeriesProviderManager.audible, 'fetchSeriesProviderEntries').resolves({
++      skipped: true,
++      reason: 'Series not found on Audible'
++    })
++
++    const itunesStub = sinon.stub(SeriesProviderManager.itunes, 'fetchSeriesProviderEntries').resolves({
++      skipped: false,
++      provider: 'itunes',
++      upcoming: [
++        {
++          title: 'Mistborn Secret History 2',
++          author: 'Brandon Sanderson',
++          narrator: null,
++          position: '3.6',
++          releaseDate: '2028-05-01',
++          asin: null,
++          providerUrl: 'https://books.apple.com/audiobook/secret-history/id999',
++          provider: 'itunes',
++          entryType: 'upcoming',
++          isReleased: false
++        }
++      ],
++      missing: []
++    })
++
++    const result = await SeriesProviderManager.scanSingleSeries(bookLibrary.id, testSeries.id)
++    expect(result.success).to.be.true
++    expect(itunesStub.calledOnce).to.be.true
++    expect(result.summary.upcomingFound).to.equal(1)
++
++    const entries = await Database.seriesProviderEntryModel.findAll({
++      where: { seriesId: testSeries.id }
++    })
++    expect(entries).to.have.lengthOf(1)
++    expect(entries[0].provider).to.equal('itunes')
++    expect(entries[0].title).to.equal('Mistborn Secret History 2')
++    expect(entries[0].author).to.equal('Brandon Sanderson')
++  })
++
++  it('reconciles book against provider entries and removes matching stale entries scoped to series', async () => {
++    const otherSeries = await Database.seriesModel.create({
++      name: 'Unrelated Series',
++      libraryId: bookLibrary.id
++    })
++
++    // 1. Entry in testSeries to be removed by ASIN / position / title
++    const entry1 = await Database.seriesProviderEntryModel.create({
++      libraryId: bookLibrary.id,
++      seriesId: testSeries.id,
++      seriesName: testSeries.name,
++      title: 'The Hero of Ages',
++      position: '3',
++      asin: 'B002V0QK99',
++      provider: 'audible',
++      entryType: 'missing',
++      isReleased: true,
++      lastScannedAt: Date.now()
++    })
++
++    // 2. Unrelated entry in testSeries that should remain
++    const entry2 = await Database.seriesProviderEntryModel.create({
++      libraryId: bookLibrary.id,
++      seriesId: testSeries.id,
++      seriesName: testSeries.name,
++      title: 'The Alloy of Law',
++      position: '4',
++      asin: 'B00547087A',
++      provider: 'audible',
++      entryType: 'missing',
++      isReleased: true,
++      lastScannedAt: Date.now()
++    })
++
++    // 3. Entry with matching title/asin in otherSeries (should NOT be removed)
++    const entry3 = await Database.seriesProviderEntryModel.create({
++      libraryId: bookLibrary.id,
++      seriesId: otherSeries.id,
++      seriesName: otherSeries.name,
++      title: 'The Hero of Ages',
++      position: '3',
++      asin: 'B002V0QK99',
++      provider: 'audible',
++      entryType: 'missing',
++      isReleased: true,
++      lastScannedAt: Date.now()
++    })
++
++    // Create a new book matching entry1 and associate it with testSeries
++    const matchedBook = await Database.bookModel.create({
++      title: 'The Hero of Ages',
++      asin: 'B002V0QK99'
++    })
++    await Database.bookSeriesModel.create({
++      bookId: matchedBook.id,
++      seriesId: testSeries.id,
++      sequence: '3'
++    })
++
++    const deletedCount = await SeriesProviderManager.reconcileBookAgainstProviderEntries(matchedBook)
++    expect(deletedCount).to.equal(1)
++
++    // Entry 1 removed
++    const remainingTestSeriesEntries = await Database.seriesProviderEntryModel.findAll({
++      where: { seriesId: testSeries.id }
++    })
++    expect(remainingTestSeriesEntries).to.have.lengthOf(1)
++    expect(remainingTestSeriesEntries[0].id).to.equal(entry2.id)
++
++    // Entry 3 in otherSeries remains untouched
++    const remainingOtherEntries = await Database.seriesProviderEntryModel.findAll({
++      where: { seriesId: otherSeries.id }
++    })
++    expect(remainingOtherEntries).to.have.lengthOf(1)
++    expect(remainingOtherEntries[0].id).to.equal(entry3.id)
 +  })
 +
 +  it('manages cron lifecycle in CronManager for series provider', () => {
@@ -8791,15 +9773,16 @@ index 00000000..12a66f17
 +})
 diff --git a/test/server/models/SeriesProviderEntry.test.js b/test/server/models/SeriesProviderEntry.test.js
 new file mode 100644
-index 00000000..a745b71f
+index 00000000..bfedd7e0
 --- /dev/null
 +++ b/test/server/models/SeriesProviderEntry.test.js
-@@ -0,0 +1,163 @@
+@@ -0,0 +1,210 @@
 +const { expect } = require('chai')
 +const { Sequelize } = require('sequelize')
 +
 +const Database = require('../../../server/Database')
 +const migration = require('../../../server/migrations/v2.37.1-create-series-provider-entries')
++const migrationV2373 = require('../../../server/migrations/v2.37.3-add-author-narrator-to-series-provider-entries')
 +
 +describe('SeriesProviderEntry Model & Migration', () => {
 +  let sequelize
@@ -8836,6 +9819,8 @@ index 00000000..a745b71f
 +      seriesId: series.id,
 +      seriesName: series.name,
 +      title: 'Wind and Truth',
++      author: 'Brandon Sanderson',
++      narrator: 'Michael Kramer, Kate Reading',
 +      position: '5',
 +      releaseDate: '2026-12-06',
 +      asin: 'B0D1234567',
@@ -8853,12 +9838,16 @@ index 00000000..a745b71f
 +    expect(entry.entryType).to.equal('upcoming')
 +    expect(entry.isReleased).to.be.false
 +    expect(entry.position).to.equal('5')
++    expect(entry.author).to.equal('Brandon Sanderson')
++    expect(entry.narrator).to.equal('Michael Kramer, Kate Reading')
 +
 +    const json = entry.toJSON()
 +    expect(json.id).to.equal(entry.id)
 +    expect(json.libraryId).to.equal(library.id)
 +    expect(json.seriesId).to.equal(series.id)
 +    expect(json.title).to.equal('Wind and Truth')
++    expect(json.author).to.equal('Brandon Sanderson')
++    expect(json.narrator).to.equal('Michael Kramer, Kate Reading')
 +    expect(json.entryType).to.equal('upcoming')
 +    expect(json.lastScannedAt).to.be.a('number')
 +  })
@@ -8957,12 +9946,52 @@ index 00000000..a745b71f
 +
 +    await testSeq.close()
 +  })
++
++  it('runs v2.37.3 migration up and down idempotently on seriesProviderEntries table', async () => {
++    const testSeq = new Sequelize({ dialect: 'sqlite', storage: ':memory:', logging: false })
++    const qi = testSeq.getQueryInterface()
++    const mockLogger = {
++      info: () => {},
++      warn: () => {},
++      error: () => {}
++    }
++
++    // 1. Create a legacy seriesProviderEntries table without author and narrator columns
++    await qi.createTable('seriesProviderEntries', {
++      id: { type: Sequelize.DataTypes.UUID, primaryKey: true },
++      title: { type: Sequelize.DataTypes.STRING, allowNull: false }
++    })
++
++    let table = await qi.describeTable('seriesProviderEntries')
++    expect(table.author).to.be.undefined
++    expect(table.narrator).to.be.undefined
++
++    // 2. Run up migration
++    await migrationV2373.up({ context: { queryInterface: qi, logger: mockLogger } })
++    table = await qi.describeTable('seriesProviderEntries')
++    expect(table.author).to.not.be.undefined
++    expect(table.narrator).to.not.be.undefined
++
++    // 3. Run up migration a second time (idempotency check)
++    await migrationV2373.up({ context: { queryInterface: qi, logger: mockLogger } })
++    table = await qi.describeTable('seriesProviderEntries')
++    expect(table.author).to.not.be.undefined
++    expect(table.narrator).to.not.be.undefined
++
++    // 4. Run down migration
++    await migrationV2373.down({ context: { queryInterface: qi, logger: mockLogger } })
++    table = await qi.describeTable('seriesProviderEntries')
++    expect(table.author).to.be.undefined
++    expect(table.narrator).to.be.undefined
++
++    await testSeq.close()
++  })
 +})
 diff --git a/test/server/providers/Audible.test.js b/test/server/providers/Audible.test.js
-index 75807c99..009f93ef 100644
+index 75807c99..e44b5ecb 100644
 --- a/test/server/providers/Audible.test.js
 +++ b/test/server/providers/Audible.test.js
-@@ -67,4 +67,203 @@ describe('Audible', () => {
+@@ -67,4 +67,211 @@ describe('Audible', () => {
        expect(result.explicit).to.equal(false)
      })
    })
@@ -9110,6 +10139,8 @@ index 75807c99..009f93ef 100644
 +          {
 +            asin: 'ASIN_BOOK_3',
 +            title: 'Oathbringer',
++            authors: [{ name: 'Brandon Sanderson' }],
++            narrators: [{ name: 'Michael Kramer' }, { name: 'Kate Reading' }],
 +            release_date: '2017-11-14',
 +            is_listenable: true,
 +            is_purchasability_suppressed: false,
@@ -9118,6 +10149,8 @@ index 75807c99..009f93ef 100644
 +          {
 +            asin: 'ASIN_BOOK_4',
 +            title: 'Wind and Truth',
++            authors: [{ name: 'Brandon Sanderson' }],
++            narrators: [{ name: 'Michael Kramer' }, { name: 'Kate Reading' }],
 +            release_date: '2027-12-06', // Future date
 +            is_listenable: true,
 +            is_purchasability_suppressed: false,
@@ -9142,6 +10175,8 @@ index 75807c99..009f93ef 100644
 +      expect(result.missing).to.have.lengthOf(1)
 +      expect(result.missing[0].title).to.equal('Oathbringer')
 +      expect(result.missing[0].position).to.equal('3')
++      expect(result.missing[0].author).to.equal('Brandon Sanderson')
++      expect(result.missing[0].narrator).to.equal('Michael Kramer, Kate Reading')
 +      expect(result.missing[0].entryType).to.equal('missing')
 +      expect(result.missing[0].isReleased).to.be.true
 +
@@ -9149,6 +10184,8 @@ index 75807c99..009f93ef 100644
 +      expect(result.upcoming).to.have.lengthOf(1)
 +      expect(result.upcoming[0].title).to.equal('Wind and Truth')
 +      expect(result.upcoming[0].position).to.equal('4')
++      expect(result.upcoming[0].author).to.equal('Brandon Sanderson')
++      expect(result.upcoming[0].narrator).to.equal('Michael Kramer, Kate Reading')
 +      expect(result.upcoming[0].entryType).to.equal('upcoming')
 +      expect(result.upcoming[0].isReleased).to.be.false
 +    })
@@ -9167,3 +10204,172 @@ index 75807c99..009f93ef 100644
 +  })
  })
 \ No newline at end of file
+diff --git a/test/server/providers/iTunes.test.js b/test/server/providers/iTunes.test.js
+new file mode 100644
+index 00000000..e55a81c6
+--- /dev/null
++++ b/test/server/providers/iTunes.test.js
+@@ -0,0 +1,163 @@
++const { expect } = require('chai')
++const sinon = require('sinon')
++const axios = require('axios')
++const iTunes = require('../../../server/providers/iTunes')
++
++describe('iTunes Series Provider', () => {
++  let itunes
++
++  beforeEach(() => {
++    itunes = new iTunes()
++  })
++
++  afterEach(() => {
++    sinon.restore()
++  })
++
++  describe('matchesAuthor', () => {
++    it('accepts candidate when seriesAuthors is empty', () => {
++      expect(itunes.matchesAuthor('Any Author', [])).to.be.true
++      expect(itunes.matchesAuthor('Any Author', null)).to.be.true
++    })
++
++    it('accepts exact or substring author match', () => {
++      expect(itunes.matchesAuthor('Brandon Sanderson', ['Brandon Sanderson'])).to.be.true
++      expect(itunes.matchesAuthor('Brandon Sanderson, Michael Whelan', ['Brandon Sanderson'])).to.be.true
++      expect(itunes.matchesAuthor('Brandon Sanderson & Kate Reading', ['Brandon Sanderson'])).to.be.true
++    })
++
++    it('accepts surname and initial author match', () => {
++      expect(itunes.matchesAuthor('B. Sanderson', ['Brandon Sanderson'])).to.be.true
++      expect(itunes.matchesAuthor('Sanderson, B.', ['Brandon Sanderson'])).to.be.true
++    })
++
++    it('rejects candidate when author does not match series authors', () => {
++      expect(itunes.matchesAuthor('Stephen King', ['Brandon Sanderson'])).to.be.false
++      expect(itunes.matchesAuthor('Joe Abercrombie', ['Brandon Sanderson', 'Robert Jordan'])).to.be.false
++    })
++  })
++
++  describe('matchesSeries', () => {
++    it('matches when collectionName contains normalized series name', () => {
++      expect(itunes.matchesSeries('The Way of Kings: The Stormlight Archive, Book 1 (Unabridged)', 'The Stormlight Archive')).to.be.true
++      expect(itunes.matchesSeries('Words of Radiance (Stormlight Archive, Book 2)', 'The Stormlight Archive')).to.be.true
++    })
++
++    it('matches series name without suffix like trilogy or chronicles', () => {
++      expect(itunes.matchesSeries('The Name of the Wind: Kingkiller, Book 1', 'The Kingkiller Chronicle')).to.be.true
++    })
++
++    it('rejects unrelated series or standalone titles', () => {
++      expect(itunes.matchesSeries('Elantris (Unabridged)', 'The Stormlight Archive')).to.be.false
++      expect(itunes.matchesSeries('Warbreaker', 'Mistborn')).to.be.false
++    })
++  })
++
++  describe('extractPosition', () => {
++    it('extracts sequence numbers from iTunes collection titles', () => {
++      expect(itunes.extractPosition('Words of Radiance: The Stormlight Archive, Book 2 (Unabridged)')).to.equal('2')
++      expect(itunes.extractPosition('Edgedancer: From Arcanum Unbounded, Book 2.5')).to.equal('2.5')
++      expect(itunes.extractPosition('Rhythm of War: Book 4')).to.equal('4')
++      expect(itunes.extractPosition('Dawnshard #3.5')).to.equal('3.5')
++      expect(itunes.extractPosition('Standalone Novel')).to.be.null
++    })
++  })
++
++  describe('isBookOwned', () => {
++    it('identifies owned books by title or sequence', () => {
++      const ownedBooks = [
++        { title: 'The Way of Kings', sequence: '1' },
++        { title: 'Words of Radiance', sequence: '2' }
++      ]
++
++      expect(itunes.isBookOwned({ collectionName: 'The Way of Kings: The Stormlight Archive, Book 1' }, ownedBooks, 'The Stormlight Archive')).to.be.true
++      expect(itunes.isBookOwned({ collectionName: 'The Stormlight Archive: Book 2' }, ownedBooks, 'The Stormlight Archive')).to.be.true
++      expect(itunes.isBookOwned({ collectionName: 'Oathbringer: The Stormlight Archive, Book 3' }, ownedBooks, 'The Stormlight Archive')).to.be.false
++    })
++  })
++
++  describe('fetchSeriesProviderEntries', () => {
++    it('returns skipped when seriesName is empty', async () => {
++      const res = await itunes.fetchSeriesProviderEntries('')
++      expect(res.skipped).to.be.true
++      expect(res.provider).to.equal('itunes')
++    })
++
++    it('queries iTunes and categorizes into missing and upcoming with strict validation', async () => {
++      const axiosGetStub = sinon.stub(axios, 'get').resolves({
++        data: {
++          results: [
++            // Owned book (Book 1)
++            {
++              collectionName: 'The Way of Kings: The Stormlight Archive, Book 1',
++              artistName: 'Brandon Sanderson',
++              releaseDate: '2010-08-31T07:00:00Z',
++              collectionViewUrl: 'https://books.apple.com/audiobook/way-of-kings/id123',
++              artworkUrl100: 'https://example.com/cover1-100x100bb.jpg',
++              description: 'Epic fantasy novel.'
++            },
++            // Missing book (Book 3)
++            {
++              collectionName: 'Oathbringer: The Stormlight Archive, Book 3',
++              artistName: 'Brandon Sanderson',
++              releaseDate: '2017-11-14T07:00:00Z',
++              collectionViewUrl: 'https://books.apple.com/audiobook/oathbringer/id456',
++              artworkUrl100: 'https://example.com/cover3-100x100bb.jpg',
++              description: 'Third book in series.'
++            },
++            // Upcoming book (Book 5)
++            {
++              collectionName: 'Wind and Truth: The Stormlight Archive, Book 5',
++              artistName: 'Brandon Sanderson',
++              releaseDate: '2028-12-06T07:00:00Z',
++              collectionViewUrl: 'https://books.apple.com/audiobook/wind-and-truth/id789',
++              artworkUrl100: 'https://example.com/cover5-100x100bb.jpg',
++              description: 'Fifth book in series.'
++            },
++            // False positive hit (different author / different series)
++            {
++              collectionName: 'Stormlight Legends: Book 1',
++              artistName: 'Completely Different Author',
++              releaseDate: '2020-01-01T07:00:00Z',
++              collectionViewUrl: 'https://books.apple.com/audiobook/junk/id000'
++            }
++          ]
++        }
++      })
++
++      const ownedBooks = [
++        { title: 'The Way of Kings', sequence: '1' }
++      ]
++      const seriesAuthors = ['Brandon Sanderson']
++
++      const result = await itunes.fetchSeriesProviderEntries('The Stormlight Archive', ownedBooks, seriesAuthors, 'us')
++
++      expect(result.skipped).to.be.false
++      expect(result.provider).to.equal('itunes')
++
++      // Missing should have Book 3
++      expect(result.missing).to.have.lengthOf(1)
++      expect(result.missing[0].title).to.equal('Oathbringer: The Stormlight Archive, Book 3')
++      expect(result.missing[0].position).to.equal('3')
++      expect(result.missing[0].author).to.equal('Brandon Sanderson')
++      expect(result.missing[0].narrator).to.be.null
++      expect(result.missing[0].asin).to.be.null
++      expect(result.missing[0].provider).to.equal('itunes')
++      expect(result.missing[0].entryType).to.equal('missing')
++      expect(result.missing[0].isReleased).to.be.true
++      expect(result.missing[0].releaseDate).to.equal('2017-11-14')
++
++      // Upcoming should have Book 5
++      expect(result.upcoming).to.have.lengthOf(1)
++      expect(result.upcoming[0].title).to.equal('Wind and Truth: The Stormlight Archive, Book 5')
++      expect(result.upcoming[0].position).to.equal('5')
++      expect(result.upcoming[0].author).to.equal('Brandon Sanderson')
++      expect(result.upcoming[0].narrator).to.be.null
++      expect(result.upcoming[0].asin).to.be.null
++      expect(result.upcoming[0].provider).to.equal('itunes')
++      expect(result.upcoming[0].entryType).to.equal('upcoming')
++      expect(result.upcoming[0].isReleased).to.be.false
++      expect(result.upcoming[0].releaseDate).to.equal('2028-12-06')
++    })
++  })
++})

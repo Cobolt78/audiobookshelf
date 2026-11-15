@@ -278,6 +278,15 @@ class LibraryItemController {
 
       Logger.debug(`[LibraryItemController] Updated library item media ${req.libraryItem.media.title}`)
       SocketAuthority.libraryItemEmitter('item_updated', req.libraryItem)
+
+      if (req.libraryItem.isBook && req.libraryItem.media) {
+        try {
+          const SeriesProviderManager = require('../managers/SeriesProviderManager')
+          await SeriesProviderManager.reconcileBookAgainstProviderEntries(req.libraryItem.media, req.libraryItem.libraryId)
+        } catch (reconcileErr) {
+          Logger.warn(`[LibraryItemController] Failed reconciling series provider entries for book "${req.libraryItem.media.title}": ${reconcileErr.message}`)
+        }
+      }
     }
     res.json({
       updated: hasUpdates,

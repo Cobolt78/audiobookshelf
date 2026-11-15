@@ -219,6 +219,7 @@ class Database {
 
     await this.buildModels(force)
     Logger.info(`[Database] Db initialized with models:`, Object.keys(this.sequelize.models).join(', '))
+    await this.ensureSeriesProviderColumns()
 
     await this.addTriggers()
 
@@ -372,6 +373,36 @@ class Database {
     require('./models/BandwidthTimeStat').init(this.sequelize)
 
     return this.sequelize.sync({ force, alter: false })
+  }
+
+  /**
+   * Idempotently ensure optional seriesProviderEntries columns exist on legacy databases
+   */
+  async ensureSeriesProviderColumns() {
+    try {
+      if (!this.sequelize) return
+      const qi = this.sequelize.getQueryInterface()
+      if (await qi.tableExists('seriesProviderEntries')) {
+        const table = await qi.describeTable('seriesProviderEntries')
+        const DataTypes = this.sequelize.Sequelize.DataTypes
+        if (!table.author) {
+          Logger.info('[Database] Adding missing "author" column to seriesProviderEntries')
+          await qi.addColumn('seriesProviderEntries', 'author', {
+            type: DataTypes.TEXT,
+            allowNull: true
+          })
+        }
+        if (!table.narrator) {
+          Logger.info('[Database] Adding missing "narrator" column to seriesProviderEntries')
+          await qi.addColumn('seriesProviderEntries', 'narrator', {
+            type: DataTypes.TEXT,
+            allowNull: true
+          })
+        }
+      }
+    } catch (error) {
+      Logger.error('[Database] Failed ensuring seriesProviderEntries columns:', error)
+    }
   }
 
   /**

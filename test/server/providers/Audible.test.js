@@ -211,6 +211,8 @@ describe('Audible', () => {
           {
             asin: 'ASIN_BOOK_3',
             title: 'Oathbringer',
+            authors: [{ name: 'Brandon Sanderson' }],
+            narrators: [{ name: 'Michael Kramer' }, { name: 'Kate Reading' }],
             release_date: '2017-11-14',
             is_listenable: true,
             is_purchasability_suppressed: false,
@@ -219,6 +221,8 @@ describe('Audible', () => {
           {
             asin: 'ASIN_BOOK_4',
             title: 'Wind and Truth',
+            authors: [{ name: 'Brandon Sanderson' }],
+            narrators: [{ name: 'Michael Kramer' }, { name: 'Kate Reading' }],
             release_date: '2027-12-06', // Future date
             is_listenable: true,
             is_purchasability_suppressed: false,
@@ -243,6 +247,8 @@ describe('Audible', () => {
       expect(result.missing).to.have.lengthOf(1)
       expect(result.missing[0].title).to.equal('Oathbringer')
       expect(result.missing[0].position).to.equal('3')
+      expect(result.missing[0].author).to.equal('Brandon Sanderson')
+      expect(result.missing[0].narrator).to.equal('Michael Kramer, Kate Reading')
       expect(result.missing[0].entryType).to.equal('missing')
       expect(result.missing[0].isReleased).to.be.true
 
@@ -250,6 +256,8 @@ describe('Audible', () => {
       expect(result.upcoming).to.have.lengthOf(1)
       expect(result.upcoming[0].title).to.equal('Wind and Truth')
       expect(result.upcoming[0].position).to.equal('4')
+      expect(result.upcoming[0].author).to.equal('Brandon Sanderson')
+      expect(result.upcoming[0].narrator).to.equal('Michael Kramer, Kate Reading')
       expect(result.upcoming[0].entryType).to.equal('upcoming')
       expect(result.upcoming[0].isReleased).to.be.false
     })

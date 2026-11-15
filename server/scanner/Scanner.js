@@ -127,6 +127,15 @@ class Scanner {
       await libraryItem.saveMetadataFile()
 
       SocketAuthority.libraryItemEmitter('item_updated', libraryItem)
+
+      if (libraryItem.isBook && libraryItem.media) {
+        try {
+          const SeriesProviderManager = require('../managers/SeriesProviderManager')
+          await SeriesProviderManager.reconcileBookAgainstProviderEntries(libraryItem.media, libraryItem.libraryId)
+        } catch (reconcileErr) {
+          Logger.warn(`[Scanner] Failed reconciling series provider entries for book "${libraryItem.media.title}": ${reconcileErr.message}`)
+        }
+      }
     }
 
     return {

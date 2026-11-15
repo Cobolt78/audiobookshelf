@@ -92,28 +92,57 @@ This document tracks all custom features, fixes, and architectural modifications
 
 ---
 
-## 3. Audible Series Scraper & External Metadata Engine
+## 3. Series Metadata Scanner, iTunes Fallback & Real-Time Reconciliation
 
 ### Summary
-* **Problem**: Upstream Audiobookshelf has no visibility into missing books within a series or upcoming audiobook releases. Users had no way to know if new entries in their active series were releasing soon on Audible or if books were missing between existing volumes.
+* **Problem**: Upstream Audiobookshelf has no visibility into missing books within a series or upcoming audiobook releases. External applications (such as Books On Demand) and users had no automated mechanism to know when books were missing, lacked author and narrator details in provider feeds, had no fallback when Audible lacks a series entry, and had to wait for periodic scans to clear entries after adding or matching missing books.
 * **Feature**:
   1. **Audible Metadata Provider Integration (`server/providers/Audible.js`)**:
      - Queries Audible search and series catalog APIs across configurable regions (`us`, `uk`, `de`, `fr`, `jp`, etc.).
-     - Parses series structure, volume numbering, release dates, ASINs, and covers.
+     - Parses series structure, volume numbering, release dates, ASINs, covers, and contributors (`authors` and `narrators`).
+     - Extracts comma-separated author and narrator names for every candidate book.
      - Categorizes books into `owned` (already in library), `missing` (released books missing from library), and `upcoming` (future release dates).
-  2. **SeriesProviderEntry Model & Migration (`server/models/SeriesProviderEntry.js`)**:
-     - Database table `seriesProviderEntries` persists entries with `libraryId`, `seriesId`, `seriesName`, `title`, `position`, `releaseDate`, `asin`, `coverUrl`, `summary`, and `entryType` (`upcoming` vs `missing`).
-  3. **SeriesProviderManager (`server/managers/SeriesProviderManager.js`)**:
+  2. **SeriesProviderEntry Model, Migration & Idempotent Schema Check (`server/models/SeriesProviderEntry.js`)**:
+     - Database table `seriesProviderEntries` persists entries with `libraryId`, `seriesId`, `seriesName`, `title`, `author` (`TEXT`), `narrator` (`TEXT`), `position`, `releaseDate`, `asin`, `coverUrl`, `summary`, `provider` (`'audible'` | `'itunes'`), and `entryType` (`upcoming` vs `missing`).
+     - Added migration `server/migrations/v2.37.3-add-author-narrator-to-series-provider-entries.js` to add `author` and `narrator` columns cleanly.
+     - Implemented idempotent startup column verification in `Database.ensureSeriesProviderColumns()` and `SeriesProviderManager.ensureColumns()` so legacy databases without a version bump never encounter `no such column` runtime errors.
+  3. **iTunes Fallback Scraper with Anti-False-Positive Validation (`server/providers/iTunes.js`)**:
+     - Fallback mechanism triggered in `SeriesProviderManager` when Audible returns no series matches or child entries.
+     - Queries iTunes audiobook search (`media: 'audiobook'`, `entity: 'audiobook'`) with polite backoff and rate-limit (HTTP 429) retry handling.
+     - **Strict Validation**:
+       1. **Author Verification**: If series authors are known, matches candidate's `artistName` against known authors by exact match, substring, or surname + first-initial.
+       2. **Series Match**: Verifies collection name contains the normalized series title or core series name without common suffixes (trilogy, saga, chronicles).
+       3. **Ownership Check**: Cross-references against library owned books by normalized title, base title, clean title, or sequence number.
+     - Standardizes entry shape with `provider: 'itunes'` and `asin: null`.
+  4. **Automatic Real-Time Reconciliation (`SeriesProviderManager.reconcileBookAgainstProviderEntries`)**:
+     - When a book is added, quick-matched, or metadata-edited, immediately reconciles against `seriesProviderEntries` to purge stale entries without waiting for scheduled scans.
+     - **Strict Series Scoping**: Scoped strictly to the book's assigned `seriesId`(s) in `bookSeries` so unassigned books do not prematurely clear provider entries.
+     - Deletes matching entries by ASIN (case-insensitive), sequence (numeric equality), or title (normalized, clean, or base title).
+     - Hooked into:
+       - `server/controllers/LibraryItemController.js`: `updateMedia`
+       - `server/scanner/Scanner.js`: `quickMatchLibraryItem`
+       - `server/scanner/BookScanner.js`: `scanExistingBookLibraryItem` and `scanNewBookLibraryItem`
+  5. **SeriesProviderManager (`server/managers/SeriesProviderManager.js`)**:
      - Manages background scan execution, cancellation, live rate limiting protection, and real-time WebSocket progress broadcasts (`series_provider_scan_progress`, `series_provider_scan_completed`, `series_provider_scan_cancelled`, `series_provider_scan_failed`).
      - Exposes REST endpoints `/api/libraries/:id/series-provider/scan`, `/cancel`, `/status`, and `/api/libraries/:id/upcoming-releases`.
 
 ### Modified Files:
 * `server/providers/Audible.js`
+* `server/providers/iTunes.js`
 * `server/models/SeriesProviderEntry.js`
 * `server/migrations/v2.37.1-create-series-provider-entries.js`
+* `server/migrations/v2.37.3-add-author-narrator-to-series-provider-entries.js`
 * `server/managers/SeriesProviderManager.js`
 * `server/controllers/LibraryController.js`
+* `server/controllers/LibraryItemController.js`
 * `server/controllers/SeriesController.js`
+* `server/scanner/BookScanner.js`
+* `server/scanner/Scanner.js`
+* `test/server/providers/iTunes.test.js`
+* `test/server/providers/Audible.test.js`
+* `test/server/models/SeriesProviderEntry.test.js`
+* `test/server/managers/SeriesProviderManager.test.js`
+* `test/server/controllers/SeriesProviderEndpoints.test.js`
 
 ---
 
@@ -331,26 +360,36 @@ Displays the audio bitrate directly on the book details page under the file size
 | `client/pages/library/_library/series/_id.vue` | Mounts external series tracking panel on series details page |
 | `client/plugins/init.client.js` | Resilient Base64 decode fallback to plain text |
 | `client/strings/en-us.json` | English string localizations for scan actions, series badges, and tooltips |
-| `server/Database.js` | Registered Bandwidth and SeriesProviderEntry models and schema sync |
+| `server/Database.js` | Registered Bandwidth and SeriesProviderEntry models, schema sync, and idempotent column verification |
 | `server/Server.js` | Global middleware hook and shutdown flush for BandwidthManager |
-| `server/controllers/LibraryController.js` | Series provider scan, cancel, status, and upcoming releases endpoints |
+| `server/controllers/LibraryController.js` | Series provider scan, cancel, status, upcoming releases, and missing books endpoints |
+| `server/controllers/LibraryItemController.js` | Media updates with real-time series provider reconciliation hook |
 | `server/controllers/SeriesController.js` | Series detail response extended with provider tracking data |
 | `server/controllers/StatsController.js` | REST controller methods for bandwidth stats with trafficType and date params |
 | `server/managers/BandwidthManager.js` | In-memory buffering, request categorization, 10m/hourly buckets, auto-pruning, public WAN IP detection, and CIDR evaluation |
 | `server/managers/CronManager.js` | Scheduled cron job for automated Audible series scraper sync |
-| `server/managers/SeriesProviderManager.js` | Background scan execution, quick scan delta logic, rate limiting, and WebSocket events |
+| `server/managers/SeriesProviderManager.js` | Background scan execution, quick scan delta logic, iTunes fallback, real-time book reconciliation, rate limiting, and WebSocket events |
 | `server/migrations/v2.37.1-create-series-provider-entries.js` | Sequelize database migration creating `seriesProviderEntries` table |
+| `server/migrations/v2.37.3-add-author-narrator-to-series-provider-entries.js` | Sequelize migration adding author and narrator columns to `seriesProviderEntries` |
 | `server/models/BandwidthHourlyStat.js` | Sequelize model and table definition for 24-hour hourly bandwidth stats |
 | `server/models/BandwidthItemStat.js` | Sequelize model and table definition for per-item/book bandwidth stats |
 | `server/models/BandwidthStat.js` | Sequelize model and table definition for user bandwidth stats |
 | `server/models/BandwidthTimeStat.js` | Sequelize model and table definition for rolling 48-hour 10-minute bandwidth stats |
 | `server/models/Library.js` | Added `seriesScraperSchedule` and `seriesScraperLastScan` settings |
 | `server/models/Playlist.js` | Added `toOldJSONMinified()` and optional minification parameter to `getOldPlaylistsForUserAndLibrary` |
-| `server/models/SeriesProviderEntry.js` | Model definition for upcoming and missing series entries |
+| `server/models/SeriesProviderEntry.js` | Model definition for upcoming and missing series entries with author and narrator fields |
 | `server/objects/settings/ServerSettings.js` | `enableBandwidthTracking` and `bandwidthLocalSubnets` settings |
-| `server/providers/Audible.js` | Audible series catalog scraper, hierarchy parser, and release categorization |
+| `server/providers/Audible.js` | Audible series catalog scraper, contributor parsing (author/narrator), hierarchy parser, and release categorization |
+| `server/providers/iTunes.js` | iTunes audiobook series scraper, anti-false-positive author & series matching, ownership filtering, and rate pacing |
 | `server/routers/ApiRouter.js` | Route definitions for `/stats/bandwidth` and series-provider endpoints |
+| `server/scanner/BookScanner.js` | Book scan paths with real-time series provider reconciliation hook |
+| `server/scanner/Scanner.js` | Quick match item update path with real-time series provider reconciliation hook |
 | `server/utils/queries/libraryFilters.js` | Series upcoming home shelf feed, and dual Base64/plain-text decoder |
 | `server/utils/queries/libraryItemsBookFilters.js` | Series discovery filtering & removed single-item limit |
 | `server/utils/queries/seriesFilters.js` | Series completion filters (Has Missing, Complete, Has Upcoming) and sorting |
+| `test/server/controllers/SeriesProviderEndpoints.test.js` | Automated unit tests for series provider endpoints and completion filters |
 | `test/server/managers/BandwidthManager.test.js` | Automated unit test suite verifying bandwidth user breakdown date and trafficType filtering |
+| `test/server/managers/SeriesProviderManager.test.js` | Automated unit tests for SeriesProviderManager scan, iTunes fallback, and real-time reconciliation |
+| `test/server/models/SeriesProviderEntry.test.js` | Automated unit tests for SeriesProviderEntry model, migrations, and schema |
+| `test/server/providers/Audible.test.js` | Automated unit tests for Audible series catalog and contributor parsing |
+| `test/server/providers/iTunes.test.js` | Automated unit tests for iTunes series scraper, anti-false-positive filtering, and position parsing |

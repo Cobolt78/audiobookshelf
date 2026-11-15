@@ -3,6 +3,7 @@ const { Sequelize } = require('sequelize')
 
 const Database = require('../../../server/Database')
 const migration = require('../../../server/migrations/v2.37.1-create-series-provider-entries')
+const migrationV2373 = require('../../../server/migrations/v2.37.3-add-author-narrator-to-series-provider-entries')
 
 describe('SeriesProviderEntry Model & Migration', () => {
   let sequelize
@@ -39,6 +40,8 @@ describe('SeriesProviderEntry Model & Migration', () => {
       seriesId: series.id,
       seriesName: series.name,
       title: 'Wind and Truth',
+      author: 'Brandon Sanderson',
+      narrator: 'Michael Kramer, Kate Reading',
       position: '5',
       releaseDate: '2026-12-06',
       asin: 'B0D1234567',
@@ -56,12 +59,16 @@ describe('SeriesProviderEntry Model & Migration', () => {
     expect(entry.entryType).to.equal('upcoming')
     expect(entry.isReleased).to.be.false
     expect(entry.position).to.equal('5')
+    expect(entry.author).to.equal('Brandon Sanderson')
+    expect(entry.narrator).to.equal('Michael Kramer, Kate Reading')
 
     const json = entry.toJSON()
     expect(json.id).to.equal(entry.id)
     expect(json.libraryId).to.equal(library.id)
     expect(json.seriesId).to.equal(series.id)
     expect(json.title).to.equal('Wind and Truth')
+    expect(json.author).to.equal('Brandon Sanderson')
+    expect(json.narrator).to.equal('Michael Kramer, Kate Reading')
     expect(json.entryType).to.equal('upcoming')
     expect(json.lastScannedAt).to.be.a('number')
   })
@@ -157,6 +164,46 @@ describe('SeriesProviderEntry Model & Migration', () => {
     // 4. Run migration down
     await migration.down({ context: { queryInterface: qi, logger: mockLogger } })
     expect(await qi.tableExists('seriesProviderEntries')).to.be.false
+
+    await testSeq.close()
+  })
+
+  it('runs v2.37.3 migration up and down idempotently on seriesProviderEntries table', async () => {
+    const testSeq = new Sequelize({ dialect: 'sqlite', storage: ':memory:', logging: false })
+    const qi = testSeq.getQueryInterface()
+    const mockLogger = {
+      info: () => {},
+      warn: () => {},
+      error: () => {}
+    }
+
+    // 1. Create a legacy seriesProviderEntries table without author and narrator columns
+    await qi.createTable('seriesProviderEntries', {
+      id: { type: Sequelize.DataTypes.UUID, primaryKey: true },
+      title: { type: Sequelize.DataTypes.STRING, allowNull: false }
+    })
+
+    let table = await qi.describeTable('seriesProviderEntries')
+    expect(table.author).to.be.undefined
+    expect(table.narrator).to.be.undefined
+
+    // 2. Run up migration
+    await migrationV2373.up({ context: { queryInterface: qi, logger: mockLogger } })
+    table = await qi.describeTable('seriesProviderEntries')
+    expect(table.author).to.not.be.undefined
+    expect(table.narrator).to.not.be.undefined
+
+    // 3. Run up migration a second time (idempotency check)
+    await migrationV2373.up({ context: { queryInterface: qi, logger: mockLogger } })
+    table = await qi.describeTable('seriesProviderEntries')
+    expect(table.author).to.not.be.undefined
+    expect(table.narrator).to.not.be.undefined
+
+    // 4. Run down migration
+    await migrationV2373.down({ context: { queryInterface: qi, logger: mockLogger } })
+    table = await qi.describeTable('seriesProviderEntries')
+    expect(table.author).to.be.undefined
+    expect(table.narrator).to.be.undefined
 
     await testSeq.close()
   })

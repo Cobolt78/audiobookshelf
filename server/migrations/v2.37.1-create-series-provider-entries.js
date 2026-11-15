@@ -79,6 +79,14 @@ async function up({ context: { queryInterface, logger } }) {
         type: DataTypes.STRING,
         allowNull: false
       },
+      author: {
+        type: DataTypes.TEXT,
+        allowNull: true
+      },
+      narrator: {
+        type: DataTypes.TEXT,
+        allowNull: true
+      },
       position: {
         type: DataTypes.STRING,
         allowNull: true
