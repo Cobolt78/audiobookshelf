@@ -220,6 +220,7 @@ export default {
     },
     isShelfClickable(shelf) {
       if (!shelf?.id) return false
+      if (this.search || shelf.clickable) return true
       return [
         'continue-listening',
         'continue-reading',
@@ -238,6 +239,11 @@ export default {
     clickShelfHeader(shelf) {
       if (!this.currentLibraryId || !this.isShelfClickable(shelf)) return
       const shelfId = shelf.id
+      if (this.search || shelf.clickable) {
+        const q = this.$route.query.q || ''
+        this.$router.push(`/library/${this.currentLibraryId}/search?q=${encodeURIComponent(q)}&category=${encodeURIComponent(shelfId)}`).catch(() => {})
+        return
+      }
       if (shelfId === 'continue-listening' || shelfId === 'continue-reading') {
         this.$router.push(`/library/${this.currentLibraryId}/bookshelf?filter=progress.${this.$encode('in-progress')}&sort=progress&desc=1`).catch(() => {})
       } else if (shelfId === 'listen-again' || shelfId === 'read-again') {
@@ -288,6 +294,7 @@ export default {
           label: 'Books',
           labelStringKey: 'LabelBooks',
           type: 'book',
+          clickable: true,
           entities: this.results.books.map((res) => res.libraryItem)
         })
       }
@@ -298,6 +305,7 @@ export default {
           label: 'Podcasts',
           labelStringKey: 'LabelPodcasts',
           type: 'podcast',
+          clickable: true,
           entities: this.results.podcasts.map((res) => res.libraryItem)
         })
       }
@@ -308,6 +316,7 @@ export default {
           label: 'Episodes',
           labelStringKey: 'LabelEpisodes',
           type: 'episode',
+          clickable: true,
           entities: this.results.episodes.map((res) => res.libraryItem)
         })
       }
@@ -318,6 +327,7 @@ export default {
           label: 'Series',
           labelStringKey: 'LabelSeries',
           type: 'series',
+          clickable: true,
           entities: this.results.series.map((seriesObj) => {
             return {
               ...seriesObj.series,
@@ -333,6 +343,7 @@ export default {
           label: 'Tags',
           labelStringKey: 'LabelTags',
           type: 'tags',
+          clickable: true,
           entities: this.results.tags.map((tagObj) => {
             return {
               name: tagObj.name,
@@ -348,6 +359,7 @@ export default {
           label: 'Authors',
           labelStringKey: 'LabelAuthors',
           type: 'authors',
+          clickable: true,
           entities: this.results.authors.map((a) => {
             return {
               ...a,
@@ -362,6 +374,7 @@ export default {
           label: 'Narrators',
           labelStringKey: 'LabelNarrators',
           type: 'narrators',
+          clickable: true,
           entities: this.results.narrators.map((n) => {
             return {
               ...n,

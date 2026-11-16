@@ -1,9 +1,9 @@
 diff --git a/CUSTOM_MODIFICATIONS.md b/CUSTOM_MODIFICATIONS.md
 new file mode 100644
-index 00000000..678e34f1
+index 00000000..179054f8
 --- /dev/null
 +++ b/CUSTOM_MODIFICATIONS.md
-@@ -0,0 +1,395 @@
+@@ -0,0 +1,426 @@
 +# Audiobookshelf Custom Modifications (`v2.37.2-custom`)
 +
 +This document tracks all custom features, fixes, and architectural modifications made to Audiobookshelf in the `Cobolt78/audiobookshelf` repository.
@@ -340,15 +340,42 @@ index 00000000..678e34f1
 +
 +---
 +
-+## 12. Modified Files Inventory
++## 12. Clickable Search Category Headings & Full Results Expansion
++
++### Summary
++Removes the 12-item viewing dead-end on library search results (`/library/{id}/search?q=...`) by making all search shelf headings (`Books`, `Series`, `Podcasts`, `Episodes`, `Authors`, `Narrators`, `Tags`) clickable to open a full-page responsive grid showing **all** matching results for that category.
++
++### Key Details
++- **Backend Search API** (`server/controllers/LibraryController.js`, `libraryItemFilters.js`, `libraryItemsBookFilters.js`, `libraryItemsPodcastFilters.js`, `authorFilters.js`):
++  - `GET /api/libraries/:id/search` now supports `limit=0` (uncapped results) and optional `category` filtering (`books`, `series`, `podcasts`, `episodes`, `authors`, `narrators`, `tags`) while preserving the `limit=12` default when omitted.
++- **Clickable Shelf Headings**:
++  - Updated `BookShelfCategorized.vue` and `BookShelfRow.vue` so search shelf headers render the interactive chevron indicator (`chevron_right`) and route to `/library/{id}/search?q={query}&category={category}` when clicked (in both Standard and Detail bookshelf views).
++- **Expanded Category Grid View** (`client/pages/library/_library/search.vue`):
++  - Displays a header bar with an **All Search Results** back button, category title, and exact total result count.
++  - Renders all matching cards cleanly using native ABS card components (`LazyBookCard`, `LazySeriesCard`, `AuthorCard`, `NarratorCard`, `GroupCard`) and preserves browser back/forward navigation.
++
++### Modified Files:
++* `client/components/app/BookShelfCategorized.vue`
++* `client/components/app/BookShelfRow.vue`
++* `client/pages/library/_library/search.vue`
++* `server/controllers/LibraryController.js`
++* `server/utils/queries/libraryItemFilters.js`
++* `server/utils/queries/libraryItemsBookFilters.js`
++* `server/utils/queries/libraryItemsPodcastFilters.js`
++* `server/utils/queries/authorFilters.js`
++* `test/server/controllers/LibrarySearch.test.js`
++
++---
++
++## 13. Modified Files Inventory
 +
 +| File Path | Description |
 +| :--- | :--- |
 +| `CUSTOM_MODIFICATIONS.md` | Comprehensive documentation of all custom features and modifications |
 +| `GEMINI.md` | Antigravity paired-programming invariants and upgrade retention protocol |
 +| `custom_changes.patch` | Unified Git diff against upstream `v2.37.2` baseline |
-+| `client/components/app/BookShelfCategorized.vue` | Interactive shelf header clicks, discover re-roll, and encoded filter routing |
-+| `client/components/app/BookShelfRow.vue` | Interactive shelf header clicks, placards, and discover refresh button |
++| `client/components/app/BookShelfCategorized.vue` | Interactive shelf header clicks, discover re-roll, search heading navigation, and encoded filter routing |
++| `client/components/app/BookShelfRow.vue` | Interactive shelf header clicks, search heading navigation, placards, and discover refresh button |
 +| `client/components/app/BookShelfToolbar.vue` | Audible scan progress bar, quick/full scan menu, cancel listener, and status sync |
 +| `client/components/app/ConfigSideNav.vue` | Sidebar navigation link to Bandwidth Stats |
 +| `client/components/cards/LazySeriesCard.vue` | Series read badges (X/Y Read), missing books count, and upcoming release indicators |
@@ -363,13 +390,14 @@ index 00000000..678e34f1
 +| `client/pages/config/bandwidth.vue` | Responsive Bandwidth Stats dashboard with 48h SVG waveform, 24h hourly breakdown, item breakdown, and date filters |
 +| `client/pages/config/index.vue` | Bandwidth tracking toggle and custom local LAN subnets/IPs input in Settings > General |
 +| `client/pages/config/users/_id/index.vue` | Data transferred stat on user profile card |
++| `client/pages/library/_library/search.vue` | Expandable full-category search results grid with `?category=` routing |
 +| `client/pages/library/_library/series/_id.vue` | Mounts external series tracking panel on series details page |
 +| `client/plugins/init.client.js` | Resilient Base64 decode fallback to plain text |
 +| `client/strings/en-us.json` | English string localizations for scan actions, series badges, and tooltips |
 +| `server/Database.js` | Registered Bandwidth and SeriesProviderEntry models, schema sync, and idempotent column verification |
 +| `server/Server.js` | Global middleware hook and shutdown flush for BandwidthManager |
-+| `server/controllers/LibraryController.js` | Series provider scan, cancel, status, upcoming releases, and missing books endpoints |
-+| `server/controllers/LibraryItemController.js` | Media updates with real-time series provider reconciliation hook |
++| `server/controllers/LibraryController.js` | Series provider scan/cancel/status/missing/upcoming endpoints, and uncapped category search |
++| `server/controllers/LibraryItemController.js` | Media updates and batch updates with real-time series provider reconciliation hook |
 +| `server/controllers/SeriesController.js` | Series detail response extended with provider tracking data |
 +| `server/controllers/StatsController.js` | REST controller methods for bandwidth stats with trafficType and date params |
 +| `server/managers/BandwidthManager.js` | In-memory buffering, request categorization, 10m/hourly buckets, auto-pruning, public WAN IP detection, and CIDR evaluation |
@@ -385,14 +413,17 @@ index 00000000..678e34f1
 +| `server/models/Playlist.js` | Added `toOldJSONMinified()` and optional minification parameter to `getOldPlaylistsForUserAndLibrary` |
 +| `server/models/SeriesProviderEntry.js` | Model definition for upcoming and missing series entries with author and narrator fields |
 +| `server/objects/settings/ServerSettings.js` | `enableBandwidthTracking` and `bandwidthLocalSubnets` settings |
-+| `server/providers/Audible.js` | Audible series catalog scraper, contributor parsing (author/narrator), hierarchy parser, and release categorization |
++| `server/providers/Audible.js` | Audible series catalog scraper, strict author/series validation, contributor parsing, hierarchy parser, and release categorization |
 +| `server/providers/iTunes.js` | iTunes audiobook series scraper, anti-false-positive author & series matching, ownership filtering, and rate pacing |
 +| `server/routers/ApiRouter.js` | Route definitions for `/stats/bandwidth` and series-provider endpoints |
 +| `server/scanner/BookScanner.js` | Book scan paths with real-time series provider reconciliation hook |
 +| `server/scanner/Scanner.js` | Quick match item update path with real-time series provider reconciliation hook |
-+| `server/utils/queries/libraryFilters.js` | Series upcoming home shelf feed, and dual Base64/plain-text decoder |
-+| `server/utils/queries/libraryItemsBookFilters.js` | Series discovery filtering & removed single-item limit |
++| `server/utils/queries/authorFilters.js` | Uncapped author search support when `limit=0` |
++| `server/utils/queries/libraryFilters.js` | Series upcoming home shelf feed, category/limit search forwarding, and dual Base64/plain-text decoder |
++| `server/utils/queries/libraryItemsBookFilters.js` | Series discovery filtering, category/limit book search, and removed single-item limit |
++| `server/utils/queries/libraryItemsPodcastFilters.js` | Category/limit podcast search support |
 +| `server/utils/queries/seriesFilters.js` | Series completion filters (Has Missing, Complete, Has Upcoming) and sorting |
++| `test/server/controllers/LibrarySearch.test.js` | Automated unit tests for LibraryController.search limit=0 and category filtering |
 +| `test/server/controllers/SeriesProviderEndpoints.test.js` | Automated unit tests for series provider endpoints and completion filters |
 +| `test/server/managers/BandwidthManager.test.js` | Automated unit test suite verifying bandwidth user breakdown date and trafficType filtering |
 +| `test/server/managers/SeriesProviderManager.test.js` | Automated unit tests for SeriesProviderManager scan, iTunes fallback, and real-time reconciliation |
@@ -439,7 +470,7 @@ index 00000000..466d46bd
 +   - **Lockstep Synchronization**:
 +     - Keep `CUSTOM_MODIFICATIONS.md` and `custom_changes.patch` in 100% sync with actual repository code at all times.
 diff --git a/client/components/app/BookShelfCategorized.vue b/client/components/app/BookShelfCategorized.vue
-index a8e8ae46..e7c07123 100644
+index a8e8ae46..e429efea 100644
 --- a/client/components/app/BookShelfCategorized.vue
 +++ b/client/components/app/BookShelfCategorized.vue
 @@ -17,14 +17,36 @@
@@ -500,12 +531,13 @@ index a8e8ae46..e7c07123 100644
      },
      currentLibraryMediaType() {
        return this.$store.getters['libraries/getCurrentLibraryMediaType']
-@@ -195,6 +218,68 @@ export default {
+@@ -195,6 +218,74 @@ export default {
        }
        this.shelves = categories
      },
 +    isShelfClickable(shelf) {
 +      if (!shelf?.id) return false
++      if (this.search || shelf.clickable) return true
 +      return [
 +        'continue-listening',
 +        'continue-reading',
@@ -524,6 +556,11 @@ index a8e8ae46..e7c07123 100644
 +    clickShelfHeader(shelf) {
 +      if (!this.currentLibraryId || !this.isShelfClickable(shelf)) return
 +      const shelfId = shelf.id
++      if (this.search || shelf.clickable) {
++        const q = this.$route.query.q || ''
++        this.$router.push(`/library/${this.currentLibraryId}/search?q=${encodeURIComponent(q)}&category=${encodeURIComponent(shelfId)}`).catch(() => {})
++        return
++      }
 +      if (shelfId === 'continue-listening' || shelfId === 'continue-reading') {
 +        this.$router.push(`/library/${this.currentLibraryId}/bookshelf?filter=progress.${this.$encode('in-progress')}&sort=progress&desc=1`).catch(() => {})
 +      } else if (shelfId === 'listen-again' || shelfId === 'read-again') {
@@ -569,8 +606,64 @@ index a8e8ae46..e7c07123 100644
      async setShelvesFromSearch() {
        const shelves = []
        if (this.results.books?.length) {
+@@ -203,6 +294,7 @@ export default {
+           label: 'Books',
+           labelStringKey: 'LabelBooks',
+           type: 'book',
++          clickable: true,
+           entities: this.results.books.map((res) => res.libraryItem)
+         })
+       }
+@@ -213,6 +305,7 @@ export default {
+           label: 'Podcasts',
+           labelStringKey: 'LabelPodcasts',
+           type: 'podcast',
++          clickable: true,
+           entities: this.results.podcasts.map((res) => res.libraryItem)
+         })
+       }
+@@ -223,6 +316,7 @@ export default {
+           label: 'Episodes',
+           labelStringKey: 'LabelEpisodes',
+           type: 'episode',
++          clickable: true,
+           entities: this.results.episodes.map((res) => res.libraryItem)
+         })
+       }
+@@ -233,6 +327,7 @@ export default {
+           label: 'Series',
+           labelStringKey: 'LabelSeries',
+           type: 'series',
++          clickable: true,
+           entities: this.results.series.map((seriesObj) => {
+             return {
+               ...seriesObj.series,
+@@ -248,6 +343,7 @@ export default {
+           label: 'Tags',
+           labelStringKey: 'LabelTags',
+           type: 'tags',
++          clickable: true,
+           entities: this.results.tags.map((tagObj) => {
+             return {
+               name: tagObj.name,
+@@ -263,6 +359,7 @@ export default {
+           label: 'Authors',
+           labelStringKey: 'LabelAuthors',
+           type: 'authors',
++          clickable: true,
+           entities: this.results.authors.map((a) => {
+             return {
+               ...a,
+@@ -277,6 +374,7 @@ export default {
+           label: 'Narrators',
+           labelStringKey: 'LabelNarrators',
+           type: 'narrators',
++          clickable: true,
+           entities: this.results.narrators.map((n) => {
+             return {
+               ...n,
 diff --git a/client/components/app/BookShelfRow.vue b/client/components/app/BookShelfRow.vue
-index fac89a70..eb73f207 100644
+index fac89a70..e0ce562f 100644
 --- a/client/components/app/BookShelfRow.vue
 +++ b/client/components/app/BookShelfRow.vue
 @@ -35,9 +35,22 @@
@@ -609,7 +702,7 @@ index fac89a70..eb73f207 100644
    },
    data() {
      return {
-@@ -80,13 +94,59 @@ export default {
+@@ -80,13 +94,65 @@ export default {
        return 2.5
      },
      currentLibraryId() {
@@ -620,6 +713,7 @@ index fac89a70..eb73f207 100644
        return this.$store.getters['globals/getIsBatchSelectingMediaItems']
 +    },
 +    isClickableShelf() {
++      if (this.shelf?.clickable) return true
 +      const id = this.shelf?.id
 +      return [
 +        'continue-listening',
@@ -644,6 +738,11 @@ index fac89a70..eb73f207 100644
 +    clickShelfHeader() {
 +      if (!this.currentLibraryId || !this.isClickableShelf) return
 +      const shelfId = this.shelf.id
++      if (this.shelf?.clickable) {
++        const q = this.$route.query.q || ''
++        this.$router.push(`/library/${this.currentLibraryId}/search?q=${encodeURIComponent(q)}&category=${encodeURIComponent(shelfId)}`).catch(() => {})
++        return
++      }
 +      if (shelfId === 'continue-listening' || shelfId === 'continue-reading') {
 +        this.$router.push(`/library/${this.currentLibraryId}/bookshelf?filter=progress.${this.$encode('in-progress')}&sort=progress&desc=1`).catch(() => {})
 +      } else if (shelfId === 'listen-again' || shelfId === 'read-again') {
@@ -3598,6 +3697,233 @@ index 72cfba4a..edadecac 100644
    async asyncData({ params, query, store, redirect }) {
      var libraryId = params.library
      var libraryData = await store.dispatch('libraries/fetch', libraryId)
+diff --git a/client/pages/library/_library/search.vue b/client/pages/library/_library/search.vue
+index 429603bf..5fc0096f 100644
+--- a/client/pages/library/_library/search.vue
++++ b/client/pages/library/_library/search.vue
+@@ -1,10 +1,89 @@
+ <template>
+   <div class="page" :class="streamLibraryItem ? 'streaming' : ''">
+     <app-book-shelf-toolbar is-home page="search" :search-query="query" />
+-    <app-book-shelf-categorized v-if="hasResults" ref="bookshelf" search :results="results" />
+-    <div v-else class="w-full py-16">
+-      <p class="text-xl text-center">{{ $getString('MessageNoSearchResultsFor', [query]) }}</p>
++
++    <!-- Expanded Single-Category Search Results View -->
++    <div v-if="category" id="bookshelf" class="w-full max-w-full overflow-y-auto px-4 md:px-8 py-6" :style="{ fontSize: sizeMultiplier + 'rem' }">
++      <div class="flex flex-wrap items-center justify-between gap-3 mb-6 pb-3 border-b border-white/10">
++        <div class="flex items-center space-x-3">
++          <button
++            type="button"
++            class="inline-flex items-center px-3 py-1.5 rounded-md bg-bg hover:bg-white/10 border border-white/15 text-sm text-gray-200 hover:text-white transition-colors cursor-pointer"
++            @click="clearCategory"
++          >
++            <span class="material-symbols text-base mr-1">arrow_back</span>
++            <span>All Search Results</span>
++          </button>
++          <h1 class="text-xl md:text-2xl font-semibold text-white">
++            {{ categoryLabel }}
++            <span class="text-sm md:text-base font-normal text-gray-400 ml-1">({{ categoryItems.length }} {{ categoryItems.length === 1 ? 'result' : 'results' }})</span>
++          </h1>
++        </div>
++      </div>
++
++      <div v-if="loadingCategory" class="w-full py-16 flex items-center justify-center">
++        <widgets-loading-spinner size="la-lg" />
++      </div>
++      <div v-else-if="!categoryItems.length" class="w-full py-16">
++        <p class="text-xl text-center text-gray-300">{{ $getString('MessageNoSearchResultsFor', [query]) }}</p>
++      </div>
++      <div v-else class="flex flex-wrap gap-6 items-start pb-16">
++        <template v-if="category === 'books' || category === 'podcasts' || category === 'episodes'">
++          <cards-lazy-book-card
++            v-for="(item, index) in categoryItems"
++            :key="category === 'episodes' && item.recentEpisode ? item.recentEpisode.id : item.id"
++            :index="index"
++            :book-mount="item"
++            :bookshelf-view="$constants.BookshelfView.DETAIL"
++            class="relative!"
++            @edit="editItem"
++            @editPodcast="editItem"
++          />
++        </template>
++        <template v-else-if="category === 'series'">
++          <cards-lazy-series-card
++            v-for="(seriesObj, index) in categoryItems"
++            :key="seriesObj.id"
++            :index="index"
++            :series-mount="seriesObj"
++            :bookshelf-view="$constants.BookshelfView.DETAIL"
++            class="relative!"
++          />
++        </template>
++        <template v-else-if="category === 'authors'">
++          <cards-author-card
++            v-for="author in categoryItems"
++            :key="author.id"
++            :author-mount="author"
++            @edit="editAuthor"
++          />
++        </template>
++        <template v-else-if="category === 'narrators'">
++          <cards-narrator-card
++            v-for="narrator in categoryItems"
++            :key="narrator.name"
++            :narrator="narrator"
++          />
++        </template>
++        <template v-else-if="category === 'tags'">
++          <cards-group-card
++            v-for="tag in categoryItems"
++            :key="tag.name"
++            :group="tag"
++          />
++        </template>
++      </div>
++
++      <widgets-cover-size-widget class="fixed right-4 z-50" :style="{ bottom: streamLibraryItem ? '181px' : '16px' }" />
+     </div>
++
++    <!-- Grouped Search Shelves Overview -->
++    <template v-else>
++      <app-book-shelf-categorized v-if="hasResults" ref="bookshelf" search :results="results" />
++      <div v-else class="w-full py-16">
++        <p class="text-xl text-center">{{ $getString('MessageNoSearchResultsFor', [query]) }}</p>
++      </div>
++    </template>
+   </div>
+ </template>
+ 
+@@ -16,7 +95,9 @@ export default {
+     if (!library) {
+       return redirect('/oops?message=Library not found')
+     }
+-    let results = await app.$axios.$get(`/api/libraries/${libraryId}/search?q=${encodeURIComponent(query.q)}`).catch((error) => {
++    const category = query.category || null
++    const limitParam = category ? `&limit=0&category=${encodeURIComponent(category)}` : ''
++    let results = await app.$axios.$get(`/api/libraries/${libraryId}/search?q=${encodeURIComponent(query.q)}${limitParam}`).catch((error) => {
+       console.error('Failed to search library', error)
+       return null
+     })
+@@ -32,16 +113,22 @@ export default {
+     return {
+       libraryId,
+       results,
+-      query: query.q
++      query: query.q,
++      category
+     }
+   },
+   data() {
+-    return {}
++    return {
++      loadingCategory: false
++    }
+   },
+   watch: {
+-    '$route.query'(newVal, oldVal) {
+-      if (newVal && newVal.q && newVal.q !== this.query) {
+-        this.query = newVal.q
++    '$route.query'(newVal) {
++      const nextQ = newVal?.q || ''
++      const nextCat = newVal?.category || null
++      if ((nextQ && nextQ !== this.query) || nextCat !== this.category) {
++        if (nextQ) this.query = nextQ
++        this.category = nextCat
+         this.search()
+       }
+     }
+@@ -50,16 +137,86 @@ export default {
+     streamLibraryItem() {
+       return this.$store.state.streamLibraryItem
+     },
++    sizeMultiplier() {
++      return this.$store.getters['user/getSizeMultiplier']
++    },
+     hasResults() {
+       return Object.values(this.results).find((r) => !!r && r.length)
++    },
++    categoryLabel() {
++      const labels = {
++        books: this.$strings.LabelBooks || 'Books',
++        podcasts: this.$strings.LabelPodcasts || 'Podcasts',
++        episodes: this.$strings.LabelEpisodes || 'Episodes',
++        series: this.$strings.LabelSeries || 'Series',
++        authors: this.$strings.LabelAuthors || 'Authors',
++        narrators: this.$strings.LabelNarrators || 'Narrators',
++        tags: this.$strings.LabelTags || 'Tags'
++      }
++      return labels[this.category] || this.category || ''
++    },
++    categoryItems() {
++      if (!this.category) return []
++      if (this.category === 'books') {
++        return (this.results.books || []).map((res) => res.libraryItem)
++      }
++      if (this.category === 'podcasts') {
++        return (this.results.podcasts || []).map((res) => res.libraryItem)
++      }
++      if (this.category === 'episodes') {
++        return (this.results.episodes || []).map((res) => res.libraryItem)
++      }
++      if (this.category === 'series') {
++        return (this.results.series || []).map((seriesObj) => ({
++          ...seriesObj.series,
++          books: seriesObj.books,
++          type: 'series'
++        }))
++      }
++      if (this.category === 'authors') {
++        return (this.results.authors || []).map((a) => ({
++          ...a,
++          type: 'author'
++        }))
++      }
++      if (this.category === 'narrators') {
++        return (this.results.narrators || []).map((n) => ({
++          ...n,
++          type: 'narrator'
++        }))
++      }
++      if (this.category === 'tags') {
++        return (this.results.tags || []).map((t) => ({
++          name: t.name,
++          books: t.books || [],
++          type: 'tags'
++        }))
++      }
++      return []
+     }
+   },
+   methods: {
++    clearCategory() {
++      this.$router.push(`/library/${this.libraryId}/search?q=${encodeURIComponent(this.query)}`).catch(() => {})
++    },
++    editItem(libraryItem, tab = 'details') {
++      const itemIds = this.categoryItems.map((e) => e.id)
++      this.$store.commit('setBookshelfBookIds', itemIds)
++      this.$store.commit('showEditModalOnTab', { libraryItem, tab: tab || 'details' })
++    },
++    editAuthor(author) {
++      this.$store.commit('globals/showEditAuthorModal', author)
++    },
+     async search() {
+-      const results = await this.$axios.$get(`/api/libraries/${this.libraryId}/search?q=${encodeURIComponent(this.query)}`).catch((error) => {
+-        console.error('Failed to search library', error)
+-        return null
+-      })
++      this.loadingCategory = !!this.category
++      const limitParam = this.category ? `&limit=0&category=${encodeURIComponent(this.category)}` : ''
++      const results = await this.$axios
++        .$get(`/api/libraries/${this.libraryId}/search?q=${encodeURIComponent(this.query)}${limitParam}`)
++        .catch((error) => {
++          console.error('Failed to search library', error)
++          return null
++        })
++      this.loadingCategory = false
+       this.results = {
+         podcasts: results?.podcast || [],
+         episodes: results?.episodes || [],
 diff --git a/client/pages/library/_library/series/_id.vue b/client/pages/library/_library/series/_id.vue
 index 865648f8..d0927501 100644
 --- a/client/pages/library/_library/series/_id.vue
@@ -3946,7 +4272,7 @@ index 30d2c8c3..3f079bf2 100644
      Logger.info('[Server] Watcher Closed')
      await SocketAuthority.close()
 diff --git a/server/controllers/LibraryController.js b/server/controllers/LibraryController.js
-index 6bf36a7b..6621cca7 100644
+index 6bf36a7b..5cd2e713 100644
 --- a/server/controllers/LibraryController.js
 +++ b/server/controllers/LibraryController.js
 @@ -19,6 +19,7 @@ const Scanner = require('../scanner/Scanner')
@@ -4042,7 +4368,27 @@ index 6bf36a7b..6621cca7 100644
      }
  
      if (payload.limit) {
-@@ -1496,5 +1514,131 @@ class LibraryController {
+@@ -961,10 +979,17 @@ class LibraryController {
+       return res.status(400).send('Invalid request. Query param "q" must be a string')
+     }
+ 
+-    const limit = req.query.limit || 12
++    let limit = 12
++    if (req.query.limit !== undefined) {
++      const parsedLimit = parseInt(req.query.limit, 10)
++      if (!isNaN(parsedLimit) && parsedLimit >= 0) {
++        limit = parsedLimit
++      }
++    }
++    const category = typeof req.query.category === 'string' && req.query.category.trim() ? req.query.category.trim().toLowerCase() : null
+     const query = req.query.q.trim()
+ 
+-    const matches = await libraryItemFilters.search(req.user, req.library, query, limit)
++    const matches = await libraryItemFilters.search(req.user, req.library, query, limit, category)
+     res.json(matches)
+   }
+ 
+@@ -1496,5 +1521,131 @@ class LibraryController {
  
      next()
    }
@@ -9097,6 +9443,30 @@ index af440598..265717ad 100644
      }
  
      return {
+diff --git a/server/utils/queries/authorFilters.js b/server/utils/queries/authorFilters.js
+index 3d6bc7bd..4db2e2c0 100644
+--- a/server/utils/queries/authorFilters.js
++++ b/server/utils/queries/authorFilters.js
+@@ -61,6 +61,8 @@ module.exports = {
+    */
+   async search(libraryId, query, limit, offset) {
+     const matchAuthor = query.matchExpression('name')
++    const seqLimit = limit > 0 ? limit : undefined
++    const seqOffset = limit > 0 ? offset : undefined
+     const authors = await Database.authorModel.findAll({
+       where: {
+         [Sequelize.Op.and]: [Sequelize.literal(matchAuthor), { libraryId }]
+@@ -68,8 +70,8 @@ module.exports = {
+       attributes: {
+         include: [[Sequelize.literal('(SELECT count(*) FROM bookAuthors ba WHERE ba.authorId = author.id)'), 'numBooks']]
+       },
+-      limit,
+-      offset
++      limit: seqLimit,
++      offset: seqOffset
+     })
+     const authorMatches = []
+     for (const author of authors) {
 diff --git a/server/utils/queries/libraryFilters.js b/server/utils/queries/libraryFilters.js
 index 240e3345..5d955e24 100644
 --- a/server/utils/queries/libraryFilters.js
@@ -9216,8 +9586,30 @@ index 240e3345..5d955e24 100644
    /**
     * Get most recently created authors for "Newest Authors" shelf
     * Author must be linked to at least 1 book
+diff --git a/server/utils/queries/libraryItemFilters.js b/server/utils/queries/libraryItemFilters.js
+index a34aebfd..21e2c8c3 100644
+--- a/server/utils/queries/libraryItemFilters.js
++++ b/server/utils/queries/libraryItemFilters.js
+@@ -178,13 +178,14 @@ module.exports = {
+    * @param {import('../../models/Library')} library
+    * @param {string} query
+    * @param {number} limit
++   * @param {string|null} [category=null]
+    * @returns {{book:object[], narrators:object[], authors:object[], tags:object[], series:object[], podcast:object[]}}
+    */
+-  search(user, library, query, limit) {
++  search(user, library, query, limit, category = null) {
+     if (library.isBook) {
+-      return libraryItemsBookFilters.search(user, library, query, limit, 0)
++      return libraryItemsBookFilters.search(user, library, query, limit, 0, category)
+     } else {
+-      return libraryItemsPodcastFilters.search(user, library, query, limit, 0)
++      return libraryItemsPodcastFilters.search(user, library, query, limit, 0, category)
+     }
+   },
+ 
 diff --git a/server/utils/queries/libraryItemsBookFilters.js b/server/utils/queries/libraryItemsBookFilters.js
-index cac9a7d1..e725cd90 100644
+index cac9a7d1..9defd2ff 100644
 --- a/server/utils/queries/libraryItemsBookFilters.js
 +++ b/server/utils/queries/libraryItemsBookFilters.js
 @@ -397,6 +397,11 @@ module.exports = {
@@ -9272,6 +9664,589 @@ index cac9a7d1..e725cd90 100644
      })
  
      const booksFromSeriesToInclude = seriesNotStarted.map((se) => se.bookSeries?.[0]?.bookId).filter((bid) => bid)
+@@ -1086,191 +1093,170 @@ module.exports = {
+    * @param {import('../../models/User')} user
+    * @param {import('../../models/Library')} library
+    * @param {string} query
+-   * @param {number} limit
++   * @param {number} limit (0 = no limit)
+    * @param {number} offset
++   * @param {string|null} [category=null] Optional category filter ('books'/'book', 'series', 'authors', 'narrators', 'tags', 'genres')
+    * @returns {{book:object[], narrators:object[], authors:object[], tags:object[], series:object[]}}
+    */
+-  async search(user, library, query, limit, offset) {
++  async search(user, library, query, limit, offset, category = null) {
++    const normalizedCat = category === 'books' ? 'book' : category
++    const shouldInclude = (cat) => !normalizedCat || normalizedCat === cat
++
++    const seqLimit = limit > 0 ? limit : undefined
++    const seqOffset = limit > 0 ? offset : undefined
++    const sqlLimitClause = limit > 0 ? 'LIMIT :limit OFFSET :offset' : ''
++    const baseReplacements = limit > 0 ? { libraryId: library.id, limit, offset } : { libraryId: library.id }
++
+     const userPermissionBookWhere = this.getUserPermissionBookWhereQuery(user)
+ 
+     const textSearchQuery = await Database.createTextSearchQuery(query)
+ 
+-    const matchTitle = textSearchQuery.matchExpression('book.title')
+-    const matchSubtitle = textSearchQuery.matchExpression('book.subtitle')
++    const itemMatches = []
++    if (shouldInclude('book')) {
++      const matchTitle = textSearchQuery.matchExpression('book.title')
++      const matchSubtitle = textSearchQuery.matchExpression('book.subtitle')
+ 
+-    // Search title, subtitle, asin, isbn
+-    const books = await Database.bookModel.findAll({
+-      where: [
+-        {
+-          [Sequelize.Op.or]: [
+-            Sequelize.literal(matchTitle),
+-            Sequelize.literal(matchSubtitle),
+-            {
+-              asin: {
+-                [Sequelize.Op.substring]: query
+-              }
+-            },
+-            {
+-              isbn: {
+-                [Sequelize.Op.substring]: query
++      // Search title, subtitle, asin, isbn
++      const books = await Database.bookModel.findAll({
++        where: [
++          {
++            [Sequelize.Op.or]: [
++              Sequelize.literal(matchTitle),
++              Sequelize.literal(matchSubtitle),
++              {
++                asin: {
++                  [Sequelize.Op.substring]: query
++                }
++              },
++              {
++                isbn: {
++                  [Sequelize.Op.substring]: query
++                }
+               }
++            ]
++          },
++          ...userPermissionBookWhere.bookWhere
++        ],
++        replacements: userPermissionBookWhere.replacements,
++        include: [
++          {
++            model: Database.libraryItemModel,
++            where: {
++              libraryId: library.id
+             }
+-          ]
+-        },
+-        ...userPermissionBookWhere.bookWhere
+-      ],
+-      replacements: userPermissionBookWhere.replacements,
+-      include: [
+-        {
+-          model: Database.libraryItemModel,
+-          where: {
+-            libraryId: library.id
+-          }
+-        },
+-        {
+-          model: Database.bookSeriesModel,
+-          include: {
+-            model: Database.seriesModel
+           },
+-          separate: true
+-        },
+-        {
+-          model: Database.bookAuthorModel,
+-          include: {
+-            model: Database.authorModel
++          {
++            model: Database.bookSeriesModel,
++            include: {
++              model: Database.seriesModel
++            },
++            separate: true
+           },
+-          separate: true
+-        }
+-      ],
+-      subQuery: false,
+-      distinct: true,
+-      limit,
+-      offset
+-    })
+-
+-    const itemMatches = []
++          {
++            model: Database.bookAuthorModel,
++            include: {
++              model: Database.authorModel
++            },
++            separate: true
++          }
++        ],
++        subQuery: false,
++        distinct: true,
++        limit: seqLimit,
++        offset: seqOffset
++      })
+ 
+-    for (const book of books) {
+-      const libraryItem = book.libraryItem
+-      delete book.libraryItem
++      for (const book of books) {
++        const libraryItem = book.libraryItem
++        delete book.libraryItem
+ 
+-      book.series = book.bookSeries.map((bs) => {
+-        const series = bs.series
+-        delete bs.series
+-        series.bookSeries = bs
+-        return series
+-      })
+-      delete book.bookSeries
++        book.series = book.bookSeries.map((bs) => {
++          const series = bs.series
++          delete bs.series
++          series.bookSeries = bs
++          return series
++        })
++        delete book.bookSeries
+ 
+-      book.authors = book.bookAuthors.map((ba) => ba.author)
+-      delete book.bookAuthors
++        book.authors = book.bookAuthors.map((ba) => ba.author)
++        delete book.bookAuthors
+ 
+-      libraryItem.media = book
+-      itemMatches.push({
+-        libraryItem: libraryItem.toOldJSONExpanded()
+-      })
++        libraryItem.media = book
++        itemMatches.push({
++          libraryItem: libraryItem.toOldJSONExpanded()
++        })
++      }
+     }
+ 
+     const matchJsonValue = textSearchQuery.matchExpression('json_each.value')
+ 
+-    // Search narrators
+-    const narratorMatches = []
+-    const [narratorResults] = await Database.sequelize.query(`SELECT value, count(*) AS numBooks FROM books b, libraryItems li, json_each(b.narrators) WHERE json_valid(b.narrators) AND ${matchJsonValue} AND b.id = li.mediaId AND li.libraryId = :libraryId GROUP BY value LIMIT :limit OFFSET :offset;`, {
+-      replacements: {
+-        libraryId: library.id,
+-        limit,
+-        offset
+-      },
+-      raw: true
+-    })
+-    for (const row of narratorResults) {
+-      narratorMatches.push({
++    const runJsonFieldSearch = async (jsonCol, countAlias, extraOrder = '') => {
++      const [rows] = await Database.sequelize.query(
++        `SELECT value, count(*) AS ${countAlias} FROM books b, libraryItems li, json_each(b.${jsonCol}) WHERE json_valid(b.${jsonCol}) AND ${matchJsonValue} AND b.id = li.mediaId AND li.libraryId = :libraryId GROUP BY value ${extraOrder} ${sqlLimitClause};`,
++        {
++          replacements: baseReplacements,
++          raw: true
++        }
++      )
++      return rows.map((row) => ({
+         name: row.value,
+-        numBooks: row.numBooks
+-      })
++        [countAlias]: row[countAlias]
++      }))
+     }
+ 
+-    // Search tags
+-    const tagMatches = []
+-    const [tagResults] = await Database.sequelize.query(`SELECT value, count(*) AS numItems FROM books b, libraryItems li, json_each(b.tags) WHERE json_valid(b.tags) AND ${matchJsonValue} AND b.id = li.mediaId AND li.libraryId = :libraryId GROUP BY value ORDER BY numItems DESC LIMIT :limit OFFSET :offset;`, {
+-      replacements: {
+-        libraryId: library.id,
+-        limit,
+-        offset
+-      },
+-      raw: true
+-    })
+-    for (const row of tagResults) {
+-      tagMatches.push({
+-        name: row.value,
+-        numItems: row.numItems
+-      })
+-    }
+-
+-    // Search genres
+-    const genreMatches = []
+-    const [genreResults] = await Database.sequelize.query(`SELECT value, count(*) AS numItems FROM books b, libraryItems li, json_each(b.genres) WHERE json_valid(b.genres) AND ${matchJsonValue} AND b.id = li.mediaId AND li.libraryId = :libraryId GROUP BY value ORDER BY numItems DESC LIMIT :limit OFFSET :offset;`, {
+-      replacements: {
+-        libraryId: library.id,
+-        limit,
+-        offset
+-      },
+-      raw: true
+-    })
+-    for (const row of genreResults) {
+-      genreMatches.push({
+-        name: row.value,
+-        numItems: row.numItems
+-      })
+-    }
++    const narratorMatches = shouldInclude('narrators') ? await runJsonFieldSearch('narrators', 'numBooks') : []
++    const tagMatches = shouldInclude('tags') ? await runJsonFieldSearch('tags', 'numItems', 'ORDER BY numItems DESC') : []
++    const genreMatches = shouldInclude('genres') ? await runJsonFieldSearch('genres', 'numItems', 'ORDER BY numItems DESC') : []
+ 
+     // Search series
+-    const matchName = textSearchQuery.matchExpression('name')
+-    const allSeries = await Database.seriesModel.findAll({
+-      where: {
+-        [Sequelize.Op.and]: [
+-          Sequelize.literal(matchName),
+-          {
+-            libraryId: library.id
+-          }
+-        ]
+-      },
+-      replacements: userPermissionBookWhere.replacements,
+-      include: {
+-        separate: true,
+-        model: Database.bookSeriesModel,
++    const seriesMatches = []
++    if (shouldInclude('series')) {
++      const matchName = textSearchQuery.matchExpression('name')
++      const allSeries = await Database.seriesModel.findAll({
++        where: {
++          [Sequelize.Op.and]: [
++            Sequelize.literal(matchName),
++            {
++              libraryId: library.id
++            }
++          ]
++        },
++        replacements: userPermissionBookWhere.replacements,
+         include: {
+-          model: Database.bookModel,
+-          where: userPermissionBookWhere.bookWhere,
++          separate: true,
++          model: Database.bookSeriesModel,
+           include: {
+-            model: Database.libraryItemModel
++            model: Database.bookModel,
++            where: userPermissionBookWhere.bookWhere,
++            include: {
++              model: Database.libraryItemModel
++            }
+           }
+-        }
+-      },
+-      subQuery: false,
+-      distinct: true,
+-      limit,
+-      offset
+-    })
+-    const seriesMatches = []
+-    for (const series of allSeries) {
+-      const books = series.bookSeries.map((bs) => {
+-        const libraryItem = bs.book.libraryItem
+-        libraryItem.media = bs.book
+-        libraryItem.media.authors = []
+-        libraryItem.media.series = []
+-        return libraryItem.toOldJSON()
++        },
++        subQuery: false,
++        distinct: true,
++        limit: seqLimit,
++        offset: seqOffset
+       })
+-      if (books.length) {
+-        seriesMatches.push({
+-          series: series.toOldJSON(),
+-          books
++      for (const series of allSeries) {
++        const books = series.bookSeries.map((bs) => {
++          const libraryItem = bs.book.libraryItem
++          libraryItem.media = bs.book
++          libraryItem.media.authors = []
++          libraryItem.media.series = []
++          return libraryItem.toOldJSON()
+         })
++        if (books.length) {
++          seriesMatches.push({
++            series: series.toOldJSON(),
++            books
++          })
++        }
+       }
+     }
+ 
+     // Search authors
+-    const authorMatches = await authorFilters.search(library.id, textSearchQuery, limit, offset)
++    const authorMatches = shouldInclude('authors') ? await authorFilters.search(library.id, textSearchQuery, limit, offset) : []
+ 
+     return {
+       book: itemMatches,
+diff --git a/server/utils/queries/libraryItemsPodcastFilters.js b/server/utils/queries/libraryItemsPodcastFilters.js
+index 8bb5dc11..ff5e2eaf 100644
+--- a/server/utils/queries/libraryItemsPodcastFilters.js
++++ b/server/utils/queries/libraryItemsPodcastFilters.js
+@@ -354,137 +354,154 @@ module.exports = {
+    * @param {import('../../models/User')} user
+    * @param {import('../../models/Library')} library
+    * @param {string} query
+-   * @param {number} limit
++   * @param {number} limit (0 = no limit)
+    * @param {number} offset
++   * @param {string|null} [category=null]
+    * @returns {{podcast:object[], tags:object[]}}
+    */
+-  async search(user, library, query, limit, offset) {
++  async search(user, library, query, limit, offset, category = null) {
++    const normalizedCat = category === 'podcasts' ? 'podcast' : category
++    const shouldInclude = (cat) => !normalizedCat || normalizedCat === cat
++
++    const seqLimit = limit > 0 ? limit : undefined
++    const seqOffset = limit > 0 ? offset : undefined
++    const sqlLimitClause = limit > 0 ? 'LIMIT :limit OFFSET :offset' : ''
++
+     const userPermissionPodcastWhere = this.getUserPermissionPodcastWhereQuery(user)
+ 
+     const textSearchQuery = await Database.createTextSearchQuery(query)
+ 
+-    const matchTitle = textSearchQuery.matchExpression('podcast.title')
+-    const matchAuthor = textSearchQuery.matchExpression('podcast.author')
++    const itemMatches = []
++    if (shouldInclude('podcast')) {
++      const matchTitle = textSearchQuery.matchExpression('podcast.title')
++      const matchAuthor = textSearchQuery.matchExpression('podcast.author')
+ 
+-    // Search title, author, itunesId, itunesArtistId
+-    const podcasts = await Database.podcastModel.findAll({
+-      where: [
+-        {
+-          [Sequelize.Op.or]: [
+-            Sequelize.literal(matchTitle),
+-            Sequelize.literal(matchAuthor),
+-            {
+-              itunesId: {
+-                [Sequelize.Op.substring]: query
+-              }
+-            },
+-            {
+-              itunesArtistId: {
+-                [Sequelize.Op.substring]: query
++      // Search title, author, itunesId, itunesArtistId
++      const podcasts = await Database.podcastModel.findAll({
++        where: [
++          {
++            [Sequelize.Op.or]: [
++              Sequelize.literal(matchTitle),
++              Sequelize.literal(matchAuthor),
++              {
++                itunesId: {
++                  [Sequelize.Op.substring]: query
++                }
++              },
++              {
++                itunesArtistId: {
++                  [Sequelize.Op.substring]: query
++                }
+               }
++            ]
++          },
++          ...userPermissionPodcastWhere.podcastWhere
++        ],
++        replacements: userPermissionPodcastWhere.replacements,
++        include: [
++          {
++            model: Database.libraryItemModel,
++            where: {
++              libraryId: library.id
+             }
+-          ]
+-        },
+-        ...userPermissionPodcastWhere.podcastWhere
+-      ],
+-      replacements: userPermissionPodcastWhere.replacements,
+-      include: [
+-        {
+-          model: Database.libraryItemModel,
+-          where: {
+-            libraryId: library.id
+           }
+-        }
+-      ],
+-      subQuery: false,
+-      distinct: true,
+-      limit,
+-      offset
+-    })
+-
+-    const itemMatches = []
+-
+-    for (const podcast of podcasts) {
+-      const libraryItem = podcast.libraryItem
+-      delete podcast.libraryItem
+-      libraryItem.media = podcast
+-      libraryItem.media.podcastEpisodes = []
+-      itemMatches.push({
+-        libraryItem: libraryItem.toOldJSONExpanded()
++        ],
++        subQuery: false,
++        distinct: true,
++        limit: seqLimit,
++        offset: seqOffset
+       })
++
++      for (const podcast of podcasts) {
++        const libraryItem = podcast.libraryItem
++        delete podcast.libraryItem
++        libraryItem.media = podcast
++        libraryItem.media.podcastEpisodes = []
++        itemMatches.push({
++          libraryItem: libraryItem.toOldJSONExpanded()
++        })
++      }
+     }
+ 
+     // Search podcast episode title
+-    const podcastEpisodes = await Database.podcastEpisodeModel.findAll({
+-      where: [
+-        Sequelize.literal(textSearchQuery.matchExpression('podcastEpisode.title')),
+-        {
+-          '$podcast.libraryItem.libraryId$': library.id
+-        }
+-      ],
+-      replacements: userPermissionPodcastWhere.replacements,
+-      include: [
+-        {
+-          model: Database.podcastModel,
+-          where: [...userPermissionPodcastWhere.podcastWhere],
+-          include: [
+-            {
+-              model: Database.libraryItemModel
+-            }
+-          ]
+-        }
+-      ],
+-      distinct: true,
+-      offset,
+-      limit
+-    })
+     const episodeMatches = []
+-    for (const episode of podcastEpisodes) {
+-      const libraryItem = episode.podcast.libraryItem
+-      libraryItem.media = episode.podcast
+-      libraryItem.media.podcastEpisodes = []
+-      const oldPodcastEpisodeJson = episode.toOldJSONExpanded(libraryItem.id)
+-      const libraryItemJson = libraryItem.toOldJSONExpanded()
+-      libraryItemJson.recentEpisode = oldPodcastEpisodeJson
+-      episodeMatches.push({
+-        libraryItem: libraryItemJson
++    if (shouldInclude('episodes')) {
++      const podcastEpisodes = await Database.podcastEpisodeModel.findAll({
++        where: [
++          Sequelize.literal(textSearchQuery.matchExpression('podcastEpisode.title')),
++          {
++            '$podcast.libraryItem.libraryId$': library.id
++          }
++        ],
++        replacements: userPermissionPodcastWhere.replacements,
++        include: [
++          {
++            model: Database.podcastModel,
++            where: [...userPermissionPodcastWhere.podcastWhere],
++            include: [
++              {
++                model: Database.libraryItemModel
++              }
++            ]
++          }
++        ],
++        distinct: true,
++        offset: seqOffset,
++        limit: seqLimit
+       })
++      for (const episode of podcastEpisodes) {
++        const libraryItem = episode.podcast.libraryItem
++        libraryItem.media = episode.podcast
++        libraryItem.media.podcastEpisodes = []
++        const oldPodcastEpisodeJson = episode.toOldJSONExpanded(libraryItem.id)
++        const libraryItemJson = libraryItem.toOldJSONExpanded()
++        libraryItemJson.recentEpisode = oldPodcastEpisodeJson
++        episodeMatches.push({
++          libraryItem: libraryItemJson
++        })
++      }
+     }
+ 
+     const matchJsonValue = textSearchQuery.matchExpression('json_each.value')
+ 
+     // Search tags
+     const tagMatches = []
+-    const [tagResults] = await Database.sequelize.query(`SELECT value, count(*) AS numItems FROM podcasts p, libraryItems li, json_each(p.tags) WHERE json_valid(p.tags) AND ${matchJsonValue} AND p.id = li.mediaId AND li.libraryId = :libraryId GROUP BY value ORDER BY numItems DESC LIMIT :limit OFFSET :offset;`, {
+-      replacements: {
+-        libraryId: library.id,
+-        limit,
+-        offset
+-      },
+-      raw: true
+-    })
+-    for (const row of tagResults) {
+-      tagMatches.push({
+-        name: row.value,
+-        numItems: row.numItems
++    if (shouldInclude('tags')) {
++      const tagReplacements = { libraryId: library.id }
++      if (limit > 0) {
++        tagReplacements.limit = limit
++        tagReplacements.offset = offset
++      }
++      const [tagResults] = await Database.sequelize.query(`SELECT value, count(*) AS numItems FROM podcasts p, libraryItems li, json_each(p.tags) WHERE json_valid(p.tags) AND ${matchJsonValue} AND p.id = li.mediaId AND li.libraryId = :libraryId GROUP BY value ORDER BY numItems DESC ${sqlLimitClause};`, {
++        replacements: tagReplacements,
++        raw: true
+       })
++      for (const row of tagResults) {
++        tagMatches.push({
++          name: row.value,
++          numItems: row.numItems
++        })
++      }
+     }
+ 
+     // Search genres
+     const genreMatches = []
+-    const [genreResults] = await Database.sequelize.query(`SELECT value, count(*) AS numItems FROM podcasts p, libraryItems li, json_each(p.genres) WHERE json_valid(p.genres) AND ${matchJsonValue} AND p.id = li.mediaId AND li.libraryId = :libraryId GROUP BY value ORDER BY numItems DESC LIMIT :limit OFFSET :offset;`, {
+-      replacements: {
+-        libraryId: library.id,
+-        limit,
+-        offset
+-      },
+-      raw: true
+-    })
+-    for (const row of genreResults) {
+-      genreMatches.push({
+-        name: row.value,
+-        numItems: row.numItems
++    if (shouldInclude('genres')) {
++      const genreReplacements = { libraryId: library.id }
++      if (limit > 0) {
++        genreReplacements.limit = limit
++        genreReplacements.offset = offset
++      }
++      const [genreResults] = await Database.sequelize.query(`SELECT value, count(*) AS numItems FROM podcasts p, libraryItems li, json_each(p.genres) WHERE json_valid(p.genres) AND ${matchJsonValue} AND p.id = li.mediaId AND li.libraryId = :libraryId GROUP BY value ORDER BY numItems DESC ${sqlLimitClause};`, {
++        replacements: genreReplacements,
++        raw: true
+       })
++      for (const row of genreResults) {
++        genreMatches.push({
++          name: row.value,
++          numItems: row.numItems
++        })
++      }
+     }
+ 
+     return {
 diff --git a/server/utils/queries/seriesFilters.js b/server/utils/queries/seriesFilters.js
 index c8ebb0d7..d3eacffd 100644
 --- a/server/utils/queries/seriesFilters.js

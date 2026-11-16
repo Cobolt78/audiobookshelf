@@ -979,10 +979,17 @@ class LibraryController {
       return res.status(400).send('Invalid request. Query param "q" must be a string')
     }
 
-    const limit = req.query.limit || 12
+    let limit = 12
+    if (req.query.limit !== undefined) {
+      const parsedLimit = parseInt(req.query.limit, 10)
+      if (!isNaN(parsedLimit) && parsedLimit >= 0) {
+        limit = parsedLimit
+      }
+    }
+    const category = typeof req.query.category === 'string' && req.query.category.trim() ? req.query.category.trim().toLowerCase() : null
     const query = req.query.q.trim()
 
-    const matches = await libraryItemFilters.search(req.user, req.library, query, limit)
+    const matches = await libraryItemFilters.search(req.user, req.library, query, limit, category)
     res.json(matches)
   }
 

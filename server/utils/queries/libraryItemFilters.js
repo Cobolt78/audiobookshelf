@@ -178,13 +178,14 @@ module.exports = {
    * @param {import('../../models/Library')} library
    * @param {string} query
    * @param {number} limit
+   * @param {string|null} [category=null]
    * @returns {{book:object[], narrators:object[], authors:object[], tags:object[], series:object[], podcast:object[]}}
    */
-  search(user, library, query, limit) {
+  search(user, library, query, limit, category = null) {
     if (library.isBook) {
-      return libraryItemsBookFilters.search(user, library, query, limit, 0)
+      return libraryItemsBookFilters.search(user, library, query, limit, 0, category)
     } else {
-      return libraryItemsPodcastFilters.search(user, library, query, limit, 0)
+      return libraryItemsPodcastFilters.search(user, library, query, limit, 0, category)
     }
   },
 

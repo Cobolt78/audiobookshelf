@@ -100,6 +100,7 @@ export default {
       return this.$store.getters['globals/getIsBatchSelectingMediaItems']
     },
     isClickableShelf() {
+      if (this.shelf?.clickable) return true
       const id = this.shelf?.id
       return [
         'continue-listening',
@@ -124,6 +125,11 @@ export default {
     clickShelfHeader() {
       if (!this.currentLibraryId || !this.isClickableShelf) return
       const shelfId = this.shelf.id
+      if (this.shelf?.clickable) {
+        const q = this.$route.query.q || ''
+        this.$router.push(`/library/${this.currentLibraryId}/search?q=${encodeURIComponent(q)}&category=${encodeURIComponent(shelfId)}`).catch(() => {})
+        return
+      }
       if (shelfId === 'continue-listening' || shelfId === 'continue-reading') {
         this.$router.push(`/library/${this.currentLibraryId}/bookshelf?filter=progress.${this.$encode('in-progress')}&sort=progress&desc=1`).catch(() => {})
       } else if (shelfId === 'listen-again' || shelfId === 'read-again') {

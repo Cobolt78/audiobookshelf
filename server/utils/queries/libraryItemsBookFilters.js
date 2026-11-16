@@ -1093,191 +1093,170 @@ module.exports = {
    * @param {import('../../models/User')} user
    * @param {import('../../models/Library')} library
    * @param {string} query
-   * @param {number} limit
+   * @param {number} limit (0 = no limit)
    * @param {number} offset
+   * @param {string|null} [category=null] Optional category filter ('books'/'book', 'series', 'authors', 'narrators', 'tags', 'genres')
    * @returns {{book:object[], narrators:object[], authors:object[], tags:object[], series:object[]}}
    */
-  async search(user, library, query, limit, offset) {
+  async search(user, library, query, limit, offset, category = null) {
+    const normalizedCat = category === 'books' ? 'book' : category
+    const shouldInclude = (cat) => !normalizedCat || normalizedCat === cat
+
+    const seqLimit = limit > 0 ? limit : undefined
+    const seqOffset = limit > 0 ? offset : undefined
+    const sqlLimitClause = limit > 0 ? 'LIMIT :limit OFFSET :offset' : ''
+    const baseReplacements = limit > 0 ? { libraryId: library.id, limit, offset } : { libraryId: library.id }
+
     const userPermissionBookWhere = this.getUserPermissionBookWhereQuery(user)
 
     const textSearchQuery = await Database.createTextSearchQuery(query)
 
-    const matchTitle = textSearchQuery.matchExpression('book.title')
-    const matchSubtitle = textSearchQuery.matchExpression('book.subtitle')
-
-    // Search title, subtitle, asin, isbn
-    const books = await Database.bookModel.findAll({
-      where: [
-        {
-          [Sequelize.Op.or]: [
-            Sequelize.literal(matchTitle),
-            Sequelize.literal(matchSubtitle),
-            {
-              asin: {
-                [Sequelize.Op.substring]: query
-              }
-            },
-            {
-              isbn: {
-                [Sequelize.Op.substring]: query
-              }
-            }
-          ]
-        },
-        ...userPermissionBookWhere.bookWhere
-      ],
-      replacements: userPermissionBookWhere.replacements,
-      include: [
-        {
-          model: Database.libraryItemModel,
-          where: {
-            libraryId: library.id
-          }
-        },
-        {
-          model: Database.bookSeriesModel,
-          include: {
-            model: Database.seriesModel
-          },
-          separate: true
-        },
-        {
-          model: Database.bookAuthorModel,
-          include: {
-            model: Database.authorModel
-          },
-          separate: true
-        }
-      ],
-      subQuery: false,
-      distinct: true,
-      limit,
-      offset
-    })
-
     const itemMatches = []
+    if (shouldInclude('book')) {
+      const matchTitle = textSearchQuery.matchExpression('book.title')
+      const matchSubtitle = textSearchQuery.matchExpression('book.subtitle')
 
-    for (const book of books) {
-      const libraryItem = book.libraryItem
-      delete book.libraryItem
-
-      book.series = book.bookSeries.map((bs) => {
-        const series = bs.series
-        delete bs.series
-        series.bookSeries = bs
-        return series
-      })
-      delete book.bookSeries
-
-      book.authors = book.bookAuthors.map((ba) => ba.author)
-      delete book.bookAuthors
-
-      libraryItem.media = book
-      itemMatches.push({
-        libraryItem: libraryItem.toOldJSONExpanded()
-      })
-    }
-
-    const matchJsonValue = textSearchQuery.matchExpression('json_each.value')
-
-    // Search narrators
-    const narratorMatches = []
-    const [narratorResults] = await Database.sequelize.query(`SELECT value, count(*) AS numBooks FROM books b, libraryItems li, json_each(b.narrators) WHERE json_valid(b.narrators) AND ${matchJsonValue} AND b.id = li.mediaId AND li.libraryId = :libraryId GROUP BY value LIMIT :limit OFFSET :offset;`, {
-      replacements: {
-        libraryId: library.id,
-        limit,
-        offset
-      },
-      raw: true
-    })
-    for (const row of narratorResults) {
-      narratorMatches.push({
-        name: row.value,
-        numBooks: row.numBooks
-      })
-    }
-
-    // Search tags
-    const tagMatches = []
-    const [tagResults] = await Database.sequelize.query(`SELECT value, count(*) AS numItems FROM books b, libraryItems li, json_each(b.tags) WHERE json_valid(b.tags) AND ${matchJsonValue} AND b.id = li.mediaId AND li.libraryId = :libraryId GROUP BY value ORDER BY numItems DESC LIMIT :limit OFFSET :offset;`, {
-      replacements: {
-        libraryId: library.id,
-        limit,
-        offset
-      },
-      raw: true
-    })
-    for (const row of tagResults) {
-      tagMatches.push({
-        name: row.value,
-        numItems: row.numItems
-      })
-    }
-
-    // Search genres
-    const genreMatches = []
-    const [genreResults] = await Database.sequelize.query(`SELECT value, count(*) AS numItems FROM books b, libraryItems li, json_each(b.genres) WHERE json_valid(b.genres) AND ${matchJsonValue} AND b.id = li.mediaId AND li.libraryId = :libraryId GROUP BY value ORDER BY numItems DESC LIMIT :limit OFFSET :offset;`, {
-      replacements: {
-        libraryId: library.id,
-        limit,
-        offset
-      },
-      raw: true
-    })
-    for (const row of genreResults) {
-      genreMatches.push({
-        name: row.value,
-        numItems: row.numItems
-      })
-    }
-
-    // Search series
-    const matchName = textSearchQuery.matchExpression('name')
-    const allSeries = await Database.seriesModel.findAll({
-      where: {
-        [Sequelize.Op.and]: [
-          Sequelize.literal(matchName),
+      // Search title, subtitle, asin, isbn
+      const books = await Database.bookModel.findAll({
+        where: [
           {
-            libraryId: library.id
+            [Sequelize.Op.or]: [
+              Sequelize.literal(matchTitle),
+              Sequelize.literal(matchSubtitle),
+              {
+                asin: {
+                  [Sequelize.Op.substring]: query
+                }
+              },
+              {
+                isbn: {
+                  [Sequelize.Op.substring]: query
+                }
+              }
+            ]
+          },
+          ...userPermissionBookWhere.bookWhere
+        ],
+        replacements: userPermissionBookWhere.replacements,
+        include: [
+          {
+            model: Database.libraryItemModel,
+            where: {
+              libraryId: library.id
+            }
+          },
+          {
+            model: Database.bookSeriesModel,
+            include: {
+              model: Database.seriesModel
+            },
+            separate: true
+          },
+          {
+            model: Database.bookAuthorModel,
+            include: {
+              model: Database.authorModel
+            },
+            separate: true
           }
-        ]
-      },
-      replacements: userPermissionBookWhere.replacements,
-      include: {
-        separate: true,
-        model: Database.bookSeriesModel,
-        include: {
-          model: Database.bookModel,
-          where: userPermissionBookWhere.bookWhere,
-          include: {
-            model: Database.libraryItemModel
-          }
-        }
-      },
-      subQuery: false,
-      distinct: true,
-      limit,
-      offset
-    })
-    const seriesMatches = []
-    for (const series of allSeries) {
-      const books = series.bookSeries.map((bs) => {
-        const libraryItem = bs.book.libraryItem
-        libraryItem.media = bs.book
-        libraryItem.media.authors = []
-        libraryItem.media.series = []
-        return libraryItem.toOldJSON()
+        ],
+        subQuery: false,
+        distinct: true,
+        limit: seqLimit,
+        offset: seqOffset
       })
-      if (books.length) {
-        seriesMatches.push({
-          series: series.toOldJSON(),
-          books
+
+      for (const book of books) {
+        const libraryItem = book.libraryItem
+        delete book.libraryItem
+
+        book.series = book.bookSeries.map((bs) => {
+          const series = bs.series
+          delete bs.series
+          series.bookSeries = bs
+          return series
+        })
+        delete book.bookSeries
+
+        book.authors = book.bookAuthors.map((ba) => ba.author)
+        delete book.bookAuthors
+
+        libraryItem.media = book
+        itemMatches.push({
+          libraryItem: libraryItem.toOldJSONExpanded()
         })
       }
     }
 
+    const matchJsonValue = textSearchQuery.matchExpression('json_each.value')
+
+    const runJsonFieldSearch = async (jsonCol, countAlias, extraOrder = '') => {
+      const [rows] = await Database.sequelize.query(
+        `SELECT value, count(*) AS ${countAlias} FROM books b, libraryItems li, json_each(b.${jsonCol}) WHERE json_valid(b.${jsonCol}) AND ${matchJsonValue} AND b.id = li.mediaId AND li.libraryId = :libraryId GROUP BY value ${extraOrder} ${sqlLimitClause};`,
+        {
+          replacements: baseReplacements,
+          raw: true
+        }
+      )
+      return rows.map((row) => ({
+        name: row.value,
+        [countAlias]: row[countAlias]
+      }))
+    }
+
+    const narratorMatches = shouldInclude('narrators') ? await runJsonFieldSearch('narrators', 'numBooks') : []
+    const tagMatches = shouldInclude('tags') ? await runJsonFieldSearch('tags', 'numItems', 'ORDER BY numItems DESC') : []
+    const genreMatches = shouldInclude('genres') ? await runJsonFieldSearch('genres', 'numItems', 'ORDER BY numItems DESC') : []
+
+    // Search series
+    const seriesMatches = []
+    if (shouldInclude('series')) {
+      const matchName = textSearchQuery.matchExpression('name')
+      const allSeries = await Database.seriesModel.findAll({
+        where: {
+          [Sequelize.Op.and]: [
+            Sequelize.literal(matchName),
+            {
+              libraryId: library.id
+            }
+          ]
+        },
+        replacements: userPermissionBookWhere.replacements,
+        include: {
+          separate: true,
+          model: Database.bookSeriesModel,
+          include: {
+            model: Database.bookModel,
+            where: userPermissionBookWhere.bookWhere,
+            include: {
+              model: Database.libraryItemModel
+            }
+          }
+        },
+        subQuery: false,
+        distinct: true,
+        limit: seqLimit,
+        offset: seqOffset
+      })
+      for (const series of allSeries) {
+        const books = series.bookSeries.map((bs) => {
+          const libraryItem = bs.book.libraryItem
+          libraryItem.media = bs.book
+          libraryItem.media.authors = []
+          libraryItem.media.series = []
+          return libraryItem.toOldJSON()
+        })
+        if (books.length) {
+          seriesMatches.push({
+            series: series.toOldJSON(),
+            books
+          })
+        }
+      }
+    }
+
     // Search authors
-    const authorMatches = await authorFilters.search(library.id, textSearchQuery, limit, offset)
+    const authorMatches = shouldInclude('authors') ? await authorFilters.search(library.id, textSearchQuery, limit, offset) : []
 
     return {
       book: itemMatches,

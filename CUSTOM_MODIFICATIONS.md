@@ -334,15 +334,42 @@ Displays the audio bitrate directly on the book details page under the file size
 
 ---
 
-## 12. Modified Files Inventory
+## 12. Clickable Search Category Headings & Full Results Expansion
+
+### Summary
+Removes the 12-item viewing dead-end on library search results (`/library/{id}/search?q=...`) by making all search shelf headings (`Books`, `Series`, `Podcasts`, `Episodes`, `Authors`, `Narrators`, `Tags`) clickable to open a full-page responsive grid showing **all** matching results for that category.
+
+### Key Details
+- **Backend Search API** (`server/controllers/LibraryController.js`, `libraryItemFilters.js`, `libraryItemsBookFilters.js`, `libraryItemsPodcastFilters.js`, `authorFilters.js`):
+  - `GET /api/libraries/:id/search` now supports `limit=0` (uncapped results) and optional `category` filtering (`books`, `series`, `podcasts`, `episodes`, `authors`, `narrators`, `tags`) while preserving the `limit=12` default when omitted.
+- **Clickable Shelf Headings**:
+  - Updated `BookShelfCategorized.vue` and `BookShelfRow.vue` so search shelf headers render the interactive chevron indicator (`chevron_right`) and route to `/library/{id}/search?q={query}&category={category}` when clicked (in both Standard and Detail bookshelf views).
+- **Expanded Category Grid View** (`client/pages/library/_library/search.vue`):
+  - Displays a header bar with an **All Search Results** back button, category title, and exact total result count.
+  - Renders all matching cards cleanly using native ABS card components (`LazyBookCard`, `LazySeriesCard`, `AuthorCard`, `NarratorCard`, `GroupCard`) and preserves browser back/forward navigation.
+
+### Modified Files:
+* `client/components/app/BookShelfCategorized.vue`
+* `client/components/app/BookShelfRow.vue`
+* `client/pages/library/_library/search.vue`
+* `server/controllers/LibraryController.js`
+* `server/utils/queries/libraryItemFilters.js`
+* `server/utils/queries/libraryItemsBookFilters.js`
+* `server/utils/queries/libraryItemsPodcastFilters.js`
+* `server/utils/queries/authorFilters.js`
+* `test/server/controllers/LibrarySearch.test.js`
+
+---
+
+## 13. Modified Files Inventory
 
 | File Path | Description |
 | :--- | :--- |
 | `CUSTOM_MODIFICATIONS.md` | Comprehensive documentation of all custom features and modifications |
 | `GEMINI.md` | Antigravity paired-programming invariants and upgrade retention protocol |
 | `custom_changes.patch` | Unified Git diff against upstream `v2.37.2` baseline |
-| `client/components/app/BookShelfCategorized.vue` | Interactive shelf header clicks, discover re-roll, and encoded filter routing |
-| `client/components/app/BookShelfRow.vue` | Interactive shelf header clicks, placards, and discover refresh button |
+| `client/components/app/BookShelfCategorized.vue` | Interactive shelf header clicks, discover re-roll, search heading navigation, and encoded filter routing |
+| `client/components/app/BookShelfRow.vue` | Interactive shelf header clicks, search heading navigation, placards, and discover refresh button |
 | `client/components/app/BookShelfToolbar.vue` | Audible scan progress bar, quick/full scan menu, cancel listener, and status sync |
 | `client/components/app/ConfigSideNav.vue` | Sidebar navigation link to Bandwidth Stats |
 | `client/components/cards/LazySeriesCard.vue` | Series read badges (X/Y Read), missing books count, and upcoming release indicators |
@@ -357,13 +384,14 @@ Displays the audio bitrate directly on the book details page under the file size
 | `client/pages/config/bandwidth.vue` | Responsive Bandwidth Stats dashboard with 48h SVG waveform, 24h hourly breakdown, item breakdown, and date filters |
 | `client/pages/config/index.vue` | Bandwidth tracking toggle and custom local LAN subnets/IPs input in Settings > General |
 | `client/pages/config/users/_id/index.vue` | Data transferred stat on user profile card |
+| `client/pages/library/_library/search.vue` | Expandable full-category search results grid with `?category=` routing |
 | `client/pages/library/_library/series/_id.vue` | Mounts external series tracking panel on series details page |
 | `client/plugins/init.client.js` | Resilient Base64 decode fallback to plain text |
 | `client/strings/en-us.json` | English string localizations for scan actions, series badges, and tooltips |
 | `server/Database.js` | Registered Bandwidth and SeriesProviderEntry models, schema sync, and idempotent column verification |
 | `server/Server.js` | Global middleware hook and shutdown flush for BandwidthManager |
-| `server/controllers/LibraryController.js` | Series provider scan, cancel, status, upcoming releases, and missing books endpoints |
-| `server/controllers/LibraryItemController.js` | Media updates with real-time series provider reconciliation hook |
+| `server/controllers/LibraryController.js` | Series provider scan/cancel/status/missing/upcoming endpoints, and uncapped category search |
+| `server/controllers/LibraryItemController.js` | Media updates and batch updates with real-time series provider reconciliation hook |
 | `server/controllers/SeriesController.js` | Series detail response extended with provider tracking data |
 | `server/controllers/StatsController.js` | REST controller methods for bandwidth stats with trafficType and date params |
 | `server/managers/BandwidthManager.js` | In-memory buffering, request categorization, 10m/hourly buckets, auto-pruning, public WAN IP detection, and CIDR evaluation |
@@ -379,14 +407,17 @@ Displays the audio bitrate directly on the book details page under the file size
 | `server/models/Playlist.js` | Added `toOldJSONMinified()` and optional minification parameter to `getOldPlaylistsForUserAndLibrary` |
 | `server/models/SeriesProviderEntry.js` | Model definition for upcoming and missing series entries with author and narrator fields |
 | `server/objects/settings/ServerSettings.js` | `enableBandwidthTracking` and `bandwidthLocalSubnets` settings |
-| `server/providers/Audible.js` | Audible series catalog scraper, contributor parsing (author/narrator), hierarchy parser, and release categorization |
+| `server/providers/Audible.js` | Audible series catalog scraper, strict author/series validation, contributor parsing, hierarchy parser, and release categorization |
 | `server/providers/iTunes.js` | iTunes audiobook series scraper, anti-false-positive author & series matching, ownership filtering, and rate pacing |
 | `server/routers/ApiRouter.js` | Route definitions for `/stats/bandwidth` and series-provider endpoints |
 | `server/scanner/BookScanner.js` | Book scan paths with real-time series provider reconciliation hook |
 | `server/scanner/Scanner.js` | Quick match item update path with real-time series provider reconciliation hook |
-| `server/utils/queries/libraryFilters.js` | Series upcoming home shelf feed, and dual Base64/plain-text decoder |
-| `server/utils/queries/libraryItemsBookFilters.js` | Series discovery filtering & removed single-item limit |
+| `server/utils/queries/authorFilters.js` | Uncapped author search support when `limit=0` |
+| `server/utils/queries/libraryFilters.js` | Series upcoming home shelf feed, category/limit search forwarding, and dual Base64/plain-text decoder |
+| `server/utils/queries/libraryItemsBookFilters.js` | Series discovery filtering, category/limit book search, and removed single-item limit |
+| `server/utils/queries/libraryItemsPodcastFilters.js` | Category/limit podcast search support |
 | `server/utils/queries/seriesFilters.js` | Series completion filters (Has Missing, Complete, Has Upcoming) and sorting |
+| `test/server/controllers/LibrarySearch.test.js` | Automated unit tests for LibraryController.search limit=0 and category filtering |
 | `test/server/controllers/SeriesProviderEndpoints.test.js` | Automated unit tests for series provider endpoints and completion filters |
 | `test/server/managers/BandwidthManager.test.js` | Automated unit test suite verifying bandwidth user breakdown date and trafficType filtering |
 | `test/server/managers/SeriesProviderManager.test.js` | Automated unit tests for SeriesProviderManager scan, iTunes fallback, and real-time reconciliation |
