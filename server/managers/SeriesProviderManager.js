@@ -157,7 +157,7 @@ class SeriesProviderManager {
         })
       }
 
-      let result = await this.audible.fetchSeriesProviderEntries(series.name, ownedBooks, region, onProgress)
+      let result = await this.audible.fetchSeriesProviderEntries(series.name, ownedBooks, region, onProgress, seriesAuthors)
 
       if (result?.skipped && !scanState.cancelled) {
         Logger.info(`[SeriesProvider] Audible skipped series "${series.name}" (${result.reason || 'No match'}). Falling back to iTunes...`)
@@ -424,7 +424,7 @@ class SeriesProviderManager {
 
         let result
         try {
-          result = await this.audible.fetchSeriesProviderEntries(series.name, ownedBooks, region)
+          result = await this.audible.fetchSeriesProviderEntries(series.name, ownedBooks, region, null, seriesAuthors)
         } catch (err) {
           if (err.rateLimited) {
             throw err

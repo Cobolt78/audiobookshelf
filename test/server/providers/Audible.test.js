@@ -274,4 +274,144 @@ describe('Audible', () => {
       }
     })
   })
+
+  describe('authorsMatch', () => {
+    it('matches normalized initials without false-positive surname collisions', () => {
+      expect(audible.authorsMatch([{ name: 'A.A. Dark' }], ['A A Dark'])).to.be.true
+      expect(audible.authorsMatch([{ name: 'A. A. Dark' }], ['A A Dark'])).to.be.true
+      expect(audible.authorsMatch([{ name: 'Dannika Dark' }], ['A A Dark'])).to.be.false
+      expect(audible.authorsMatch([{ name: 'Alice Dark' }], ['A. A. Dark'])).to.be.false
+      expect(audible.authorsMatch([{ name: 'A. B. Dark' }], ['A. A. Dark'])).to.be.false
+      expect(audible.authorsMatch([{ name: 'B. Sanderson' }], ['Brandon Sanderson'])).to.be.true
+      expect(audible.authorsMatch([{ name: 'Brandon Sanderson, Michael Whelan' }], ['Brandon Sanderson'])).to.be.true
+    })
+  })
+
+  describe('resolveLiveEdition', () => {
+    afterEach(() => {
+      sinon.restore()
+    })
+
+    it('rejects candidates from unrelated authors or series when resolving placeholders', async () => {
+      sinon.stub(audible, 'requestAudible').resolves({
+        products: [
+          {
+            asin: '1977384684',
+            title: 'Blackout',
+            authors: [{ name: 'Dannika Dark' }],
+            series: [{ asin: 'B0752X8P9W', title: 'Crossbreed', sequence: '5' }],
+            price: { list_price: { base: 19.95 } },
+            runtime_length_min: 500
+          }
+        ]
+      })
+
+      const placeholderProduct = {
+        asin: 'B0D6NDGBHV',
+        title: 'Black Out',
+        sku: 'PL_HLDR_147891',
+        authors: [{ name: 'A A Dark' }]
+      }
+
+      const result = await audible.resolveLiveEdition('24690 Series', placeholderProduct, '4', 'us', 'B0D6NC23Y1', ['A.A. Dark'])
+      expect(result).to.be.null
+    })
+
+    it('accepts valid live edition matching author, series, and title', async () => {
+      sinon.stub(audible, 'requestAudible').resolves({
+        products: [
+          {
+            asin: '1977384684',
+            title: 'Blackout',
+            authors: [{ name: 'Dannika Dark' }],
+            series: [{ asin: 'B0752X8P9W', title: 'Crossbreed', sequence: '5' }],
+            price: { list_price: { base: 19.95 } },
+            runtime_length_min: 500
+          },
+          {
+            asin: 'B0REAL4444',
+            title: 'Black Out',
+            authors: [{ name: 'A.A. Dark' }],
+            series: [{ asin: 'B0D6NC23Y1', title: '24690 Series', sequence: '4' }],
+            price: { list_price: { base: 19.95 } },
+            runtime_length_min: 480
+          }
+        ]
+      })
+
+      const placeholderProduct = {
+        asin: 'B0D6NDGBHV',
+        title: 'Black Out',
+        sku: 'PL_HLDR_147891',
+        authors: [{ name: 'A A Dark' }]
+      }
+
+      const result = await audible.resolveLiveEdition('24690 Series', placeholderProduct, '4', 'us', 'B0D6NC23Y1', ['A.A. Dark'])
+      expect(result).to.not.be.null
+      expect(result.asin).to.equal('B0REAL4444')
+    })
+
+    it('accepts re-issued edition when series suffix differs (e.g. "24690 Series" vs "24690")', async () => {
+      sinon.stub(audible, 'requestAudible').resolves({
+        products: [
+          {
+            asin: '1977384684',
+            title: 'Blackout',
+            authors: [{ name: 'Dannika Dark' }],
+            series: [{ asin: 'B072ML7BCL', title: 'Crossbreed', sequence: '5' }],
+            price: { list_price: { base: 19.95 } },
+            runtime_length_min: 500
+          },
+          {
+            asin: 'B0DYQQY8KJ',
+            title: 'Black Out',
+            authors: [{ name: 'A.A. Dark' }],
+            series: [{ asin: 'B0DWMCS554', title: '24690', sequence: '4' }],
+            price: { list_price: { base: 19.95 } },
+            runtime_length_min: 480
+          }
+        ]
+      })
+
+      const placeholderProduct = {
+        asin: 'B0D6NDGBHV',
+        title: 'Black Out',
+        sku: 'PL_HLDR_147891',
+        authors: [{ name: 'A A Dark' }]
+      }
+
+      const result = await audible.resolveLiveEdition('24690 Series', placeholderProduct, '4', 'us', 'B0D6NC23Y1', ['A. A. Dark'])
+      expect(result).to.not.be.null
+      expect(result.asin).to.equal('B0DYQQY8KJ')
+    })
+  })
+
+  describe('resolveSeriesAsin author filtering', () => {
+    afterEach(() => {
+      sinon.restore()
+    })
+
+    it('rejects catalog hits with matching series name but mismatched author in Strategy 2', async () => {
+      sinon.stub(audible, 'requestAudible').resolves({
+        products: [
+          {
+            asin: 'B0WRONG001',
+            title: 'Wrong Book',
+            authors: [{ name: 'Other Author' }],
+            series: [{ asin: 'B0WRONGSERIES', title: 'Legacy' }]
+          },
+          {
+            asin: 'B0RIGHT001',
+            title: 'Right Book',
+            authors: [{ name: 'Target Author' }],
+            series: [{ asin: 'B0RIGHTSERIES', title: 'Legacy' }]
+          }
+        ]
+      })
+
+      const result = await audible.resolveSeriesAsin('Legacy', [{ title: 'Book 1', authors: ['Target Author'] }], 'us', ['Target Author'])
+      expect(result).to.not.be.null
+      expect(result.seriesAsin).to.equal('B0RIGHTSERIES')
+    })
+  })
 })

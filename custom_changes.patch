@@ -5805,7 +5805,7 @@ index 7138d26a..c6e6ff24 100644
     */
 diff --git a/server/managers/SeriesProviderManager.js b/server/managers/SeriesProviderManager.js
 new file mode 100644
-index 00000000..b58640e4
+index 00000000..18ec4649
 --- /dev/null
 +++ b/server/managers/SeriesProviderManager.js
 @@ -0,0 +1,690 @@
@@ -5968,7 +5968,7 @@ index 00000000..b58640e4
 +        })
 +      }
 +
-+      let result = await this.audible.fetchSeriesProviderEntries(series.name, ownedBooks, region, onProgress)
++      let result = await this.audible.fetchSeriesProviderEntries(series.name, ownedBooks, region, onProgress, seriesAuthors)
 +
 +      if (result?.skipped && !scanState.cancelled) {
 +        Logger.info(`[SeriesProvider] Audible skipped series "${series.name}" (${result.reason || 'No match'}). Falling back to iTunes...`)
@@ -6235,7 +6235,7 @@ index 00000000..b58640e4
 +
 +        let result
 +        try {
-+          result = await this.audible.fetchSeriesProviderEntries(series.name, ownedBooks, region)
++          result = await this.audible.fetchSeriesProviderEntries(series.name, ownedBooks, region, null, seriesAuthors)
 +        } catch (err) {
 +          if (err.rateLimited) {
 +            throw err
@@ -7647,10 +7647,10 @@ index 0454161e..d6f90d2e 100644
        version: this.version,
        buildNumber: this.buildNumber,
 diff --git a/server/providers/Audible.js b/server/providers/Audible.js
-index cf1a15ff..d84c5fac 100644
+index cf1a15ff..6e4a320a 100644
 --- a/server/providers/Audible.js
 +++ b/server/providers/Audible.js
-@@ -170,6 +170,540 @@ class Audible {
+@@ -170,6 +170,797 @@ class Audible {
      }
      return items.filter(Boolean).map((item) => this.cleanResult(item)) || []
    }
@@ -7666,6 +7666,18 @@ index cf1a15ff..d84c5fac 100644
 +      .toLowerCase()
 +      .replace(/[^a-z0-9]/g, '')
 +      .replace(/^the/, '')
++  }
++
++  /**
++   * Normalize a series title by stripping common series suffixes ("Series", "Trilogy", "Saga", etc.)
++   * before alphanumeric normalization so "24690 Series" matches "24690".
++   * @param {string} str
++   * @returns {string}
++   */
++  normalizedSeriesTitle(str) {
++    if (!str || typeof str !== 'string') return ''
++    const core = str.replace(/\b(series|trilogy|saga|chronicles|chronicle|duology|quartet)\b/gi, '').trim()
++    return this.normalizedTitle(core || str)
 +  }
 +
 +  /**
@@ -7776,6 +7788,165 @@ index cf1a15ff..d84c5fac 100644
 +  }
 +
 +  /**
++   * Extract individual author strings from an array of author objects/strings or delimited string
++   * @param {Array<{name?: string}|string>|string} input
++   * @returns {Array<string>}
++   */
++  extractAuthorList(input) {
++    if (!input) return []
++    const rawItems = Array.isArray(input) ? input : [input]
++    const result = []
++
++    for (const item of rawItems) {
++      const nameStr = typeof item === 'string' ? item : item?.name
++      if (!nameStr || typeof nameStr !== 'string') continue
++
++      // Split on explicit multi-author delimiters first (&, ;, " and ")
++      const primaryParts = nameStr.split(/\s*(?:&|;|\band\b)\s*/i).filter(Boolean)
++      for (const part of primaryParts) {
++        const commaSegments = part.split(',').map((s) => s.trim()).filter(Boolean)
++        if (commaSegments.length <= 1) {
++          result.push(part.trim())
++        } else if (commaSegments.length === 2) {
++          // Distinguish "Last, First" (after comma is 1 token or initial(s)) vs "Author One, Author Two"
++          const afterCommaTokens = commaSegments[1]
++            .toLowerCase()
++            .replace(/[^a-z0-9\s]/g, ' ')
++            .trim()
++            .split(/\s+/)
++            .filter(Boolean)
++          const beforeCommaTokens = commaSegments[0]
++            .toLowerCase()
++            .replace(/[^a-z0-9\s]/g, ' ')
++            .trim()
++            .split(/\s+/)
++            .filter(Boolean)
++          const looksLikeLastFirst =
++            afterCommaTokens.length === 1 ||
++            (beforeCommaTokens.length === 1 && afterCommaTokens.length <= 2 && afterCommaTokens.some((t) => t.length === 1))
++          if (looksLikeLastFirst) {
++            result.push(part.trim())
++          } else {
++            result.push(...commaSegments)
++          }
++        } else {
++          result.push(...commaSegments)
++        }
++      }
++    }
++
++    return result.filter(Boolean)
++  }
++
++  /**
++   * Parse an author name into surname, ordered given-name/initial tokens, and normalized form,
++   * preserving single-letter initials (e.g., "A. A. Dark" / "A.A. Dark" -> surname: "dark", givenTokens: ["a", "a"]).
++   * @param {string} rawName
++   * @returns {{ surname: string, givenTokens: Array<string>, allTokens: Array<string>, normFull: string }|null}
++   */
++  parseAuthorName(rawName) {
++    if (!rawName || typeof rawName !== 'string') return null
++    const suffixes = new Set(['jr', 'sr', 'ii', 'iii', 'iv', 'phd', 'md', 'esq'])
++
++    let surname = ''
++    let givenTokens = []
++    let allTokens = []
++
++    if (rawName.includes(',')) {
++      const [lastPart, firstPart] = rawName.toLowerCase().split(',', 2)
++      const lastTokens = lastPart
++        .replace(/[^a-z0-9\s]/g, ' ')
++        .split(/\s+/)
++        .filter((t) => t && !suffixes.has(t))
++      const firstTokens = (firstPart || '')
++        .replace(/[^a-z0-9\s]/g, ' ')
++        .split(/\s+/)
++        .filter((t) => t && !suffixes.has(t))
++      if (!lastTokens.length && !firstTokens.length) return null
++      surname = lastTokens[lastTokens.length - 1] || ''
++      givenTokens = [...firstTokens, ...lastTokens.slice(0, -1)]
++      allTokens = [...givenTokens, ...(surname ? [surname] : [])]
++    } else {
++      const tokens = rawName
++        .toLowerCase()
++        .replace(/[^a-z0-9\s]/g, ' ')
++        .split(/\s+/)
++        .filter((t) => t && !suffixes.has(t))
++      if (!tokens.length) return null
++      allTokens = tokens
++      if (tokens.length === 1) {
++        surname = tokens[0]
++        givenTokens = []
++      } else {
++        surname = tokens[tokens.length - 1]
++        givenTokens = tokens.slice(0, -1)
++      }
++    }
++
++    const normFull = allTokens.join('')
++    return { surname, givenTokens, allTokens, normFull }
++  }
++
++  /**
++   * Check whether two author lists share at least one matching author while preserving initials
++   * (so "A. A. Dark" matches "A A Dark" / "A.A. Dark", but NOT "Dannika Dark" or "Alice Dark").
++   * @param {Array<{name?: string}|string>|string} listA
++   * @param {Array<{name?: string}|string>|string} listB
++   * @returns {boolean}
++   */
++  authorsMatch(listA, listB) {
++    const parsedA = this.extractAuthorList(listA)
++      .map((name) => this.parseAuthorName(name))
++      .filter(Boolean)
++    const parsedB = this.extractAuthorList(listB)
++      .map((name) => this.parseAuthorName(name))
++      .filter(Boolean)
++
++    if (!parsedA.length || !parsedB.length) return false
++
++    const tokenMatches = (t1, t2) => {
++      if (!t1 || !t2) return false
++      if (t1 === t2) return true
++      if (t1.length === 1 && t2.startsWith(t1)) return true
++      if (t2.length === 1 && t1.startsWith(t2)) return true
++      return false
++    }
++
++    for (const a of parsedA) {
++      for (const b of parsedB) {
++        if (a.normFull && b.normFull && a.normFull === b.normFull) {
++          return true
++        }
++        if (a.allTokens.length === 1 && b.allTokens.length === 1) {
++          if (a.allTokens[0] === b.allTokens[0]) return true
++          continue
++        }
++        if (!a.surname || !b.surname || a.surname !== b.surname) continue
++        if (!a.givenTokens.length || !b.givenTokens.length) continue
++
++        // If one side uses multi-initial pen name (all initials, >=2 given tokens like "A. A.")
++        // and the other side only has a single non-initial full word ("Alice"), reject to avoid ambiguity.
++        const aIsMultiInitial = a.givenTokens.length >= 2 && a.givenTokens.every((t) => t.length === 1)
++        const bIsMultiInitial = b.givenTokens.length >= 2 && b.givenTokens.every((t) => t.length === 1)
++        if ((aIsMultiInitial && b.givenTokens.length === 1 && b.givenTokens[0].length > 1) ||
++            (bIsMultiInitial && a.givenTokens.length === 1 && a.givenTokens[0].length > 1)) {
++          continue
++        }
++
++        if (!tokenMatches(a.givenTokens[0], b.givenTokens[0])) continue
++
++        if (a.givenTokens.length >= 2 && b.givenTokens.length >= 2) {
++          if (!tokenMatches(a.givenTokens[1], b.givenTokens[1])) continue
++        }
++
++        return true
++      }
++    }
++
++    return false
++  }
++
++  /**
 +   * Check if a product record from Audible is an unreleased, dummy, or delisted placeholder
 +   * @param {object} p
 +   * @returns {boolean}
@@ -7798,12 +7969,25 @@ index cf1a15ff..d84c5fac 100644
 +   * @param {object} placeholderProduct
 +   * @param {string|null} rawSeq
 +   * @param {string} region
++   * @param {string|null} [expectedSeriesAsin=null]
++   * @param {Array<string>} [seriesAuthors=[]]
 +   * @returns {Promise<object|null>}
 +   */
-+  async resolveLiveEdition(seriesName, placeholderProduct, rawSeq, region = 'us') {
++  async resolveLiveEdition(seriesName, placeholderProduct, rawSeq, region = 'us', expectedSeriesAsin = null, seriesAuthors = []) {
 +    const tld = this.audibleTld(region)
-+    const author = placeholderProduct.authors?.[0]?.name || null
++    const placeholderAuthors = Array.isArray(placeholderProduct.authors) ? placeholderProduct.authors.map((a) => a.name).filter(Boolean) : []
++    const expectedAuthors = placeholderAuthors.length ? placeholderAuthors : Array.isArray(seriesAuthors) ? seriesAuthors : []
++    const authorQuery = expectedAuthors[0] || null
 +    const cleanSeq = rawSeq ? this.cleanSeriesSequence(seriesName, rawSeq) : null
++
++    const targetSeriesNorm = this.normalizedTitle(seriesName)
++    const targetCoreSeriesNorm = this.normalizedSeriesTitle(seriesName)
++    const cleanSeriesNorm = this.cleanTitle(seriesName)
++    const expectedSeriesAsinUpper = expectedSeriesAsin ? expectedSeriesAsin.toUpperCase() : null
++
++    const normPlaceholder = this.normalizedTitle(placeholderProduct.title)
++    const cleanPlaceholder = this.cleanTitle(placeholderProduct.title, seriesName)
++    const basePlaceholder = this.extractSafeBaseTitle(placeholderProduct.title, seriesName)
 +
 +    const queries = []
 +    if (cleanSeq) {
@@ -7816,9 +8000,9 @@ index cf1a15ff..d84c5fac 100644
 +
 +    for (const q of queries) {
 +      try {
-+        let url = `https://api.audible${tld}/1.0/catalog/products?title=${encodeURIComponent(q)}&response_groups=contributors,product_attrs,rating,media,price&image_sizes=500&num_results=5`
-+        if (author) {
-+          url += `&author=${encodeURIComponent(author)}`
++        let url = `https://api.audible${tld}/1.0/catalog/products?title=${encodeURIComponent(q)}&response_groups=contributors,series,product_attrs,rating,media,price&image_sizes=500&num_results=10`
++        if (authorQuery) {
++          url += `&author=${encodeURIComponent(authorQuery)}`
 +        }
 +        const data = await this.requestAudible(url)
 +        const candidates = data?.products || []
@@ -7827,6 +8011,51 @@ index cf1a15ff..d84c5fac 100644
 +          if (this.isPlaceholder(cand)) continue
 +          if (cand.is_purchasability_suppressed === true) continue
 +          if (!cand.price && !cand.runtime_length_min) continue
++
++          // 1. Author validation: must match placeholder/series authors when known
++          if (expectedAuthors.length > 0 && !this.authorsMatch(cand.authors, expectedAuthors)) {
++            Logger.debug(`[Audible] Rejected live edition candidate "${cand.title}" (${cand.asin}) due to author mismatch (expected: ${expectedAuthors.join(', ')})`)
++            continue
++          }
++
++          // 2. Series validation: if candidate carries series metadata, reject if it belongs strictly to a different series
++          const candSeriesList = Array.isArray(cand.series) ? cand.series : []
++          const matchedSeries = candSeriesList.find(
++            (s) =>
++              (expectedSeriesAsinUpper && s.asin && s.asin.toUpperCase() === expectedSeriesAsinUpper) ||
++              (s.title &&
++                (this.normalizedTitle(s.title) === targetSeriesNorm ||
++                  (targetCoreSeriesNorm.length >= 2 && this.normalizedSeriesTitle(s.title) === targetCoreSeriesNorm) ||
++                  (cleanSeriesNorm.length >= 3 && this.cleanTitle(s.title) === cleanSeriesNorm)))
++          )
++          if (candSeriesList.length > 0 && !matchedSeries) {
++            Logger.debug(`[Audible] Rejected live edition candidate "${cand.title}" (${cand.asin}) due to series mismatch`)
++            continue
++          }
++
++          // 3. Title & sequence validation
++          const normCand = this.normalizedTitle(cand.title)
++          const cleanCand = this.cleanTitle(cand.title, seriesName)
++          const baseCand = this.extractSafeBaseTitle(cand.title, seriesName)
++          const titleMatches = Boolean(
++            (normCand && normCand === normPlaceholder) ||
++              (cleanCand && cleanPlaceholder && cleanCand === cleanPlaceholder) ||
++              (baseCand && basePlaceholder && baseCand === basePlaceholder)
++          )
++
++          const candSeq = matchedSeries?.sequence ? this.cleanSeriesSequence(seriesName, matchedSeries.sequence) : null
++          const seqMatches = Boolean(cleanSeq && candSeq && candSeq === cleanSeq)
++
++          if (candSeq && cleanSeq && candSeq !== cleanSeq && !titleMatches) {
++            Logger.debug(`[Audible] Rejected live edition candidate "${cand.title}" (${cand.asin}) due to sequence mismatch (${candSeq} !== ${cleanSeq})`)
++            continue
++          }
++
++          if (!titleMatches && !(matchedSeries && seqMatches)) {
++            Logger.debug(`[Audible] Rejected live edition candidate "${cand.title}" (${cand.asin}) due to title/series mismatch against "${placeholderProduct.title}"`)
++            continue
++          }
++
 +          Logger.info(`[Audible] Resolved live edition for placeholder "${placeholderProduct.title}" (${placeholderProduct.asin}) -> "${cand.title}" (${cand.asin})`)
 +          return cand
 +        }
@@ -7940,13 +8169,18 @@ index cf1a15ff..d84c5fac 100644
 +  /**
 +   * Resolve an Audible series ASIN using owned books or series title search
 +   * @param {string} seriesName
-+   * @param {Array<{asin?: string, title?: string}>} ownedBooks
++   * @param {Array<{asin?: string, title?: string, authors?: Array<string>}>} ownedBooks
 +   * @param {string} region
++   * @param {Array<string>} [seriesAuthors=[]]
 +   * @returns {Promise<{ seriesAsin: string, matchedName: string }|null>}
 +   */
-+  async resolveSeriesAsin(seriesName, ownedBooks = [], region = 'us') {
++  async resolveSeriesAsin(seriesName, ownedBooks = [], region = 'us', seriesAuthors = []) {
 +    const tld = this.audibleTld(region)
 +    const targetNorm = this.normalizedTitle(seriesName)
++    const targetCoreNorm = this.normalizedSeriesTitle(seriesName)
++    const effectiveAuthors = Array.from(
++      new Set([...(Array.isArray(seriesAuthors) ? seriesAuthors : []), ...ownedBooks.flatMap((b) => b.authors || [])].filter(Boolean))
++    )
 +
 +    // Strategy 1: Check series membership via owned book ASINs
 +    const asinsToCheck = ownedBooks
@@ -7960,7 +8194,12 @@ index cf1a15ff..d84c5fac 100644
 +        const data = await this.requestAudible(url)
 +        const seriesList = data?.product?.series
 +        if (Array.isArray(seriesList) && seriesList.length > 0) {
-+          const match = seriesList.find((s) => s.asin && this.normalizedTitle(s.title) === targetNorm) || seriesList.find((s) => s.asin)
++          const match =
++            seriesList.find(
++              (s) =>
++                s.asin &&
++                (this.normalizedTitle(s.title) === targetNorm || (targetCoreNorm.length >= 2 && this.normalizedSeriesTitle(s.title) === targetCoreNorm))
++            ) || seriesList.find((s) => s.asin)
 +          if (match?.asin) {
 +            Logger.debug(`[Audible] Resolved series "${seriesName}" -> ASIN ${match.asin} via owned book ASIN ${asin}`)
 +            return { seriesAsin: match.asin, matchedName: match.title || seriesName }
@@ -7974,14 +8213,21 @@ index cf1a15ff..d84c5fac 100644
 +
 +    // Strategy 2: Search Audible catalog by series name
 +    try {
-+      const searchUrl = `https://api.audible${tld}/1.0/catalog/products?title=${encodeURIComponent(seriesName)}&products_sort_by=Relevance&response_groups=series&num_results=5`
++      const searchUrl = `https://api.audible${tld}/1.0/catalog/products?title=${encodeURIComponent(seriesName)}&products_sort_by=Relevance&response_groups=contributors,series&num_results=10`
 +      const searchData = await this.requestAudible(searchUrl)
 +      const products = searchData?.products
 +      if (Array.isArray(products)) {
 +        for (const product of products) {
++          if (effectiveAuthors.length > 0 && !this.authorsMatch(product.authors, effectiveAuthors)) {
++            continue
++          }
 +          const seriesList = product.series
 +          if (Array.isArray(seriesList)) {
-+            const match = seriesList.find((s) => s.asin && this.normalizedTitle(s.title) === targetNorm)
++            const match = seriesList.find(
++              (s) =>
++                s.asin &&
++                (this.normalizedTitle(s.title) === targetNorm || (targetCoreNorm.length >= 2 && this.normalizedSeriesTitle(s.title) === targetCoreNorm))
++            )
 +            if (match?.asin) {
 +              Logger.debug(`[Audible] Resolved series "${seriesName}" -> ASIN ${match.asin} via catalog search`)
 +              return { seriesAsin: match.asin, matchedName: match.title || seriesName }
@@ -8001,17 +8247,28 @@ index cf1a15ff..d84c5fac 100644
 +   * Fetch all books in a series from Audible, categorizing into missing vs upcoming.
 +   *
 +   * @param {string} seriesName
-+   * @param {Array<{asin?: string, title?: string}>} [ownedBooks=[]]
++   * @param {Array<{asin?: string, title?: string, authors?: Array<string>}>} [ownedBooks=[]]
 +   * @param {string} [region='us']
++   * @param {Function|null} [onProgress=null]
++   * @param {Array<string>} [seriesAuthors=[]]
 +   * @returns {Promise<{ upcoming: Array, missing: Array, seriesAsin: string|null, skipped: boolean, reason?: string }>}
 +   */
-+  async fetchSeriesProviderEntries(seriesName, ownedBooks = [], region = 'us', onProgress = null) {
++  async fetchSeriesProviderEntries(seriesName, ownedBooks = [], region = 'us', onProgress = null, seriesAuthors = []) {
 +    if (!seriesName) {
 +      return { upcoming: [], missing: [], seriesAsin: null, skipped: true, reason: 'Empty series name' }
 +    }
 +
++    if (Array.isArray(onProgress)) {
++      seriesAuthors = onProgress
++      onProgress = null
++    }
++
++    const effectiveAuthors = Array.from(
++      new Set([...(Array.isArray(seriesAuthors) ? seriesAuthors : []), ...ownedBooks.flatMap((b) => b.authors || [])].filter(Boolean))
++    )
++
 +    const tld = this.audibleTld(region)
-+    const resolved = await this.resolveSeriesAsin(seriesName, ownedBooks, region)
++    const resolved = await this.resolveSeriesAsin(seriesName, ownedBooks, region, effectiveAuthors)
 +    if (!resolved?.seriesAsin) {
 +      Logger.info(`[Audible] Skipping series "${seriesName}": No matching Audible series found`)
 +      return { upcoming: [], missing: [], seriesAsin: null, skipped: true, reason: 'Series not found on Audible' }
@@ -8064,7 +8321,7 @@ index cf1a15ff..d84c5fac 100644
 +
 +      if (this.isPlaceholder(p)) {
 +        const rawSeq = sequencesByAsin[p.asin.toUpperCase()]
-+        const liveCand = await this.resolveLiveEdition(seriesName, p, rawSeq, region)
++        const liveCand = await this.resolveLiveEdition(seriesName, p, rawSeq, region, seriesAsin, effectiveAuthors)
 +        if (liveCand) {
 +          sequencesByAsin[liveCand.asin.toUpperCase()] = rawSeq
 +          availableProducts.push(liveCand)
@@ -10282,10 +10539,10 @@ index 00000000..bfedd7e0
 +  })
 +})
 diff --git a/test/server/providers/Audible.test.js b/test/server/providers/Audible.test.js
-index 75807c99..e44b5ecb 100644
+index 75807c99..438ae517 100644
 --- a/test/server/providers/Audible.test.js
 +++ b/test/server/providers/Audible.test.js
-@@ -67,4 +67,211 @@ describe('Audible', () => {
+@@ -67,4 +67,351 @@ describe('Audible', () => {
        expect(result.explicit).to.equal(false)
      })
    })
@@ -10494,6 +10751,146 @@ index 75807c99..e44b5ecb 100644
 +        expect(err.rateLimited).to.be.true
 +        expect(err.retryAfter).to.equal(60)
 +      }
++    })
++  })
++
++  describe('authorsMatch', () => {
++    it('matches normalized initials without false-positive surname collisions', () => {
++      expect(audible.authorsMatch([{ name: 'A.A. Dark' }], ['A A Dark'])).to.be.true
++      expect(audible.authorsMatch([{ name: 'A. A. Dark' }], ['A A Dark'])).to.be.true
++      expect(audible.authorsMatch([{ name: 'Dannika Dark' }], ['A A Dark'])).to.be.false
++      expect(audible.authorsMatch([{ name: 'Alice Dark' }], ['A. A. Dark'])).to.be.false
++      expect(audible.authorsMatch([{ name: 'A. B. Dark' }], ['A. A. Dark'])).to.be.false
++      expect(audible.authorsMatch([{ name: 'B. Sanderson' }], ['Brandon Sanderson'])).to.be.true
++      expect(audible.authorsMatch([{ name: 'Brandon Sanderson, Michael Whelan' }], ['Brandon Sanderson'])).to.be.true
++    })
++  })
++
++  describe('resolveLiveEdition', () => {
++    afterEach(() => {
++      sinon.restore()
++    })
++
++    it('rejects candidates from unrelated authors or series when resolving placeholders', async () => {
++      sinon.stub(audible, 'requestAudible').resolves({
++        products: [
++          {
++            asin: '1977384684',
++            title: 'Blackout',
++            authors: [{ name: 'Dannika Dark' }],
++            series: [{ asin: 'B0752X8P9W', title: 'Crossbreed', sequence: '5' }],
++            price: { list_price: { base: 19.95 } },
++            runtime_length_min: 500
++          }
++        ]
++      })
++
++      const placeholderProduct = {
++        asin: 'B0D6NDGBHV',
++        title: 'Black Out',
++        sku: 'PL_HLDR_147891',
++        authors: [{ name: 'A A Dark' }]
++      }
++
++      const result = await audible.resolveLiveEdition('24690 Series', placeholderProduct, '4', 'us', 'B0D6NC23Y1', ['A.A. Dark'])
++      expect(result).to.be.null
++    })
++
++    it('accepts valid live edition matching author, series, and title', async () => {
++      sinon.stub(audible, 'requestAudible').resolves({
++        products: [
++          {
++            asin: '1977384684',
++            title: 'Blackout',
++            authors: [{ name: 'Dannika Dark' }],
++            series: [{ asin: 'B0752X8P9W', title: 'Crossbreed', sequence: '5' }],
++            price: { list_price: { base: 19.95 } },
++            runtime_length_min: 500
++          },
++          {
++            asin: 'B0REAL4444',
++            title: 'Black Out',
++            authors: [{ name: 'A.A. Dark' }],
++            series: [{ asin: 'B0D6NC23Y1', title: '24690 Series', sequence: '4' }],
++            price: { list_price: { base: 19.95 } },
++            runtime_length_min: 480
++          }
++        ]
++      })
++
++      const placeholderProduct = {
++        asin: 'B0D6NDGBHV',
++        title: 'Black Out',
++        sku: 'PL_HLDR_147891',
++        authors: [{ name: 'A A Dark' }]
++      }
++
++      const result = await audible.resolveLiveEdition('24690 Series', placeholderProduct, '4', 'us', 'B0D6NC23Y1', ['A.A. Dark'])
++      expect(result).to.not.be.null
++      expect(result.asin).to.equal('B0REAL4444')
++    })
++
++    it('accepts re-issued edition when series suffix differs (e.g. "24690 Series" vs "24690")', async () => {
++      sinon.stub(audible, 'requestAudible').resolves({
++        products: [
++          {
++            asin: '1977384684',
++            title: 'Blackout',
++            authors: [{ name: 'Dannika Dark' }],
++            series: [{ asin: 'B072ML7BCL', title: 'Crossbreed', sequence: '5' }],
++            price: { list_price: { base: 19.95 } },
++            runtime_length_min: 500
++          },
++          {
++            asin: 'B0DYQQY8KJ',
++            title: 'Black Out',
++            authors: [{ name: 'A.A. Dark' }],
++            series: [{ asin: 'B0DWMCS554', title: '24690', sequence: '4' }],
++            price: { list_price: { base: 19.95 } },
++            runtime_length_min: 480
++          }
++        ]
++      })
++
++      const placeholderProduct = {
++        asin: 'B0D6NDGBHV',
++        title: 'Black Out',
++        sku: 'PL_HLDR_147891',
++        authors: [{ name: 'A A Dark' }]
++      }
++
++      const result = await audible.resolveLiveEdition('24690 Series', placeholderProduct, '4', 'us', 'B0D6NC23Y1', ['A. A. Dark'])
++      expect(result).to.not.be.null
++      expect(result.asin).to.equal('B0DYQQY8KJ')
++    })
++  })
++
++  describe('resolveSeriesAsin author filtering', () => {
++    afterEach(() => {
++      sinon.restore()
++    })
++
++    it('rejects catalog hits with matching series name but mismatched author in Strategy 2', async () => {
++      sinon.stub(audible, 'requestAudible').resolves({
++        products: [
++          {
++            asin: 'B0WRONG001',
++            title: 'Wrong Book',
++            authors: [{ name: 'Other Author' }],
++            series: [{ asin: 'B0WRONGSERIES', title: 'Legacy' }]
++          },
++          {
++            asin: 'B0RIGHT001',
++            title: 'Right Book',
++            authors: [{ name: 'Target Author' }],
++            series: [{ asin: 'B0RIGHTSERIES', title: 'Legacy' }]
++          }
++        ]
++      })
++
++      const result = await audible.resolveSeriesAsin('Legacy', [{ title: 'Book 1', authors: ['Target Author'] }], 'us', ['Target Author'])
++      expect(result).to.not.be.null
++      expect(result.seriesAsin).to.equal('B0RIGHTSERIES')
 +    })
 +  })
  })
