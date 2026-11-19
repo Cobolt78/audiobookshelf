@@ -1,10 +1,10 @@
 diff --git a/CUSTOM_MODIFICATIONS.md b/CUSTOM_MODIFICATIONS.md
 new file mode 100644
-index 00000000..179054f8
+index 00000000..c4f3d357
 --- /dev/null
 +++ b/CUSTOM_MODIFICATIONS.md
 @@ -0,0 +1,426 @@
-+# Audiobookshelf Custom Modifications (`v2.37.2-custom`)
++# Audiobookshelf Custom Modifications (`v2.38.0-custom`)
 +
 +This document tracks all custom features, fixes, and architectural modifications made to Audiobookshelf in the `Cobolt78/audiobookshelf` repository.
 +
@@ -280,8 +280,8 @@ index 00000000..179054f8
 +Stop-Process -Name "audiobookshelf", "AudiobookshelfTray" -Force -ErrorAction SilentlyContinue
 +Start-Sleep -Seconds 2
 +Copy-Item -Path ".\dist\win\audiobookshelf.exe" -Destination "C:\Users\David\AppData\Local\Programs\Audiobookshelf\audiobookshelf.exe" -Force
-+Set-ItemProperty -Path "HKCU:\Software\Audiobookshelf" -Name "AppVersion" -Value "v2.37.2.1"
-+Set-ItemProperty -Path "HKCU:\Software\Audiobookshelf" -Name "ServerVersion" -Value "v2.37.2"
++Set-ItemProperty -Path "HKCU:\Software\Audiobookshelf" -Name "AppVersion" -Value "v2.38.0"
++Set-ItemProperty -Path "HKCU:\Software\Audiobookshelf" -Name "ServerVersion" -Value "v2.38.0"
 +Start-Process -FilePath "C:\Users\David\AppData\Local\Programs\Audiobookshelf\AudiobookshelfTray.exe" -WorkingDirectory "C:\Users\David\AppData\Local\Programs\Audiobookshelf"
 +# Verify server health:
 +curl.exe http://127.0.0.1:13381/audiobookshelf/ping
@@ -290,7 +290,7 @@ index 00000000..179054f8
 +### Git & Patch Synchronization:
 +```powershell
 +# Regenerate patch against upstream baseline
-+git diff v2.37.2 > custom_changes.patch
++git diff v2.38.0 -- ":!custom_changes.patch" > custom_changes.patch
 +```
 +
 +---
@@ -4214,7 +4214,7 @@ index 50ff714e..99b1f512 100644
     * Compare two server versions
     * @param {string} v1
 diff --git a/server/Server.js b/server/Server.js
-index 30d2c8c3..3f079bf2 100644
+index 0b2a0dd6..7b738eed 100644
 --- a/server/Server.js
 +++ b/server/Server.js
 @@ -39,6 +39,8 @@ const CronManager = require('./managers/CronManager')
@@ -4243,7 +4243,7 @@ index 30d2c8c3..3f079bf2 100644
  
      // Routers
      this.apiRouter = new ApiRouter(this)
-@@ -207,6 +212,7 @@ class Server {
+@@ -208,6 +213,7 @@ class Server {
      const libraries = await Database.libraryModel.getAllWithFolders()
      await this.cronManager.init(libraries)
      this.apiCacheManager.init()
@@ -4251,7 +4251,7 @@ index 30d2c8c3..3f079bf2 100644
  
      if (Database.serverSettings.scannerDisableWatcher) {
        Logger.info(`[Server] Watcher is disabled`)
-@@ -259,6 +265,9 @@ class Server {
+@@ -260,6 +266,9 @@ class Server {
  
      const app = express()
  
@@ -4261,7 +4261,7 @@ index 30d2c8c3..3f079bf2 100644
      app.use((req, res, next) => {
        if (!global.ServerSettings.allowIframe) {
          // Prevent clickjacking by disallowing iframes
-@@ -561,6 +570,9 @@ class Server {
+@@ -552,6 +561,9 @@ class Server {
     */
    async stop() {
      Logger.info('=== Stopping Server ===')
@@ -4272,7 +4272,7 @@ index 30d2c8c3..3f079bf2 100644
      Logger.info('[Server] Watcher Closed')
      await SocketAuthority.close()
 diff --git a/server/controllers/LibraryController.js b/server/controllers/LibraryController.js
-index 6bf36a7b..5cd2e713 100644
+index ac23b683..f78eac82 100644
 --- a/server/controllers/LibraryController.js
 +++ b/server/controllers/LibraryController.js
 @@ -19,6 +19,7 @@ const Scanner = require('../scanner/Scanner')
@@ -4283,7 +4283,7 @@ index 6bf36a7b..5cd2e713 100644
  
  const libraryFilters = require('../utils/queries/libraryFilters')
  const libraryItemsPodcastFilters = require('../utils/queries/libraryItemsPodcastFilters')
-@@ -300,6 +301,8 @@ class LibraryController {
+@@ -302,6 +303,8 @@ class LibraryController {
      let hasUpdates = false
      let hasUpdatedDisableWatcher = false
      let hasUpdatedScanCron = false
@@ -4292,7 +4292,7 @@ index 6bf36a7b..5cd2e713 100644
      if (req.body.settings) {
        for (const key in req.body.settings) {
          if (!Object.keys(defaultLibrarySettings).includes(key)) {
-@@ -316,13 +319,15 @@ class LibraryController {
+@@ -318,13 +321,15 @@ class LibraryController {
              updatedSettings[key] = [...req.body.settings[key]]
              Logger.debug(`[LibraryController] Library "${req.library.name}" updating setting "${key}" to "${updatedSettings[key]}"`)
            }
@@ -4309,7 +4309,7 @@ index 6bf36a7b..5cd2e713 100644
  
              hasUpdates = true
              updatedSettings[key] = req.body.settings[key]
-@@ -341,7 +346,7 @@ class LibraryController {
+@@ -343,7 +348,7 @@ class LibraryController {
              updatedSettings[key] = req.body.settings[key] === null ? null : Number(req.body.settings[key])
              Logger.debug(`[LibraryController] Library "${req.library.name}" updating setting "${key}" to "${updatedSettings[key]}"`)
            }
@@ -4318,7 +4318,7 @@ index 6bf36a7b..5cd2e713 100644
            if (req.body.settings[key] !== null && isNaN(req.body.settings[key])) {
              Logger.error(`[LibraryController] Invalid request. Setting "${key}" must be a number`)
              return res.status(400).send(`Invalid request. Setting "${key}" must be a number`)
-@@ -351,6 +356,7 @@ class LibraryController {
+@@ -353,6 +358,7 @@ class LibraryController {
            }
            if (req.body.settings[key] !== updatedSettings[key]) {
              hasUpdates = true
@@ -4326,7 +4326,7 @@ index 6bf36a7b..5cd2e713 100644
              updatedSettings[key] = req.body.settings[key] === null ? null : Number(req.body.settings[key])
              Logger.debug(`[LibraryController] Library "${req.library.name}" updating setting "${key}" to "${updatedSettings[key]}"`)
            }
-@@ -494,6 +500,12 @@ class LibraryController {
+@@ -496,6 +502,12 @@ class LibraryController {
        this.cronManager.updateLibraryScanCron(req.library)
      }
  
@@ -4339,7 +4339,7 @@ index 6bf36a7b..5cd2e713 100644
      if (hasFolderUpdates || hasUpdatedDisableWatcher) {
        req.library.libraryFolders = await req.library.getLibraryFolders()
  
-@@ -531,6 +543,10 @@ class LibraryController {
+@@ -533,6 +545,10 @@ class LibraryController {
      // Remove library watcher
      Watcher.removeLibrary(req.library)
  
@@ -4350,7 +4350,7 @@ index 6bf36a7b..5cd2e713 100644
      // Remove collections for library
      const numCollectionsRemoved = await Database.collectionModel.removeAllForLibrary(req.library.id)
      if (numCollectionsRemoved) {
-@@ -851,13 +867,15 @@ class LibraryController {
+@@ -853,13 +869,15 @@ class LibraryController {
     * @param {Response} res
     */
    async getUserPlaylistsForLibrary(req, res) {
@@ -4368,7 +4368,7 @@ index 6bf36a7b..5cd2e713 100644
      }
  
      if (payload.limit) {
-@@ -961,10 +979,17 @@ class LibraryController {
+@@ -963,10 +981,17 @@ class LibraryController {
        return res.status(400).send('Invalid request. Query param "q" must be a string')
      }
  
@@ -4388,7 +4388,7 @@ index 6bf36a7b..5cd2e713 100644
      res.json(matches)
    }
  
-@@ -1496,5 +1521,131 @@ class LibraryController {
+@@ -1498,5 +1523,131 @@ class LibraryController {
  
      next()
    }
@@ -8795,10 +8795,10 @@ index cf1a15ff..6e4a320a 100644
  
  module.exports = Audible
 diff --git a/server/providers/iTunes.js b/server/providers/iTunes.js
-index 87695c58..089dcf0e 100644
+index 6d14471b..5e8bea36 100644
 --- a/server/providers/iTunes.js
 +++ b/server/providers/iTunes.js
-@@ -29,6 +29,8 @@ const htmlSanitizer = require('../utils/htmlSanitizer')
+@@ -78,6 +78,8 @@ function cleanAuthor(artistName) {
  
  class iTunes {
    #responseTimeout = 10000
@@ -8807,7 +8807,7 @@ index 87695c58..089dcf0e 100644
  
    constructor() {}
  
-@@ -166,5 +168,525 @@ class iTunes {
+@@ -211,5 +213,525 @@ class iTunes {
        return results.map(this.cleanPodcast.bind(this))
      })
    }
@@ -9252,7 +9252,7 @@ index 87695c58..089dcf0e 100644
 +      const position = this.extractPosition(data.collectionName, seriesName)
 +      const posNum = position ? parseFloat(position) : null
 +      const releaseDate = data.releaseDate ? data.releaseDate.substring(0, 10) : null
-+      const author = (data.artistName || '').split(' & ').join(', ') || null
++      const author = cleanAuthor(data.artistName) || null
 +      const coverUrl = this.getCoverArtwork(data) || null
 +      const summary = data.description ? htmlSanitizer.stripAllTags(data.description) : null
 +      const isUpcoming = Boolean(releaseDate && releaseDate > todayIso)
@@ -9334,10 +9334,10 @@ index 87695c58..089dcf0e 100644
  }
  module.exports = iTunes
 diff --git a/server/routers/ApiRouter.js b/server/routers/ApiRouter.js
-index 7c89126b..62bdf2f5 100644
+index 9a184aa6..05bee2e0 100644
 --- a/server/routers/ApiRouter.js
 +++ b/server/routers/ApiRouter.js
-@@ -55,6 +55,7 @@ class ApiRouter {
+@@ -56,6 +56,7 @@ class ApiRouter {
      /** @type {import('../managers/EmailManager')} */
      this.emailManager = Server.emailManager
      this.apiCacheManager = Server.apiCacheManager
@@ -9345,7 +9345,7 @@ index 7c89126b..62bdf2f5 100644
  
      this.router = express()
      this.router.disable('x-powered-by')
-@@ -95,6 +96,11 @@ class ApiRouter {
+@@ -96,6 +97,11 @@ class ApiRouter {
      this.router.post('/libraries/:id/remove-metadata', LibraryController.middleware.bind(this), LibraryController.removeAllMetadataFiles.bind(this))
      this.router.get('/libraries/:id/podcast-titles', LibraryController.middleware.bind(this), LibraryController.getPodcastTitles.bind(this))
      this.router.get('/libraries/:id/download', LibraryController.middleware.bind(this), LibraryController.downloadMultiple.bind(this))
@@ -9357,7 +9357,7 @@ index 7c89126b..62bdf2f5 100644
  
      //
      // Item Routes
-@@ -227,6 +233,7 @@ class ApiRouter {
+@@ -228,6 +234,7 @@ class ApiRouter {
      //
      this.router.get('/series/:id', SeriesController.middleware.bind(this), SeriesController.findOne.bind(this))
      this.router.patch('/series/:id', SeriesController.middleware.bind(this), SeriesController.update.bind(this))
@@ -9365,7 +9365,7 @@ index 7c89126b..62bdf2f5 100644
  
      //
      // Playback Session Routes
-@@ -331,6 +338,8 @@ class ApiRouter {
+@@ -332,6 +339,8 @@ class ApiRouter {
      //
      this.router.get('/stats/year/:year', StatsController.middleware.bind(this), StatsController.getAdminStatsForYear.bind(this))
      this.router.get('/stats/server', StatsController.middleware.bind(this), StatsController.getServerStats.bind(this))
@@ -9375,7 +9375,7 @@ index 7c89126b..62bdf2f5 100644
      //
      // API Key Routes
 diff --git a/server/scanner/BookScanner.js b/server/scanner/BookScanner.js
-index 2b106cdc..4971e68b 100644
+index 30ac1ff1..5fb166fb 100644
 --- a/server/scanner/BookScanner.js
 +++ b/server/scanner/BookScanner.js
 @@ -8,6 +8,7 @@ const parseEbookMetadata = require('../utils/parsers/parseEbookMetadata')
@@ -9386,7 +9386,7 @@ index 2b106cdc..4971e68b 100644
  
  const AudioFileScanner = require('./AudioFileScanner')
  const Database = require('../Database')
-@@ -431,9 +432,19 @@ class BookScanner {
+@@ -464,9 +465,19 @@ class BookScanner {
      libraryScan.seriesRemovedFromBooks.push(...bookSeriesRemoved)
      libraryScan.authorsRemovedFromBooks.push(...bookAuthorsRemoved)
  
@@ -9407,7 +9407,7 @@ index 2b106cdc..4971e68b 100644
      }
    }
  
-@@ -644,6 +655,15 @@ class BookScanner {
+@@ -691,6 +702,15 @@ class BookScanner {
        await libraryItem.save()
      }
  
@@ -9468,7 +9468,7 @@ index 3d6bc7bd..4db2e2c0 100644
      const authorMatches = []
      for (const author of authors) {
 diff --git a/server/utils/queries/libraryFilters.js b/server/utils/queries/libraryFilters.js
-index 240e3345..5d955e24 100644
+index e8efe8c3..17d5b353 100644
 --- a/server/utils/queries/libraryFilters.js
 +++ b/server/utils/queries/libraryFilters.js
 @@ -11,11 +11,15 @@ const naturalSort = createNewSortInstance({
@@ -9490,7 +9490,7 @@ index 240e3345..5d955e24 100644
      }
    },
  
-@@ -322,6 +326,95 @@ module.exports = {
+@@ -324,6 +328,95 @@ module.exports = {
      }
    },
  
@@ -9609,10 +9609,10 @@ index a34aebfd..21e2c8c3 100644
    },
  
 diff --git a/server/utils/queries/libraryItemsBookFilters.js b/server/utils/queries/libraryItemsBookFilters.js
-index cac9a7d1..9defd2ff 100644
+index d78ad2d9..0fb33707 100644
 --- a/server/utils/queries/libraryItemsBookFilters.js
 +++ b/server/utils/queries/libraryItemsBookFilters.js
-@@ -397,6 +397,11 @@ module.exports = {
+@@ -400,6 +400,11 @@ module.exports = {
     * @returns {{ libraryItems: import('../../models/LibraryItem')[], count: number }}
     */
    async getFilteredLibraryItems(libraryId, user, filterGroup, filterValue, sortBy, sortDesc, collapseseries, include, limit, offset, isHomePage = false) {
@@ -9624,7 +9624,7 @@ index cac9a7d1..9defd2ff 100644
      // TODO: Handle collapse sub-series
      if (filterGroup === 'series' && collapseseries) {
        collapseseries = false
-@@ -849,13 +854,15 @@ module.exports = {
+@@ -852,13 +857,15 @@ module.exports = {
    async getDiscoverLibraryItems(libraryId, user, include, limit) {
      const userPermissionBookWhere = this.getUserPermissionBookWhereQuery(user)
  
@@ -9642,7 +9642,7 @@ index cac9a7d1..9defd2ff 100644
        ],
        replacements: {
          userId: user.id,
-@@ -867,16 +874,16 @@ module.exports = {
+@@ -870,16 +877,16 @@ module.exports = {
          attributes: ['bookId', 'sequence'],
          separate: true,
          required: true,
@@ -9664,7 +9664,7 @@ index cac9a7d1..9defd2ff 100644
      })
  
      const booksFromSeriesToInclude = seriesNotStarted.map((se) => se.bookSeries?.[0]?.bookId).filter((bid) => bid)
-@@ -1086,191 +1093,170 @@ module.exports = {
+@@ -1089,191 +1096,170 @@ module.exports = {
     * @param {import('../../models/User')} user
     * @param {import('../../models/Library')} library
     * @param {string} query
@@ -9987,10 +9987,10 @@ index cac9a7d1..9defd2ff 100644
      return {
        book: itemMatches,
 diff --git a/server/utils/queries/libraryItemsPodcastFilters.js b/server/utils/queries/libraryItemsPodcastFilters.js
-index 8bb5dc11..ff5e2eaf 100644
+index 3866fd61..08a60ad5 100644
 --- a/server/utils/queries/libraryItemsPodcastFilters.js
 +++ b/server/utils/queries/libraryItemsPodcastFilters.js
-@@ -354,137 +354,154 @@ module.exports = {
+@@ -357,137 +357,154 @@ module.exports = {
     * @param {import('../../models/User')} user
     * @param {import('../../models/Library')} library
     * @param {string} query
@@ -10248,7 +10248,7 @@ index 8bb5dc11..ff5e2eaf 100644
  
      return {
 diff --git a/server/utils/queries/seriesFilters.js b/server/utils/queries/seriesFilters.js
-index c8ebb0d7..d3eacffd 100644
+index 1e235b02..17a35af2 100644
 --- a/server/utils/queries/seriesFilters.js
 +++ b/server/utils/queries/seriesFilters.js
 @@ -5,11 +5,15 @@ const libraryItemsBookFilters = require('./libraryItemsBookFilters')
@@ -10313,7 +10313,7 @@ index c8ebb0d7..d3eacffd 100644
      }
  
      // Handle user permissions to only include series with at least 1 book
-@@ -121,7 +143,30 @@ module.exports = {
+@@ -123,7 +145,30 @@ module.exports = {
  
      const order = []
      let seriesAttributes = {
@@ -10345,7 +10345,7 @@ index c8ebb0d7..d3eacffd 100644
      }
  
      // Handle sort order
-@@ -146,6 +191,11 @@ module.exports = {
+@@ -148,6 +193,11 @@ module.exports = {
      } else if (sortBy === 'lastBookUpdated') {
        seriesAttributes.include.push([Sequelize.literal('(SELECT MAX(b.updatedAt) FROM books b, bookSeries bs WHERE bs.seriesId = series.id AND b.id = bs.bookId)'), 'mostRecentBookUpdated'])
        order.push(['mostRecentBookUpdated', dir])
@@ -10357,7 +10357,7 @@ index c8ebb0d7..d3eacffd 100644
      } else if (sortBy === 'random') {
        order.push(Database.sequelize.random())
      }
-@@ -196,6 +246,13 @@ module.exports = {
+@@ -198,6 +248,13 @@ module.exports = {
          oldSeries.rssFeed = s.feeds[0].toOldJSONMinified()
        }
  
@@ -10371,7 +10371,7 @@ index c8ebb0d7..d3eacffd 100644
        // TODO: Sort books by sequence in query
        s.bookSeries.sort((a, b) => {
          if (!a.sequence) return 1
-@@ -206,12 +263,13 @@ module.exports = {
+@@ -208,12 +265,13 @@ module.exports = {
          })
        })
        oldSeries.books = s.bookSeries.map((bs) => {
@@ -10387,6 +10387,146 @@ index c8ebb0d7..d3eacffd 100644
        allOldSeries.push(oldSeries)
      }
  
+diff --git a/test/server/controllers/LibrarySearch.test.js b/test/server/controllers/LibrarySearch.test.js
+new file mode 100644
+index 00000000..e5ccdf1f
+--- /dev/null
++++ b/test/server/controllers/LibrarySearch.test.js
+@@ -0,0 +1,134 @@
++const { expect } = require('chai')
++const sinon = require('sinon')
++const { Sequelize } = require('sequelize')
++
++const Database = require('../../../server/Database')
++const LibraryController = require('../../../server/controllers/LibraryController')
++
++describe('LibraryController.search limit & category filtering', () => {
++  let sequelize
++  let library
++  let user
++
++  beforeEach(async () => {
++    global.ServerSettings = {}
++    sequelize = new Sequelize({ dialect: 'sqlite', storage: ':memory:', logging: false })
++    sequelize.uppercaseFirst = (str) => (str ? `${str[0].toUpperCase()}${str.substr(1)}` : '')
++    Database.sequelize = sequelize
++    await Database.buildModels()
++
++    user = await Database.userModel.create({
++      username: 'admin',
++      type: 'root',
++      isActive: true,
++      permissions: Database.userModel.getDefaultPermissionsForUserType('root')
++    })
++
++    library = await Database.libraryModel.create({
++      name: 'Audiobooks',
++      mediaType: 'book',
++      icon: 'audiobookshelf',
++      displayOrder: 1,
++      settings: {}
++    })
++
++    const author = await Database.authorModel.create({
++      name: 'Starlight Author',
++      libraryId: library.id
++    })
++
++    for (let i = 1; i <= 15; i++) {
++      const book = await Database.bookModel.create({
++        title: `Starlight Chronicle ${i}`,
++        narrators: ['Starlight Narrator'],
++        tags: ['starlight-tag'],
++        genres: ['Fantasy'],
++        audioFiles: [],
++        chapters: []
++      })
++      await Database.bookAuthorModel.create({
++        bookId: book.id,
++        authorId: author.id
++      })
++      await Database.libraryItemModel.create({
++        ino: `ino-${i}`,
++        path: `/books/starlight-${i}`,
++        relPath: `starlight-${i}`,
++        mediaType: 'book',
++        mediaId: book.id,
++        libraryId: library.id,
++        libraryFiles: []
++      })
++      const series = await Database.seriesModel.create({
++        name: `Starlight Saga ${i}`,
++        libraryId: library.id
++      })
++      await Database.bookSeriesModel.create({
++        bookId: book.id,
++        seriesId: series.id,
++        sequence: '1'
++      })
++    }
++  })
++
++  afterEach(async () => {
++    sinon.restore()
++    if (sequelize) {
++      await sequelize.close()
++    }
++  })
++
++  it('defaults to limit 12 when limit and category are omitted', async () => {
++    const jsonSpy = sinon.spy()
++    await LibraryController.search(
++      {
++        user,
++        library,
++        query: { q: 'Starlight' }
++      },
++      { json: jsonSpy, status: () => ({ send: sinon.spy() }) }
++    )
++
++    expect(jsonSpy.calledOnce).to.be.true
++    const payload = jsonSpy.firstCall.args[0]
++    expect(payload.book).to.have.lengthOf(12)
++    expect(payload.series).to.have.lengthOf(12)
++    expect(payload.authors).to.have.lengthOf(1)
++  })
++
++  it('returns all matching books when limit=0 and category=books', async () => {
++    const jsonSpy = sinon.spy()
++    await LibraryController.search(
++      {
++        user,
++        library,
++        query: { q: 'Starlight', limit: '0', category: 'books' }
++      },
++      { json: jsonSpy, status: () => ({ send: sinon.spy() }) }
++    )
++
++    expect(jsonSpy.calledOnce).to.be.true
++    const payload = jsonSpy.firstCall.args[0]
++    expect(payload.book).to.have.lengthOf(15)
++    expect(payload.series).to.have.lengthOf(0)
++    expect(payload.authors).to.have.lengthOf(0)
++  })
++
++  it('returns all matching series when limit=0 and category=series', async () => {
++    const jsonSpy = sinon.spy()
++    await LibraryController.search(
++      {
++        user,
++        library,
++        query: { q: 'Starlight', limit: '0', category: 'series' }
++      },
++      { json: jsonSpy, status: () => ({ send: sinon.spy() }) }
++    )
++
++    expect(jsonSpy.calledOnce).to.be.true
++    const payload = jsonSpy.firstCall.args[0]
++    expect(payload.series).to.have.lengthOf(15)
++    expect(payload.book).to.have.lengthOf(0)
++    expect(payload.authors).to.have.lengthOf(0)
++  })
++})
 diff --git a/test/server/controllers/SeriesProviderEndpoints.test.js b/test/server/controllers/SeriesProviderEndpoints.test.js
 new file mode 100644
 index 00000000..16a6b150
@@ -11871,12 +12011,12 @@ index 75807c99..438ae517 100644
  })
 \ No newline at end of file
 diff --git a/test/server/providers/iTunes.test.js b/test/server/providers/iTunes.test.js
-new file mode 100644
-index 00000000..0c874671
---- /dev/null
+index 14f71bbd..6902f795 100644
+--- a/test/server/providers/iTunes.test.js
 +++ b/test/server/providers/iTunes.test.js
-@@ -0,0 +1,168 @@
-+const { expect } = require('chai')
+@@ -1,5 +1,171 @@
+-const iTunes = require('../../../server/providers/iTunes')
+ const { expect } = require('chai')
 +const sinon = require('sinon')
 +const axios = require('axios')
 +const iTunes = require('../../../server/providers/iTunes')
@@ -12044,3 +12184,6 @@ index 00000000..0c874671
 +    })
 +  })
 +})
+ 
+ describe('iTunes', () => {
+   let itunes
