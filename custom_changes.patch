@@ -1,9 +1,9 @@
 diff --git a/CUSTOM_MODIFICATIONS.md b/CUSTOM_MODIFICATIONS.md
 new file mode 100644
-index 00000000..c4f3d357
+index 00000000..334d303d
 --- /dev/null
 +++ b/CUSTOM_MODIFICATIONS.md
-@@ -0,0 +1,426 @@
+@@ -0,0 +1,469 @@
 +# Audiobookshelf Custom Modifications (`v2.38.0-custom`)
 +
 +This document tracks all custom features, fixes, and architectural modifications made to Audiobookshelf in the `Cobolt78/audiobookshelf` repository.
@@ -367,25 +367,65 @@ index 00000000..c4f3d357
 +
 +---
 +
-+## 13. Modified Files Inventory
++## 13. Series Batch Actions & Field-Selective Matching (`Match (Select Fields)`)
++
++### Summary
++Adds bulk management actions directly to the Series page 3-dots menu (`Quick Match`, `Match (Select Fields)`, `Quick Embed Metadata`, `Re-Scan`, `Download`) and introduces a granular field-picker matching workflow (`Match (Select Fields)` / `Match Books (Select Fields)`) for multi-book selections, series pages, and library-wide matching.
++
++### Key Details
++- **Series Page 3-Dots Menu (`client/components/app/BookShelfToolbar.vue`)**:
++  - Added admin actions (`Quick Match`, `Match (Select Fields)`, `Quick Embed Metadata`, `Re-Scan`) and permission-gated `Download` (up to the 40-book URL limit) operating on `seriesLibraryItemIds`.
++  - Updated `BatchQuickMatchModel.vue` and `client/store/globals.js` (`openBatchQuickMatchForItems`) so Quick Match can target an entire series directly without entering selection mode.
++- **Granular Field-Selective Match Modal (`client/components/modals/BatchSelectiveMatchModal.vue`)**:
++  - Lets users pick exact fields (`Cover Art`, `Description`, `Author`, `Narrator`, `Title`, `Subtitle`, `Series`, `Publisher`, `Publish Year`, `Genres`, `Tags`, `Language`, `ASIN`, `ISBN`, `Explicit`, `Abridged`) plus provider and an **Overwrite existing values** toggle.
++  - **Strict Unchecked Field Ignore**: Any unchecked field is strictly ignored (never filled or overwritten, even if blank).
++  - **Library ASIN/ISBN Skip Awareness & Override**: In **Settings → Libraries → ⋮ → Match Books (Select Fields)** (`LibraryItem.vue`, `LibrariesTable.vue`), inspects `skipMatchingMediaWithAsin` and `skipMatchingMediaWithIsbn`, warns the user clearly if active, and offers a toggle to ignore that skip setting for that run.
++  - Saves field selections and overwrite preference to `localStorage`.
++- **Backend Selective Match & Library Override (`server/scanner/Scanner.js`, `LibraryItemController.js`, `LibraryController.js`, `ApiRouter.js`)**:
++  - Added `shouldUpdateField` and `sanitizeSelectedFields` in `Scanner.js` so `quickMatchLibraryItem` and `quickMatchBookBuildUpdatePayload` respect `selectedFields` and `overrideExisting`.
++  - Added `POST /api/libraries/:id/matchall` accepting `{ provider, selectedFields, overrideExisting, ignoreSkipAsinIsbn }`.
++
++### Modified Files:
++* `client/components/app/Appbar.vue`
++* `client/components/app/BookShelfToolbar.vue`
++* `client/components/modals/BatchQuickMatchModel.vue`
++* `client/components/modals/BatchSelectiveMatchModal.vue`
++* `client/components/tables/library/LibrariesTable.vue`
++* `client/components/tables/library/LibraryItem.vue`
++* `client/layouts/default.vue`
++* `client/store/globals.js`
++* `client/strings/en-us.json`
++* `server/controllers/LibraryController.js`
++* `server/controllers/LibraryItemController.js`
++* `server/routers/ApiRouter.js`
++* `server/scanner/Scanner.js`
++* `test/server/scanner/SelectiveMatch.test.js`
++
++---
++
++## 14. Modified Files Inventory
 +
 +| File Path | Description |
 +| :--- | :--- |
 +| `CUSTOM_MODIFICATIONS.md` | Comprehensive documentation of all custom features and modifications |
 +| `GEMINI.md` | Antigravity paired-programming invariants and upgrade retention protocol |
-+| `custom_changes.patch` | Unified Git diff against upstream `v2.37.2` baseline |
++| `custom_changes.patch` | Unified Git diff against upstream `v2.38.0` baseline |
++| `client/components/app/Appbar.vue` | Multi-book selection menu trigger for `Match (Select Fields)` |
 +| `client/components/app/BookShelfCategorized.vue` | Interactive shelf header clicks, discover re-roll, search heading navigation, and encoded filter routing |
 +| `client/components/app/BookShelfRow.vue` | Interactive shelf header clicks, search heading navigation, placards, and discover refresh button |
-+| `client/components/app/BookShelfToolbar.vue` | Audible scan progress bar, quick/full scan menu, cancel listener, and status sync |
++| `client/components/app/BookShelfToolbar.vue` | Audible scan progress bar/menu and Series 3-dots actions (Quick Match, Selective Match, Quick Embed, Re-Scan, Download) |
 +| `client/components/app/ConfigSideNav.vue` | Sidebar navigation link to Bandwidth Stats |
 +| `client/components/cards/LazySeriesCard.vue` | Series read badges (X/Y Read), missing books count, and upcoming release indicators |
 +| `client/components/cards/LazyPlaylistCard.vue` | Playlist cover item count badge in top-right corner with faded dark background |
 +| `client/components/content/LibraryItemDetails.vue` | Audio bitrate display under Size on book details page |
 +| `client/components/controls/LibraryFilterSelect.vue` | Subfilter selection checkmarks, parent category highlight, and Base64 label resolution |
++| `client/components/modals/BatchQuickMatchModel.vue` | Supports explicit target item IDs for Series Quick Match |
++| `client/components/modals/BatchSelectiveMatchModal.vue` | Field-picker selective match modal with localStorage presets and ASIN/ISBN skip override |
 +| `client/components/modals/libraries/ScheduleScan.vue` | Audible series scan automated schedule configuration |
-+| `client/components/tables/library/LibrariesTable.vue` | Action tooltips for Scan, Match Books, and Audible Scan |
-+| `client/components/tables/library/LibraryItem.vue` | Context menu triggers for Audible quick & full scan |
++| `client/components/tables/library/LibrariesTable.vue` | Action tooltips for Scan, Match Books, Match Books (Select Fields), and Audible Scan |
++| `client/components/tables/library/LibraryItem.vue` | Context menu triggers for Match Books (Select Fields) and Audible quick & full scan |
 +| `client/components/widgets/SeriesProviderEntries.vue` | Series upcoming releases and missing books cards with Audible links |
++| `client/layouts/default.vue` | Mounts `BatchSelectiveMatchModal` globally |
 +| `client/pages/config.vue` | Route title mapper & full-width layout for bandwidth dashboard |
 +| `client/pages/config/bandwidth.vue` | Responsive Bandwidth Stats dashboard with 48h SVG waveform, 24h hourly breakdown, item breakdown, and date filters |
 +| `client/pages/config/index.vue` | Bandwidth tracking toggle and custom local LAN subnets/IPs input in Settings > General |
@@ -393,7 +433,10 @@ index 00000000..c4f3d357
 +| `client/pages/library/_library/search.vue` | Expandable full-category search results grid with `?category=` routing |
 +| `client/pages/library/_library/series/_id.vue` | Mounts external series tracking panel on series details page |
 +| `client/plugins/init.client.js` | Resilient Base64 decode fallback to plain text |
-+| `client/strings/en-us.json` | English string localizations for scan actions, series badges, and tooltips |
++| `client/store/globals.js` | State and mutations for Series Quick Match target IDs and Selective Match modal config |
++| `client/strings/en-us.json` | English string localizations for scan actions, selective match, series badges, and tooltips |
++| `server/scanner/Scanner.js` | Quick match item update path, selective field matching, ASIN/ISBN skip override, and reconciliation hook |
++| `test/server/scanner/SelectiveMatch.test.js` | Automated unit tests for selective field matching, strict ignore, and ASIN/ISBN skip override |
 +| `server/Database.js` | Registered Bandwidth and SeriesProviderEntry models, schema sync, and idempotent column verification |
 +| `server/Server.js` | Global middleware hook and shutdown flush for BandwidthManager |
 +| `server/controllers/LibraryController.js` | Series provider scan/cancel/status/missing/upcoming endpoints, and uncapped category search |
@@ -469,6 +512,44 @@ index 00000000..466d46bd
 +     3. If an upstream feature genuinely replaces a custom modification or creates an architectural conflict, STOP and present options in chat.
 +   - **Lockstep Synchronization**:
 +     - Keep `CUSTOM_MODIFICATIONS.md` and `custom_changes.patch` in 100% sync with actual repository code at all times.
+diff --git a/client/components/app/Appbar.vue b/client/components/app/Appbar.vue
+index 428ae6eb..563f4522 100644
+--- a/client/components/app/Appbar.vue
++++ b/client/components/app/Appbar.vue
+@@ -165,6 +165,10 @@ export default {
+         {
+           text: this.$strings.ButtonQuickMatch,
+           action: 'quick-match'
++        },
++        {
++          text: this.$strings.ButtonMatchSelectFields || 'Match (Select Fields)',
++          action: 'selective-match'
+         }
+       ]
+ 
+@@ -223,6 +227,8 @@ export default {
+         this.requestBatchQuickEmbed()
+       } else if (action === 'quick-match') {
+         this.batchAutoMatchClick()
++      } else if (action === 'selective-match') {
++        this.batchSelectiveMatchClick()
+       } else if (action === 'rescan') {
+         this.batchRescan()
+       } else if (action === 'download') {
+@@ -376,6 +382,13 @@ export default {
+     },
+     batchAutoMatchClick() {
+       this.$store.commit('globals/setShowBatchQuickMatchModal', true)
++    },
++    batchSelectiveMatchClick() {
++      const libraryItemIds = this.selectedMediaItems.map((i) => i.id)
++      this.$store.commit('globals/setSelectiveMatchConfig', {
++        mode: 'batch',
++        libraryItemIds
++      })
+     }
+   },
+   mounted() {
 diff --git a/client/components/app/BookShelfCategorized.vue b/client/components/app/BookShelfCategorized.vue
 index a8e8ae46..e429efea 100644
 --- a/client/components/app/BookShelfCategorized.vue
@@ -770,7 +851,7 @@ index fac89a70..e0ce562f 100644
        this.updateSelectionMode(false)
      },
 diff --git a/client/components/app/BookShelfToolbar.vue b/client/components/app/BookShelfToolbar.vue
-index b7ecff62..a724bdb6 100644
+index b7ecff62..2b19c070 100644
 --- a/client/components/app/BookShelfToolbar.vue
 +++ b/client/components/app/BookShelfToolbar.vue
 @@ -66,10 +66,101 @@
@@ -894,7 +975,42 @@ index b7ecff62..a724bdb6 100644
      }
    },
    computed: {
-@@ -160,7 +259,7 @@ export default {
+@@ -151,6 +250,34 @@ export default {
+       this.addSubtitlesMenuItem(items)
+       this.addCollapseSubSeriesMenuItem(items)
+ 
++      if (this.userIsAdminOrUp && this.seriesLibraryItemIds.length) {
++        items.push(
++          {
++            text: this.$strings.ButtonQuickMatch,
++            action: 'quick-match'
++          },
++          {
++            text: this.$strings.ButtonMatchSelectFields || 'Match (Select Fields)',
++            action: 'selective-match'
++          },
++          {
++            text: this.$strings.ButtonQuickEmbedMetadata,
++            action: 'quick-embed'
++          },
++          {
++            text: this.$strings.ButtonReScan,
++            action: 'rescan'
++          }
++        )
++      }
++
++      if (this.userCanDownload && this.seriesLibraryItemIds.length && this.seriesLibraryItemIds.length <= 40) {
++        items.push({
++          text: this.$strings.LabelDownload,
++          action: 'download'
++        })
++      }
++
+       return items
+     },
+     seriesSortItems() {
+@@ -160,7 +287,7 @@ export default {
            value: 'name'
          },
          {
@@ -903,7 +1019,7 @@ index b7ecff62..a724bdb6 100644
            value: 'numBooks'
          },
          {
-@@ -179,12 +278,80 @@ export default {
+@@ -179,12 +306,80 @@ export default {
            text: this.$strings.LabelTotalDuration,
            value: 'totalDuration'
          },
@@ -984,7 +1100,98 @@ index b7ecff62..a724bdb6 100644
      authorSortItems() {
        return [
          {
-@@ -615,6 +782,117 @@ export default {
+@@ -439,12 +634,90 @@ export default {
+           return
+         }
+         this.markSeriesFinished()
++      } else if (action === 'quick-match') {
++        this.quickMatchSeries()
++      } else if (action === 'selective-match') {
++        this.selectiveMatchSeries()
++      } else if (action === 'quick-embed') {
++        this.quickEmbedSeries()
++      } else if (action === 'rescan') {
++        this.rescanSeries()
++      } else if (action === 'download') {
++        this.downloadSeries()
+       } else if (this.handleSubtitlesAction(action)) {
+         return
+       } else if (this.handleCollapseSubSeriesAction(action)) {
+         return
+       }
+     },
++    quickMatchSeries() {
++      if (this.$store.state.processingBatch || !this.seriesLibraryItemIds.length) return
++      this.$store.commit('globals/openBatchQuickMatchForItems', {
++        libraryItemIds: [...this.seriesLibraryItemIds],
++        label: this.seriesName
++      })
++    },
++    selectiveMatchSeries() {
++      if (this.$store.state.processingBatch || !this.seriesLibraryItemIds.length) return
++      this.$store.commit('globals/setSelectiveMatchConfig', {
++        mode: 'batch',
++        libraryItemIds: [...this.seriesLibraryItemIds],
++        label: this.seriesName
++      })
++    },
++    quickEmbedSeries() {
++      if (this.$store.state.processingBatch || !this.seriesLibraryItemIds.length) return
++      const payload = {
++        message: this.$strings.MessageConfirmQuickEmbed,
++        allowHtml: true,
++        callback: (confirmed) => {
++          if (confirmed) {
++            this.$axios
++              .$post(`/api/tools/batch/embed-metadata`, {
++                libraryItemIds: this.seriesLibraryItemIds
++              })
++              .then(() => {
++                this.$toast.info('Audio metadata embed started')
++              })
++              .catch((error) => {
++                console.error('Series quick embed failed', error)
++                const errorMsg = error.response?.data || 'Failed to embed metadata'
++                this.$toast.error(errorMsg)
++              })
++          }
++        },
++        type: 'yesNo'
++      }
++      this.$store.commit('globals/setConfirmPrompt', payload)
++    },
++    rescanSeries() {
++      if (this.$store.state.processingBatch || !this.seriesLibraryItemIds.length) return
++      const payload = {
++        message: this.$getString('MessageConfirmReScanLibraryItems', [this.seriesLibraryItemIds.length]),
++        callback: (confirmed) => {
++          if (confirmed) {
++            this.$axios
++              .$post(`/api/items/batch/scan`, {
++                libraryItemIds: this.seriesLibraryItemIds
++              })
++              .then(() => {
++                this.$toast.info('Series Re-Scan started')
++              })
++              .catch((error) => {
++                console.error('Series re-scan failed', error)
++                const errorMsg = error.response?.data || 'Failed to batch re-scan'
++                this.$toast.error(errorMsg)
++              })
++          }
++        },
++        type: 'yesNo'
++      }
++      this.$store.commit('globals/setConfirmPrompt', payload)
++    },
++    downloadSeries() {
++      if (!this.seriesLibraryItemIds.length || this.seriesLibraryItemIds.length > 40) return
++      this.$downloadFile(`/api/libraries/${this.currentLibraryId}/download?token=${this.$store.getters['user/getToken']}&ids=${this.seriesLibraryItemIds.join(',')}`)
++    },
+     showOpenSeriesRSSFeed() {
+       this.$store.commit('globals/setRSSFeedOpenCloseModal', {
+         id: this.selectedSeries.id,
+@@ -615,6 +888,117 @@ export default {
          console.log('RSS Feed Closed', data)
          this.selectedSeries.rssFeed = null
        }
@@ -1102,7 +1309,7 @@ index b7ecff62..a724bdb6 100644
      }
    },
    mounted() {
-@@ -623,12 +901,21 @@ export default {
+@@ -623,12 +1007,21 @@ export default {
      this.$eventBus.$on('bookshelf-total-entities', this.setBookshelfTotalEntities)
      this.$root.socket.on('rss_feed_open', this.rssFeedOpen)
      this.$root.socket.on('rss_feed_closed', this.rssFeedClosed)
@@ -1879,6 +2086,28 @@ index 1d21fc0c..975b678f 100644
        <template v-for="item in items">
          <li :key="item.value" class="select-none relative py-2 pr-9 cursor-pointer hover:bg-white/5" :class="item.value === selected ? 'bg-white/5 text-yellow-400' : 'text-gray-200 hover:text-white'" role="menuitem" @click="clickedOption(item.value)">
            <div class="flex items-center">
+diff --git a/client/components/modals/BatchQuickMatchModel.vue b/client/components/modals/BatchQuickMatchModel.vue
+index f6bcd972..48ba7a4b 100644
+--- a/client/components/modals/BatchQuickMatchModel.vue
++++ b/client/components/modals/BatchQuickMatchModel.vue
+@@ -75,13 +75,16 @@ export default {
+       }
+     },
+     title() {
++      if (this.$store.state.globals.batchQuickMatchTargetLabel) {
++        return `${this.$store.state.globals.batchQuickMatchTargetLabel} (${this.selectedBookIds.length})`
++      }
+       return this.$getString('MessageItemsSelected', [this.selectedBookIds.length])
+     },
+     showBatchQuickMatchModal() {
+       return this.$store.state.globals.showBatchQuickMatchModal
+     },
+     selectedBookIds() {
+-      return (this.$store.state.globals.selectedMediaItems || []).map((i) => i.id)
++      return this.$store.state.globals.batchQuickMatchTargetIds || (this.$store.state.globals.selectedMediaItems || []).map((i) => i.id)
+     },
+     currentLibraryId() {
+       return this.$store.state.libraries.currentLibraryId
 diff --git a/client/components/modals/libraries/EditModal.vue b/client/components/modals/libraries/EditModal.vue
 index a6d8a4d5..4b4d7d5c 100644
 --- a/client/components/modals/libraries/EditModal.vue
@@ -2064,10 +2293,10 @@ index e4f4810e..155640fb 100644
    },
    mounted() {
 diff --git a/client/components/tables/library/LibrariesTable.vue b/client/components/tables/library/LibrariesTable.vue
-index 62b1858e..fbad6d31 100644
+index 62b1858e..f26ee05f 100644
 --- a/client/components/tables/library/LibrariesTable.vue
 +++ b/client/components/tables/library/LibrariesTable.vue
-@@ -11,9 +11,12 @@
+@@ -11,9 +11,13 @@
        <ui-btn @click="clickAddLibrary">{{ $strings.ButtonAddYourFirstLibrary }}</ui-btn>
      </div>
  
@@ -2077,6 +2306,7 @@ index 62b1858e..fbad6d31 100644
 +    <div v-if="libraries.length && libraries.some((li) => li.mediaType === 'book')" class="text-xs mt-4 text-gray-200 space-y-1.5">
 +      <p>**<strong>{{ $strings.ButtonScan }}</strong> {{ $strings.MessageScanDescription }}</p>
 +      <p>**<strong>{{ $strings.ButtonMatchBooks }}</strong> {{ $strings.MessageMatchBooksDescription }}</p>
++      <p>**<strong>{{ $strings.ButtonMatchBooksSelectFields || 'Match Books (Select Fields)' }}</strong> {{ $strings.MessageMatchBooksSelectFieldsDescription }}</p>
 +      <p>**<strong>{{ $strings.ButtonAudibleQuickScan }}</strong> {{ $strings.MessageAudibleQuickScanDescription }}</p>
 +      <p>**<strong>{{ $strings.ButtonAudibleFullScan }}</strong> {{ $strings.MessageAudibleFullScanDescription }}</p>
 +    </div>
@@ -2084,13 +2314,18 @@ index 62b1858e..fbad6d31 100644
  </template>
  
 diff --git a/client/components/tables/library/LibraryItem.vue b/client/components/tables/library/LibraryItem.vue
-index 7073f43a..7e536141 100644
+index 7073f43a..d68a88b9 100644
 --- a/client/components/tables/library/LibraryItem.vue
 +++ b/client/components/tables/library/LibraryItem.vue
-@@ -82,6 +82,16 @@ export default {
+@@ -82,6 +82,21 @@ export default {
            action: 'match-books',
            value: 'match-books'
          })
++        items.push({
++          text: this.$strings.ButtonMatchBooksSelectFields || 'Match Books (Select Fields)',
++          action: 'selective-match-books',
++          value: 'selective-match-books'
++        })
 +        items.push({
 +          text: this.$strings.ButtonAudibleQuickScan || 'Audible Quick Scan',
 +          action: 'audible-quick-scan',
@@ -2104,10 +2339,12 @@ index 7073f43a..7e536141 100644
        }
        items.push({
          text: this.$strings.ButtonDelete,
-@@ -105,10 +115,23 @@ export default {
+@@ -105,10 +120,25 @@ export default {
          this.scan(true)
        } else if (action === 'match-books') {
          this.matchAll()
++      } else if (action === 'selective-match-books') {
++        this.selectiveMatchAll()
 +      } else if (action === 'audible-quick-scan') {
 +        this.scanAudible(true)
 +      } else if (action === 'audible-full-scan') {
@@ -2127,6 +2364,24 @@ index 7073f43a..7e536141 100644
 +    },
      showMenu() {
        this.showMobileMenu = true
+     },
+@@ -120,10 +150,16 @@ export default {
+         })
+         .catch((error) => {
+           console.error('Failed', error)
+-          var errorMsg = err.response ? err.response.data : ''
++          var errorMsg = error.response ? error.response.data : ''
+           this.$toast.error(errorMsg || 'Match all failed')
+         })
+     },
++    selectiveMatchAll() {
++      this.$store.commit('globals/setSelectiveMatchConfig', {
++        mode: 'library',
++        library: this.library
++      })
++    },
+     editClick() {
+       this.$emit('edit', this.library)
      },
 diff --git a/client/components/widgets/SeriesProviderEntries.vue b/client/components/widgets/SeriesProviderEntries.vue
 new file mode 100644
@@ -2455,6 +2710,18 @@ index 00000000..c8bc3f19
 +  }
 +}
 +</script>
+diff --git a/client/layouts/default.vue b/client/layouts/default.vue
+index 75753b21..41097e8c 100644
+--- a/client/layouts/default.vue
++++ b/client/layouts/default.vue
+@@ -18,6 +18,7 @@
+     <modals-podcast-view-episode />
+     <modals-authors-edit-modal />
+     <modals-batch-quick-match-model />
++    <modals-batch-selective-match-modal />
+     <modals-rssfeed-open-close-modal />
+     <modals-raw-cover-preview-modal />
+     <modals-share-modal />
 diff --git a/client/pages/config.vue b/client/pages/config.vue
 index c4fe2446..495ac2bf 100644
 --- a/client/pages/config.vue
@@ -3975,8 +4242,41 @@ index 015cd919..054b97de 100644
  Vue.prototype.$decode = decode
  
  export { encode, decode }
+diff --git a/client/store/globals.js b/client/store/globals.js
+index 7b416196..cb69666b 100644
+--- a/client/store/globals.js
++++ b/client/store/globals.js
+@@ -27,6 +27,9 @@ export const state = () => ({
+   isCasting: false, // Actively casting
+   isChromecastInitialized: false, // Script loadeds
+   showBatchQuickMatchModal: false,
++  batchQuickMatchTargetIds: null,
++  batchQuickMatchTargetLabel: null,
++  selectiveMatchConfig: null,
+   dateFormats: [
+     {
+       text: 'MM/DD/YYYY',
+@@ -203,6 +206,18 @@ export const mutations = {
+   },
+   setShowBatchQuickMatchModal(state, val) {
+     state.showBatchQuickMatchModal = val
++    if (!val) {
++      state.batchQuickMatchTargetIds = null
++      state.batchQuickMatchTargetLabel = null
++    }
++  },
++  openBatchQuickMatchForItems(state, { libraryItemIds = null, label = null } = {}) {
++    state.batchQuickMatchTargetIds = libraryItemIds
++    state.batchQuickMatchTargetLabel = label
++    state.showBatchQuickMatchModal = true
++  },
++  setSelectiveMatchConfig(state, config) {
++    state.selectiveMatchConfig = config
+   },
+   resetSelectedMediaItems(state) {
+     state.selectedMediaItems = []
 diff --git a/client/strings/en-us.json b/client/strings/en-us.json
-index d9d6325e..b27769d7 100644
+index d9d6325e..c9365906 100644
 --- a/client/strings/en-us.json
 +++ b/client/strings/en-us.json
 @@ -9,6 +9,9 @@
@@ -3997,7 +4297,16 @@ index d9d6325e..b27769d7 100644
    "ButtonChangeRootPassword": "Change Root Password",
    "ButtonCheckAndDownloadNewEpisodes": "Check & Download New Episodes",
    "ButtonChooseAFolder": "Choose a folder",
-@@ -64,6 +68,7 @@
+@@ -52,6 +56,8 @@
+   "ButtonMapChapterTitles": "Map Chapter Titles",
+   "ButtonMatchAllAuthors": "Match All Authors",
+   "ButtonMatchBooks": "Match Books",
++  "ButtonMatchBooksSelectFields": "Match Books (Select Fields)",
++  "ButtonMatchSelectFields": "Match (Select Fields)",
+   "ButtonNevermind": "Nevermind",
+   "ButtonNext": "Next",
+   "ButtonNextChapter": "Next Chapter",
+@@ -64,6 +70,7 @@
    "ButtonPlayAll": "Play All",
    "ButtonPlaying": "Playing",
    "ButtonPlaylists": "Playlists",
@@ -4005,7 +4314,7 @@ index d9d6325e..b27769d7 100644
    "ButtonPrevious": "Previous",
    "ButtonPreviousChapter": "Previous Chapter",
    "ButtonProbeAudioFile": "Probe Audio File",
-@@ -79,6 +84,7 @@
+@@ -79,6 +86,7 @@
    "ButtonReadLess": "Read less",
    "ButtonReadMore": "Read more",
    "ButtonRefresh": "Refresh",
@@ -4013,7 +4322,7 @@ index d9d6325e..b27769d7 100644
    "ButtonRemove": "Remove",
    "ButtonRemoveAll": "Remove All",
    "ButtonRemoveAllLibraryItems": "Remove All Library Items",
-@@ -115,6 +121,7 @@
+@@ -115,6 +123,7 @@
    "ButtonUserDelete": "Delete user {0}",
    "ButtonUserEdit": "Edit user {0}",
    "ButtonViewAll": "View All",
@@ -4021,7 +4330,7 @@ index d9d6325e..b27769d7 100644
    "ButtonYes": "Yes",
    "ErrorUploadFetchMetadataAPI": "Error fetching metadata",
    "ErrorUploadFetchMetadataNoResults": "Could not fetch metadata - try updating title and/or author",
-@@ -276,6 +283,7 @@
+@@ -276,6 +285,7 @@
    "LabelBitrate": "Bitrate",
    "LabelBonus": "Bonus",
    "LabelBooks": "Books",
@@ -4029,7 +4338,7 @@ index d9d6325e..b27769d7 100644
    "LabelButtonText": "Button Text",
    "LabelByAuthor": "by {0}",
    "LabelChangePassword": "Change Password",
-@@ -428,6 +436,7 @@
+@@ -428,6 +438,7 @@
    "LabelLastBookUpdated": "Last Book Updated",
    "LabelLastProgressDate": "Last progress: {0}",
    "LabelLastSeen": "Last Seen",
@@ -4037,7 +4346,7 @@ index d9d6325e..b27769d7 100644
    "LabelLastTime": "Last Time",
    "LabelLastUpdate": "Last Update",
    "LabelLayout": "Layout",
-@@ -466,6 +475,14 @@
+@@ -466,6 +477,14 @@
    "LabelMinute": "Minute",
    "LabelMinutes": "Minutes",
    "LabelMissing": "Missing",
@@ -4052,7 +4361,7 @@ index d9d6325e..b27769d7 100644
    "LabelMissingEbook": "Has no ebook",
    "LabelMissingSupplementaryEbook": "Has no supplementary ebook",
    "LabelMobileRedirectURIs": "Allowed Mobile Redirect URIs",
-@@ -579,8 +596,13 @@
+@@ -579,8 +598,13 @@
    "LabelSequence": "Sequence",
    "LabelSerial": "Serial",
    "LabelSeries": "Series",
@@ -4066,7 +4375,7 @@ index d9d6325e..b27769d7 100644
    "LabelServerLogLevel": "Server Log Level",
    "LabelServerYearReview": "Server Year in Review ({0})",
    "LabelSetEbookAsPrimary": "Set as primary",
-@@ -701,6 +723,8 @@
+@@ -701,6 +725,8 @@
    "LabelTrailer": "Trailer",
    "LabelType": "Type",
    "LabelUnabridged": "Unabridged",
@@ -4075,12 +4384,13 @@ index d9d6325e..b27769d7 100644
    "LabelUndo": "Undo",
    "LabelUnknown": "Unknown",
    "LabelUnknownPublishDate": "Unknown publish date",
-@@ -838,7 +862,22 @@
+@@ -838,7 +864,23 @@
    "MessageMarkAllEpisodesNotFinished": "Mark all episodes not finished",
    "MessageMarkAsFinished": "Mark as Finished",
    "MessageMarkAsNotFinished": "Mark as Not Finished",
 +  "MessageScanDescription": "will index all media files in the library folders, detect new/modified files, update audio track durations and embedded metadata, and extract cover art. Does not look up external metadata online.",
    "MessageMatchBooksDescription": "will attempt to match books in the library with a book from the selected search provider and fill in empty details and cover art. Does not overwrite details.",
++  "MessageMatchBooksSelectFieldsDescription": "lets you pick specific metadata fields and cover art to update from the selected provider. Unchecked fields are strictly ignored, and you can optionally override the library's ASIN/ISBN skip settings.",
 +  "MessageAudibleQuickScanDescription": "will only scan new or modified series since the last scan date against Audible to find missing books and upcoming releases while conserving bandwidth and CPU.",
 +  "MessageAudibleFullScanDescription": "will perform a complete scan of all series in the library against Audible, updating release dates and cataloging all missing books. Does not alter or download local files.",
 +  "HeaderScheduleAudibleScan": "Schedule Audible Series Sync",
@@ -4098,7 +4408,7 @@ index d9d6325e..b27769d7 100644
    "MessageNoAudioTracks": "No audio tracks",
    "MessageNoAuthors": "No Authors",
    "MessageNoBackups": "No Backups",
-@@ -1058,6 +1097,10 @@
+@@ -1058,6 +1100,10 @@
    "ToastInvalidUrl": "Invalid URL",
    "ToastInvalidUrls": "One or more URLs are invalid",
    "ToastItemCoverUpdateSuccess": "Item cover updated",
@@ -4272,7 +4582,7 @@ index 0b2a0dd6..7b738eed 100644
      Logger.info('[Server] Watcher Closed')
      await SocketAuthority.close()
 diff --git a/server/controllers/LibraryController.js b/server/controllers/LibraryController.js
-index ac23b683..f78eac82 100644
+index ac23b683..a39e56a2 100644
 --- a/server/controllers/LibraryController.js
 +++ b/server/controllers/LibraryController.js
 @@ -19,6 +19,7 @@ const Scanner = require('../scanner/Scanner')
@@ -4388,7 +4698,45 @@ index ac23b683..f78eac82 100644
      res.json(matches)
    }
  
-@@ -1498,5 +1523,131 @@ class LibraryController {
+@@ -1238,8 +1263,8 @@ class LibraryController {
+   }
+ 
+   /**
+-   * GET: /api/libraries/:id/matchall
+-   * Quick match all library items. Book libraries only.
++   * GET/POST: /api/libraries/:id/matchall
++   * Quick match all library items (optionally with selected fields & skip override). Book libraries only.
+    *
+    * @param {LibraryControllerRequest} req
+    * @param {Response} res
+@@ -1249,7 +1274,25 @@ class LibraryController {
+       Logger.error(`[LibraryController] Non-root user "${req.user.username}" attempted to match library items`)
+       return res.sendStatus(403)
+     }
+-    Scanner.matchLibraryItems(this, req.library)
++
++    const options = {}
++    const reqBody = req.body || {}
++    if (reqBody.provider && typeof reqBody.provider === 'string') {
++      options.provider = reqBody.provider
++    }
++    if (reqBody.selectedFields !== undefined) {
++      const sanitizedFields = Scanner.sanitizeSelectedFields(reqBody.selectedFields)
++      if (!sanitizedFields?.length) {
++        return res.status(400).send('At least one valid field must be selected')
++      }
++      options.selectedFields = sanitizedFields
++      options.overrideExisting = reqBody.overrideExisting !== false
++    }
++    if (reqBody.ignoreSkipAsinIsbn !== undefined) {
++      options.ignoreSkipAsinIsbn = !!reqBody.ignoreSkipAsinIsbn
++    }
++
++    Scanner.matchLibraryItems(this, req.library, options)
+     res.sendStatus(200)
+   }
+ 
+@@ -1498,5 +1541,131 @@ class LibraryController {
  
      next()
    }
@@ -4521,7 +4869,7 @@ index ac23b683..f78eac82 100644
  }
  module.exports = new LibraryController()
 diff --git a/server/controllers/LibraryItemController.js b/server/controllers/LibraryItemController.js
-index 18b1dc26..19333cce 100644
+index 18b1dc26..42835a43 100644
 --- a/server/controllers/LibraryItemController.js
 +++ b/server/controllers/LibraryItemController.js
 @@ -19,6 +19,7 @@ const RssFeedManager = require('../managers/RssFeedManager')
@@ -4547,7 +4895,20 @@ index 18b1dc26..19333cce 100644
      }
      res.json({
        updated: hasUpdates,
-@@ -712,6 +721,12 @@ class LibraryItemController {
+@@ -539,6 +548,12 @@ class LibraryItemController {
+     if (reqBody.overrideDetails !== undefined) {
+       options.overrideDetails = !!reqBody.overrideDetails
+     }
++    if (reqBody.selectedFields !== undefined) {
++      options.selectedFields = Scanner.sanitizeSelectedFields(reqBody.selectedFields)
++    }
++    if (reqBody.overrideExisting !== undefined) {
++      options.overrideExisting = !!reqBody.overrideExisting
++    }
+ 
+     const matchResult = await Scanner.quickMatchLibraryItem(this, req.libraryItem, options)
+     res.json(matchResult)
+@@ -712,6 +727,12 @@ class LibraryItemController {
  
          await libraryItem.saveMetadataFile()
  
@@ -4560,6 +4921,32 @@ index 18b1dc26..19333cce 100644
          Logger.debug(`[LibraryItemController] Updated library item media "${libraryItem.media.title}"`)
          SocketAuthority.libraryItemEmitter('item_updated', libraryItem)
          itemsUpdated++
+@@ -780,8 +801,6 @@ class LibraryItemController {
+       return res.sendStatus(400)
+     }
+ 
+-    res.sendStatus(200)
+-
+     const reqBodyOptions = req.body.options || {}
+     const options = {}
+     if (reqBodyOptions.provider && typeof reqBodyOptions.provider === 'string') {
+@@ -793,6 +812,16 @@ class LibraryItemController {
+     if (reqBodyOptions.overrideDetails !== undefined) {
+       options.overrideDetails = !!reqBodyOptions.overrideDetails
+     }
++    if (reqBodyOptions.selectedFields !== undefined) {
++      const sanitizedFields = Scanner.sanitizeSelectedFields(reqBodyOptions.selectedFields)
++      if (!sanitizedFields?.length) {
++        return res.status(400).send('At least one valid field must be selected')
++      }
++      options.selectedFields = sanitizedFields
++      options.overrideExisting = reqBodyOptions.overrideExisting !== false
++    }
++
++    res.sendStatus(200)
+ 
+     for (const libraryItem of libraryItems) {
+       const matchResult = await Scanner.quickMatchLibraryItem(this, libraryItem, options)
 diff --git a/server/controllers/SeriesController.js b/server/controllers/SeriesController.js
 index 21c93f33..f52bc737 100644
 --- a/server/controllers/SeriesController.js
@@ -9334,7 +9721,7 @@ index 6d14471b..5e8bea36 100644
  }
  module.exports = iTunes
 diff --git a/server/routers/ApiRouter.js b/server/routers/ApiRouter.js
-index 9a184aa6..05bee2e0 100644
+index 9a184aa6..7e666760 100644
 --- a/server/routers/ApiRouter.js
 +++ b/server/routers/ApiRouter.js
 @@ -56,6 +56,7 @@ class ApiRouter {
@@ -9345,7 +9732,15 @@ index 9a184aa6..05bee2e0 100644
  
      this.router = express()
      this.router.disable('x-powered-by')
-@@ -96,6 +97,11 @@ class ApiRouter {
+@@ -89,6 +90,7 @@ class ApiRouter {
+     this.router.patch('/libraries/:id/narrators/:narratorId', LibraryController.middleware.bind(this), LibraryController.updateNarrator.bind(this))
+     this.router.delete('/libraries/:id/narrators/:narratorId', LibraryController.middleware.bind(this), LibraryController.removeNarrator.bind(this))
+     this.router.get('/libraries/:id/matchall', LibraryController.middleware.bind(this), LibraryController.matchAll.bind(this))
++    this.router.post('/libraries/:id/matchall', LibraryController.middleware.bind(this), LibraryController.matchAll.bind(this))
+     this.router.post('/libraries/:id/scan', LibraryController.middleware.bind(this), LibraryController.scan.bind(this))
+     this.router.get('/libraries/:id/recent-episodes', LibraryController.middleware.bind(this), LibraryController.getRecentEpisodes.bind(this))
+     this.router.get('/libraries/:id/opml', LibraryController.middleware.bind(this), LibraryController.getOPMLFile.bind(this))
+@@ -96,6 +98,11 @@ class ApiRouter {
      this.router.post('/libraries/:id/remove-metadata', LibraryController.middleware.bind(this), LibraryController.removeAllMetadataFiles.bind(this))
      this.router.get('/libraries/:id/podcast-titles', LibraryController.middleware.bind(this), LibraryController.getPodcastTitles.bind(this))
      this.router.get('/libraries/:id/download', LibraryController.middleware.bind(this), LibraryController.downloadMultiple.bind(this))
@@ -9357,7 +9752,7 @@ index 9a184aa6..05bee2e0 100644
  
      //
      // Item Routes
-@@ -228,6 +234,7 @@ class ApiRouter {
+@@ -228,6 +235,7 @@ class ApiRouter {
      //
      this.router.get('/series/:id', SeriesController.middleware.bind(this), SeriesController.findOne.bind(this))
      this.router.patch('/series/:id', SeriesController.middleware.bind(this), SeriesController.update.bind(this))
@@ -9365,7 +9760,7 @@ index 9a184aa6..05bee2e0 100644
  
      //
      // Playback Session Routes
-@@ -332,6 +339,8 @@ class ApiRouter {
+@@ -332,6 +340,8 @@ class ApiRouter {
      //
      this.router.get('/stats/year/:year', StatsController.middleware.bind(this), StatsController.getAdminStatsForYear.bind(this))
      this.router.get('/stats/server', StatsController.middleware.bind(this), StatsController.getServerStats.bind(this))
@@ -9424,10 +9819,99 @@ index 30ac1ff1..5fb166fb 100644
    }
  
 diff --git a/server/scanner/Scanner.js b/server/scanner/Scanner.js
-index af440598..265717ad 100644
+index af440598..cb5877e1 100644
 --- a/server/scanner/Scanner.js
 +++ b/server/scanner/Scanner.js
-@@ -127,6 +127,15 @@ class Scanner {
+@@ -22,11 +22,68 @@ const TaskManager = require('../managers/TaskManager')
+  * @property {string} [asin] - This override is currently unused in Abs clients
+  * @property {boolean} [overrideCover]
+  * @property {boolean} [overrideDetails]
++ * @property {string[]} [selectedFields] - Whitelist of fields to update; unchecked fields are strictly ignored
++ * @property {boolean} [overrideExisting] - When selectedFields is set, whether checked fields overwrite existing values (default true)
++ * @property {boolean} [ignoreSkipAsinIsbn] - When matching a library, ignore skipMatchingMediaWithAsin / skipMatchingMediaWithIsbn
+  */
+ 
++const VALID_SELECTIVE_MATCH_FIELDS = new Set([
++  'cover',
++  'title',
++  'subtitle',
++  'description',
++  'author',
++  'narrator',
++  'publisher',
++  'publishedYear',
++  'genres',
++  'tags',
++  'series',
++  'language',
++  'explicit',
++  'abridged',
++  'asin',
++  'isbn'
++])
++
+ class Scanner {
+   constructor() {}
+ 
++  /**
++   * Determine whether a field should be updated based on QuickMatchOptions.
++   * When selectedFields is provided, unchecked fields are strictly ignored (never filled even if blank).
++   * @param {string} fieldKey
++   * @param {boolean} isCurrentlyEmpty
++   * @param {QuickMatchOptions} options
++   * @returns {boolean}
++   */
++  shouldUpdateField(fieldKey, isCurrentlyEmpty, options = {}) {
++    if (Array.isArray(options.selectedFields)) {
++      if (!options.selectedFields.includes(fieldKey)) {
++        return false
++      }
++      if (options.overrideExisting === false) {
++        return isCurrentlyEmpty
++      }
++      return true
++    }
++
++    if (fieldKey === 'cover') {
++      return isCurrentlyEmpty || Boolean(options.overrideCover)
++    }
++    return isCurrentlyEmpty || Boolean(options.overrideDetails)
++  }
++
++  /**
++   * Sanitize an incoming selectedFields array against valid field keys.
++   * @param {unknown} rawFields
++   * @returns {string[]|undefined}
++   */
++  sanitizeSelectedFields(rawFields) {
++    if (!Array.isArray(rawFields)) return undefined
++    return Array.from(new Set(rawFields.filter((f) => typeof f === 'string' && VALID_SELECTIVE_MATCH_FIELDS.has(f))))
++  }
++
+   /**
+    *
+    * @param {import('../routers/ApiRouter')} apiRouterCtx
+@@ -40,7 +97,7 @@ class Scanner {
+     const searchAuthor = options.author || libraryItem.media.authorName
+ 
+     // If overrideCover and overrideDetails is not sent in options than use the server setting to determine if we should override
+-    if (options.overrideCover === undefined && options.overrideDetails === undefined && Database.serverSettings.scannerPreferMatchedMetadata) {
++    if (!Array.isArray(options.selectedFields) && options.overrideCover === undefined && options.overrideDetails === undefined && Database.serverSettings.scannerPreferMatchedMetadata) {
+       options.overrideCover = true
+       options.overrideDetails = true
+     }
+@@ -60,8 +117,8 @@ class Scanner {
+       }
+       const matchData = results[0]
+ 
+-      // Update cover if not set OR overrideCover flag
+-      if (matchData.cover && (!libraryItem.media.coverPath || options.overrideCover)) {
++      // Update cover if allowed by shouldUpdateField
++      if (matchData.cover && this.shouldUpdateField('cover', !libraryItem.media.coverPath, options)) {
+         Logger.debug(`[Scanner] Updating cover "${matchData.cover}"`)
+         const coverResult = await CoverManager.downloadCoverFromUrlNew(matchData.cover, libraryItem.id, libraryItem.isFile ? null : libraryItem.path)
+         if (coverResult.error) {
+@@ -127,6 +184,15 @@ class Scanner {
        await libraryItem.saveMetadataFile()
  
        SocketAuthority.libraryItemEmitter('item_updated', libraryItem)
@@ -9443,6 +9927,133 @@ index af440598..265717ad 100644
      }
  
      return {
+@@ -192,21 +258,24 @@ class Scanner {
+    * @returns {Promise<{updatePayload: Map<string, any>, seriesIdsRemoved: string[], hasSeriesUpdates: boolean, authorIdsRemoved: string[], hasAuthorUpdates: boolean}>}
+    */
+   async quickMatchBookBuildUpdatePayload(apiRouterCtx, libraryItem, matchData, options) {
+-    // Update media metadata if not set OR overrideDetails flag
++    // Update media metadata if allowed by shouldUpdateField
+     const detailKeysToUpdate = ['title', 'subtitle', 'description', 'narrator', 'publisher', 'publishedYear', 'genres', 'tags', 'language', 'explicit', 'abridged', 'asin', 'isbn']
+     const updatePayload = {}
++    const isSelective = Array.isArray(options.selectedFields)
+ 
+     for (const key in matchData) {
+-      if (matchData[key] && detailKeysToUpdate.includes(key)) {
++      const isBooleanKey = (key === 'explicit' || key === 'abridged') && typeof matchData[key] === 'boolean'
++      const hasValue = Boolean(matchData[key]) || (isSelective && isBooleanKey)
++      if (hasValue && detailKeysToUpdate.includes(key)) {
+         if (key === 'narrator') {
+-          if (!libraryItem.media.narrators?.length || options.overrideDetails) {
++          if (this.shouldUpdateField('narrator', !libraryItem.media.narrators?.length, options)) {
+             updatePayload.narrators = matchData[key]
+               .split(',')
+               .map((v) => v.trim())
+               .filter((v) => !!v)
+           }
+         } else if (key === 'genres') {
+-          if (!libraryItem.media.genres.length || options.overrideDetails) {
++          if (this.shouldUpdateField('genres', !libraryItem.media.genres?.length, options)) {
+             let genresArray = []
+             if (Array.isArray(matchData[key])) genresArray = [...matchData[key]]
+             else {
+@@ -220,7 +289,7 @@ class Scanner {
+             updatePayload[key] = genresArray
+           }
+         } else if (key === 'tags') {
+-          if (!libraryItem.media.tags.length || options.overrideDetails) {
++          if (this.shouldUpdateField('tags', !libraryItem.media.tags?.length, options)) {
+             let tagsArray = []
+             if (Array.isArray(matchData[key])) tagsArray = [...matchData[key]]
+             else
+@@ -230,15 +299,18 @@ class Scanner {
+                 .filter((v) => !!v)
+             updatePayload[key] = tagsArray
+           }
+-        } else if (!libraryItem.media[key] || options.overrideDetails) {
+-          updatePayload[key] = matchData[key]
++        } else {
++          const isCurrentlyEmpty = isBooleanKey ? libraryItem.media[key] === null || libraryItem.media[key] === undefined : !libraryItem.media[key]
++          if (this.shouldUpdateField(key, isCurrentlyEmpty, options)) {
++            updatePayload[key] = matchData[key]
++          }
+         }
+       }
+     }
+ 
+-    // Add or set author if not set
++    // Add or set author if allowed by shouldUpdateField
+     let hasAuthorUpdates = false
+-    if (matchData.author && (!libraryItem.media.authorName || options.overrideDetails)) {
++    if (matchData.author && this.shouldUpdateField('author', !libraryItem.media.authorName, options)) {
+       if (!Array.isArray(matchData.author)) {
+         matchData.author = matchData.author
+           .split(',')
+@@ -289,9 +361,9 @@ class Scanner {
+       }
+     }
+ 
+-    // Add or set series if not set
++    // Add or set series if allowed by shouldUpdateField
+     let hasSeriesUpdates = false
+-    if (matchData.series && (!libraryItem.media.seriesName || options.overrideDetails)) {
++    if (matchData.series && this.shouldUpdateField('series', !libraryItem.media.seriesName, options)) {
+       if (!Array.isArray(matchData.series)) matchData.series = [{ series: matchData.series, sequence: matchData.sequence }]
+       const seriesIdsRemoved = []
+       for (const seriesMatchItem of matchData.series) {
+@@ -432,22 +504,29 @@ class Scanner {
+    * @param {LibraryScan} libraryScan
+    * @returns {Promise<boolean>} false if scan canceled
+    */
+-  async matchLibraryItemsChunk(apiRouterCtx, library, libraryItems, libraryScan) {
++  async matchLibraryItemsChunk(apiRouterCtx, library, libraryItems, libraryScan, options = {}) {
+     for (let i = 0; i < libraryItems.length; i++) {
+       const libraryItem = libraryItems[i]
+ 
+-      if (libraryItem.media.asin && library.settings.skipMatchingMediaWithAsin) {
++      if (!options.ignoreSkipAsinIsbn && libraryItem.media.asin && library.settings.skipMatchingMediaWithAsin) {
+         Logger.debug(`[Scanner] matchLibraryItems: Skipping "${libraryItem.media.title}" because it already has an ASIN (${i + 1} of ${libraryItems.length})`)
+         continue
+       }
+ 
+-      if (libraryItem.media.isbn && library.settings.skipMatchingMediaWithIsbn) {
++      if (!options.ignoreSkipAsinIsbn && libraryItem.media.isbn && library.settings.skipMatchingMediaWithIsbn) {
+         Logger.debug(`[Scanner] matchLibraryItems: Skipping "${libraryItem.media.title}" because it already has an ISBN (${i + 1} of ${libraryItems.length})`)
+         continue
+       }
+ 
+       Logger.debug(`[Scanner] matchLibraryItems: Quick matching "${libraryItem.media.title}" (${i + 1} of ${libraryItems.length})`)
+-      const result = await this.quickMatchLibraryItem(apiRouterCtx, libraryItem, { provider: library.provider })
++      const matchOptions = {
++        provider: options.provider || library.provider
++      }
++      if (Array.isArray(options.selectedFields)) {
++        matchOptions.selectedFields = options.selectedFields
++        matchOptions.overrideExisting = options.overrideExisting !== false
++      }
++      const result = await this.quickMatchLibraryItem(apiRouterCtx, libraryItem, matchOptions)
+       if (result.warning) {
+         Logger.warn(`[Scanner] matchLibraryItems: Match warning ${result.warning} for library item "${libraryItem.media.title}"`)
+       } else if (result.updated) {
+@@ -468,8 +547,9 @@ class Scanner {
+    *
+    * @param {import('../routers/ApiRouter')} apiRouterCtx
+    * @param {import('../models/Library')} library
++   * @param {QuickMatchOptions} [options]
+    */
+-  async matchLibraryItems(apiRouterCtx, library) {
++  async matchLibraryItems(apiRouterCtx, library, options = {}) {
+     if (library.mediaType === 'podcast') {
+       Logger.error(`[Scanner] matchLibraryItems: Match all not supported for podcasts yet`)
+       return
+@@ -508,7 +588,7 @@ class Scanner {
+       offset += limit
+       hasMoreChunks = libraryItems.length === limit
+ 
+-      const shouldContinue = await this.matchLibraryItemsChunk(apiRouterCtx, library, libraryItems, libraryScan)
++      const shouldContinue = await this.matchLibraryItemsChunk(apiRouterCtx, library, libraryItems, libraryScan, options)
+       if (!shouldContinue) {
+         isCanceled = true
+         break
 diff --git a/server/utils/queries/authorFilters.js b/server/utils/queries/authorFilters.js
 index 3d6bc7bd..4db2e2c0 100644
 --- a/server/utils/queries/authorFilters.js

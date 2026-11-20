@@ -22,10 +22,67 @@ const TaskManager = require('../managers/TaskManager')
  * @property {string} [asin] - This override is currently unused in Abs clients
  * @property {boolean} [overrideCover]
  * @property {boolean} [overrideDetails]
+ * @property {string[]} [selectedFields] - Whitelist of fields to update; unchecked fields are strictly ignored
+ * @property {boolean} [overrideExisting] - When selectedFields is set, whether checked fields overwrite existing values (default true)
+ * @property {boolean} [ignoreSkipAsinIsbn] - When matching a library, ignore skipMatchingMediaWithAsin / skipMatchingMediaWithIsbn
  */
+
+const VALID_SELECTIVE_MATCH_FIELDS = new Set([
+  'cover',
+  'title',
+  'subtitle',
+  'description',
+  'author',
+  'narrator',
+  'publisher',
+  'publishedYear',
+  'genres',
+  'tags',
+  'series',
+  'language',
+  'explicit',
+  'abridged',
+  'asin',
+  'isbn'
+])
 
 class Scanner {
   constructor() {}
+
+  /**
+   * Determine whether a field should be updated based on QuickMatchOptions.
+   * When selectedFields is provided, unchecked fields are strictly ignored (never filled even if blank).
+   * @param {string} fieldKey
+   * @param {boolean} isCurrentlyEmpty
+   * @param {QuickMatchOptions} options
+   * @returns {boolean}
+   */
+  shouldUpdateField(fieldKey, isCurrentlyEmpty, options = {}) {
+    if (Array.isArray(options.selectedFields)) {
+      if (!options.selectedFields.includes(fieldKey)) {
+        return false
+      }
+      if (options.overrideExisting === false) {
+        return isCurrentlyEmpty
+      }
+      return true
+    }
+
+    if (fieldKey === 'cover') {
+      return isCurrentlyEmpty || Boolean(options.overrideCover)
+    }
+    return isCurrentlyEmpty || Boolean(options.overrideDetails)
+  }
+
+  /**
+   * Sanitize an incoming selectedFields array against valid field keys.
+   * @param {unknown} rawFields
+   * @returns {string[]|undefined}
+   */
+  sanitizeSelectedFields(rawFields) {
+    if (!Array.isArray(rawFields)) return undefined
+    return Array.from(new Set(rawFields.filter((f) => typeof f === 'string' && VALID_SELECTIVE_MATCH_FIELDS.has(f))))
+  }
 
   /**
    *
@@ -40,7 +97,7 @@ class Scanner {
     const searchAuthor = options.author || libraryItem.media.authorName
 
     // If overrideCover and overrideDetails is not sent in options than use the server setting to determine if we should override
-    if (options.overrideCover === undefined && options.overrideDetails === undefined && Database.serverSettings.scannerPreferMatchedMetadata) {
+    if (!Array.isArray(options.selectedFields) && options.overrideCover === undefined && options.overrideDetails === undefined && Database.serverSettings.scannerPreferMatchedMetadata) {
       options.overrideCover = true
       options.overrideDetails = true
     }
@@ -60,8 +117,8 @@ class Scanner {
       }
       const matchData = results[0]
 
-      // Update cover if not set OR overrideCover flag
-      if (matchData.cover && (!libraryItem.media.coverPath || options.overrideCover)) {
+      // Update cover if allowed by shouldUpdateField
+      if (matchData.cover && this.shouldUpdateField('cover', !libraryItem.media.coverPath, options)) {
         Logger.debug(`[Scanner] Updating cover "${matchData.cover}"`)
         const coverResult = await CoverManager.downloadCoverFromUrlNew(matchData.cover, libraryItem.id, libraryItem.isFile ? null : libraryItem.path)
         if (coverResult.error) {
@@ -201,21 +258,24 @@ class Scanner {
    * @returns {Promise<{updatePayload: Map<string, any>, seriesIdsRemoved: string[], hasSeriesUpdates: boolean, authorIdsRemoved: string[], hasAuthorUpdates: boolean}>}
    */
   async quickMatchBookBuildUpdatePayload(apiRouterCtx, libraryItem, matchData, options) {
-    // Update media metadata if not set OR overrideDetails flag
+    // Update media metadata if allowed by shouldUpdateField
     const detailKeysToUpdate = ['title', 'subtitle', 'description', 'narrator', 'publisher', 'publishedYear', 'genres', 'tags', 'language', 'explicit', 'abridged', 'asin', 'isbn']
     const updatePayload = {}
+    const isSelective = Array.isArray(options.selectedFields)
 
     for (const key in matchData) {
-      if (matchData[key] && detailKeysToUpdate.includes(key)) {
+      const isBooleanKey = (key === 'explicit' || key === 'abridged') && typeof matchData[key] === 'boolean'
+      const hasValue = Boolean(matchData[key]) || (isSelective && isBooleanKey)
+      if (hasValue && detailKeysToUpdate.includes(key)) {
         if (key === 'narrator') {
-          if (!libraryItem.media.narrators?.length || options.overrideDetails) {
+          if (this.shouldUpdateField('narrator', !libraryItem.media.narrators?.length, options)) {
             updatePayload.narrators = matchData[key]
               .split(',')
               .map((v) => v.trim())
               .filter((v) => !!v)
           }
         } else if (key === 'genres') {
-          if (!libraryItem.media.genres.length || options.overrideDetails) {
+          if (this.shouldUpdateField('genres', !libraryItem.media.genres?.length, options)) {
             let genresArray = []
             if (Array.isArray(matchData[key])) genresArray = [...matchData[key]]
             else {
@@ -229,7 +289,7 @@ class Scanner {
             updatePayload[key] = genresArray
           }
         } else if (key === 'tags') {
-          if (!libraryItem.media.tags.length || options.overrideDetails) {
+          if (this.shouldUpdateField('tags', !libraryItem.media.tags?.length, options)) {
             let tagsArray = []
             if (Array.isArray(matchData[key])) tagsArray = [...matchData[key]]
             else
@@ -239,15 +299,18 @@ class Scanner {
                 .filter((v) => !!v)
             updatePayload[key] = tagsArray
           }
-        } else if (!libraryItem.media[key] || options.overrideDetails) {
-          updatePayload[key] = matchData[key]
+        } else {
+          const isCurrentlyEmpty = isBooleanKey ? libraryItem.media[key] === null || libraryItem.media[key] === undefined : !libraryItem.media[key]
+          if (this.shouldUpdateField(key, isCurrentlyEmpty, options)) {
+            updatePayload[key] = matchData[key]
+          }
         }
       }
     }
 
-    // Add or set author if not set
+    // Add or set author if allowed by shouldUpdateField
     let hasAuthorUpdates = false
-    if (matchData.author && (!libraryItem.media.authorName || options.overrideDetails)) {
+    if (matchData.author && this.shouldUpdateField('author', !libraryItem.media.authorName, options)) {
       if (!Array.isArray(matchData.author)) {
         matchData.author = matchData.author
           .split(',')
@@ -298,9 +361,9 @@ class Scanner {
       }
     }
 
-    // Add or set series if not set
+    // Add or set series if allowed by shouldUpdateField
     let hasSeriesUpdates = false
-    if (matchData.series && (!libraryItem.media.seriesName || options.overrideDetails)) {
+    if (matchData.series && this.shouldUpdateField('series', !libraryItem.media.seriesName, options)) {
       if (!Array.isArray(matchData.series)) matchData.series = [{ series: matchData.series, sequence: matchData.sequence }]
       const seriesIdsRemoved = []
       for (const seriesMatchItem of matchData.series) {
@@ -441,22 +504,29 @@ class Scanner {
    * @param {LibraryScan} libraryScan
    * @returns {Promise<boolean>} false if scan canceled
    */
-  async matchLibraryItemsChunk(apiRouterCtx, library, libraryItems, libraryScan) {
+  async matchLibraryItemsChunk(apiRouterCtx, library, libraryItems, libraryScan, options = {}) {
     for (let i = 0; i < libraryItems.length; i++) {
       const libraryItem = libraryItems[i]
 
-      if (libraryItem.media.asin && library.settings.skipMatchingMediaWithAsin) {
+      if (!options.ignoreSkipAsinIsbn && libraryItem.media.asin && library.settings.skipMatchingMediaWithAsin) {
         Logger.debug(`[Scanner] matchLibraryItems: Skipping "${libraryItem.media.title}" because it already has an ASIN (${i + 1} of ${libraryItems.length})`)
         continue
       }
 
-      if (libraryItem.media.isbn && library.settings.skipMatchingMediaWithIsbn) {
+      if (!options.ignoreSkipAsinIsbn && libraryItem.media.isbn && library.settings.skipMatchingMediaWithIsbn) {
         Logger.debug(`[Scanner] matchLibraryItems: Skipping "${libraryItem.media.title}" because it already has an ISBN (${i + 1} of ${libraryItems.length})`)
         continue
       }
 
       Logger.debug(`[Scanner] matchLibraryItems: Quick matching "${libraryItem.media.title}" (${i + 1} of ${libraryItems.length})`)
-      const result = await this.quickMatchLibraryItem(apiRouterCtx, libraryItem, { provider: library.provider })
+      const matchOptions = {
+        provider: options.provider || library.provider
+      }
+      if (Array.isArray(options.selectedFields)) {
+        matchOptions.selectedFields = options.selectedFields
+        matchOptions.overrideExisting = options.overrideExisting !== false
+      }
+      const result = await this.quickMatchLibraryItem(apiRouterCtx, libraryItem, matchOptions)
       if (result.warning) {
         Logger.warn(`[Scanner] matchLibraryItems: Match warning ${result.warning} for library item "${libraryItem.media.title}"`)
       } else if (result.updated) {
@@ -477,8 +547,9 @@ class Scanner {
    *
    * @param {import('../routers/ApiRouter')} apiRouterCtx
    * @param {import('../models/Library')} library
+   * @param {QuickMatchOptions} [options]
    */
-  async matchLibraryItems(apiRouterCtx, library) {
+  async matchLibraryItems(apiRouterCtx, library, options = {}) {
     if (library.mediaType === 'podcast') {
       Logger.error(`[Scanner] matchLibraryItems: Match all not supported for podcasts yet`)
       return
@@ -517,7 +588,7 @@ class Scanner {
       offset += limit
       hasMoreChunks = libraryItems.length === limit
 
-      const shouldContinue = await this.matchLibraryItemsChunk(apiRouterCtx, library, libraryItems, libraryScan)
+      const shouldContinue = await this.matchLibraryItemsChunk(apiRouterCtx, library, libraryItems, libraryScan, options)
       if (!shouldContinue) {
         isCanceled = true
         break

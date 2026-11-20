@@ -83,6 +83,11 @@ export default {
           value: 'match-books'
         })
         items.push({
+          text: this.$strings.ButtonMatchBooksSelectFields || 'Match Books (Select Fields)',
+          action: 'selective-match-books',
+          value: 'selective-match-books'
+        })
+        items.push({
           text: this.$strings.ButtonAudibleQuickScan || 'Audible Quick Scan',
           action: 'audible-quick-scan',
           value: 'audible-quick-scan'
@@ -115,6 +120,8 @@ export default {
         this.scan(true)
       } else if (action === 'match-books') {
         this.matchAll()
+      } else if (action === 'selective-match-books') {
+        this.selectiveMatchAll()
       } else if (action === 'audible-quick-scan') {
         this.scanAudible(true)
       } else if (action === 'audible-full-scan') {
@@ -143,9 +150,15 @@ export default {
         })
         .catch((error) => {
           console.error('Failed', error)
-          var errorMsg = err.response ? err.response.data : ''
+          var errorMsg = error.response ? error.response.data : ''
           this.$toast.error(errorMsg || 'Match all failed')
         })
+    },
+    selectiveMatchAll() {
+      this.$store.commit('globals/setSelectiveMatchConfig', {
+        mode: 'library',
+        library: this.library
+      })
     },
     editClick() {
       this.$emit('edit', this.library)

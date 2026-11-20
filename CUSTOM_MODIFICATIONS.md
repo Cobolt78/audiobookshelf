@@ -361,25 +361,65 @@ Removes the 12-item viewing dead-end on library search results (`/library/{id}/s
 
 ---
 
-## 13. Modified Files Inventory
+## 13. Series Batch Actions & Field-Selective Matching (`Match (Select Fields)`)
+
+### Summary
+Adds bulk management actions directly to the Series page 3-dots menu (`Quick Match`, `Match (Select Fields)`, `Quick Embed Metadata`, `Re-Scan`, `Download`) and introduces a granular field-picker matching workflow (`Match (Select Fields)` / `Match Books (Select Fields)`) for multi-book selections, series pages, and library-wide matching.
+
+### Key Details
+- **Series Page 3-Dots Menu (`client/components/app/BookShelfToolbar.vue`)**:
+  - Added admin actions (`Quick Match`, `Match (Select Fields)`, `Quick Embed Metadata`, `Re-Scan`) and permission-gated `Download` (up to the 40-book URL limit) operating on `seriesLibraryItemIds`.
+  - Updated `BatchQuickMatchModel.vue` and `client/store/globals.js` (`openBatchQuickMatchForItems`) so Quick Match can target an entire series directly without entering selection mode.
+- **Granular Field-Selective Match Modal (`client/components/modals/BatchSelectiveMatchModal.vue`)**:
+  - Lets users pick exact fields (`Cover Art`, `Description`, `Author`, `Narrator`, `Title`, `Subtitle`, `Series`, `Publisher`, `Publish Year`, `Genres`, `Tags`, `Language`, `ASIN`, `ISBN`, `Explicit`, `Abridged`) plus provider and an **Overwrite existing values** toggle.
+  - **Strict Unchecked Field Ignore**: Any unchecked field is strictly ignored (never filled or overwritten, even if blank).
+  - **Library ASIN/ISBN Skip Awareness & Override**: In **Settings → Libraries → ⋮ → Match Books (Select Fields)** (`LibraryItem.vue`, `LibrariesTable.vue`), inspects `skipMatchingMediaWithAsin` and `skipMatchingMediaWithIsbn`, warns the user clearly if active, and offers a toggle to ignore that skip setting for that run.
+  - Saves field selections and overwrite preference to `localStorage`.
+- **Backend Selective Match & Library Override (`server/scanner/Scanner.js`, `LibraryItemController.js`, `LibraryController.js`, `ApiRouter.js`)**:
+  - Added `shouldUpdateField` and `sanitizeSelectedFields` in `Scanner.js` so `quickMatchLibraryItem` and `quickMatchBookBuildUpdatePayload` respect `selectedFields` and `overrideExisting`.
+  - Added `POST /api/libraries/:id/matchall` accepting `{ provider, selectedFields, overrideExisting, ignoreSkipAsinIsbn }`.
+
+### Modified Files:
+* `client/components/app/Appbar.vue`
+* `client/components/app/BookShelfToolbar.vue`
+* `client/components/modals/BatchQuickMatchModel.vue`
+* `client/components/modals/BatchSelectiveMatchModal.vue`
+* `client/components/tables/library/LibrariesTable.vue`
+* `client/components/tables/library/LibraryItem.vue`
+* `client/layouts/default.vue`
+* `client/store/globals.js`
+* `client/strings/en-us.json`
+* `server/controllers/LibraryController.js`
+* `server/controllers/LibraryItemController.js`
+* `server/routers/ApiRouter.js`
+* `server/scanner/Scanner.js`
+* `test/server/scanner/SelectiveMatch.test.js`
+
+---
+
+## 14. Modified Files Inventory
 
 | File Path | Description |
 | :--- | :--- |
 | `CUSTOM_MODIFICATIONS.md` | Comprehensive documentation of all custom features and modifications |
 | `GEMINI.md` | Antigravity paired-programming invariants and upgrade retention protocol |
-| `custom_changes.patch` | Unified Git diff against upstream `v2.37.2` baseline |
+| `custom_changes.patch` | Unified Git diff against upstream `v2.38.0` baseline |
+| `client/components/app/Appbar.vue` | Multi-book selection menu trigger for `Match (Select Fields)` |
 | `client/components/app/BookShelfCategorized.vue` | Interactive shelf header clicks, discover re-roll, search heading navigation, and encoded filter routing |
 | `client/components/app/BookShelfRow.vue` | Interactive shelf header clicks, search heading navigation, placards, and discover refresh button |
-| `client/components/app/BookShelfToolbar.vue` | Audible scan progress bar, quick/full scan menu, cancel listener, and status sync |
+| `client/components/app/BookShelfToolbar.vue` | Audible scan progress bar/menu and Series 3-dots actions (Quick Match, Selective Match, Quick Embed, Re-Scan, Download) |
 | `client/components/app/ConfigSideNav.vue` | Sidebar navigation link to Bandwidth Stats |
 | `client/components/cards/LazySeriesCard.vue` | Series read badges (X/Y Read), missing books count, and upcoming release indicators |
 | `client/components/cards/LazyPlaylistCard.vue` | Playlist cover item count badge in top-right corner with faded dark background |
 | `client/components/content/LibraryItemDetails.vue` | Audio bitrate display under Size on book details page |
 | `client/components/controls/LibraryFilterSelect.vue` | Subfilter selection checkmarks, parent category highlight, and Base64 label resolution |
+| `client/components/modals/BatchQuickMatchModel.vue` | Supports explicit target item IDs for Series Quick Match |
+| `client/components/modals/BatchSelectiveMatchModal.vue` | Field-picker selective match modal with localStorage presets and ASIN/ISBN skip override |
 | `client/components/modals/libraries/ScheduleScan.vue` | Audible series scan automated schedule configuration |
-| `client/components/tables/library/LibrariesTable.vue` | Action tooltips for Scan, Match Books, and Audible Scan |
-| `client/components/tables/library/LibraryItem.vue` | Context menu triggers for Audible quick & full scan |
+| `client/components/tables/library/LibrariesTable.vue` | Action tooltips for Scan, Match Books, Match Books (Select Fields), and Audible Scan |
+| `client/components/tables/library/LibraryItem.vue` | Context menu triggers for Match Books (Select Fields) and Audible quick & full scan |
 | `client/components/widgets/SeriesProviderEntries.vue` | Series upcoming releases and missing books cards with Audible links |
+| `client/layouts/default.vue` | Mounts `BatchSelectiveMatchModal` globally |
 | `client/pages/config.vue` | Route title mapper & full-width layout for bandwidth dashboard |
 | `client/pages/config/bandwidth.vue` | Responsive Bandwidth Stats dashboard with 48h SVG waveform, 24h hourly breakdown, item breakdown, and date filters |
 | `client/pages/config/index.vue` | Bandwidth tracking toggle and custom local LAN subnets/IPs input in Settings > General |
@@ -387,7 +427,10 @@ Removes the 12-item viewing dead-end on library search results (`/library/{id}/s
 | `client/pages/library/_library/search.vue` | Expandable full-category search results grid with `?category=` routing |
 | `client/pages/library/_library/series/_id.vue` | Mounts external series tracking panel on series details page |
 | `client/plugins/init.client.js` | Resilient Base64 decode fallback to plain text |
-| `client/strings/en-us.json` | English string localizations for scan actions, series badges, and tooltips |
+| `client/store/globals.js` | State and mutations for Series Quick Match target IDs and Selective Match modal config |
+| `client/strings/en-us.json` | English string localizations for scan actions, selective match, series badges, and tooltips |
+| `server/scanner/Scanner.js` | Quick match item update path, selective field matching, ASIN/ISBN skip override, and reconciliation hook |
+| `test/server/scanner/SelectiveMatch.test.js` | Automated unit tests for selective field matching, strict ignore, and ASIN/ISBN skip override |
 | `server/Database.js` | Registered Bandwidth and SeriesProviderEntry models, schema sync, and idempotent column verification |
 | `server/Server.js` | Global middleware hook and shutdown flush for BandwidthManager |
 | `server/controllers/LibraryController.js` | Series provider scan/cancel/status/missing/upcoming endpoints, and uncapped category search |

@@ -27,6 +27,9 @@ export const state = () => ({
   isCasting: false, // Actively casting
   isChromecastInitialized: false, // Script loadeds
   showBatchQuickMatchModal: false,
+  batchQuickMatchTargetIds: null,
+  batchQuickMatchTargetLabel: null,
+  selectiveMatchConfig: null,
   dateFormats: [
     {
       text: 'MM/DD/YYYY',
@@ -203,6 +206,18 @@ export const mutations = {
   },
   setShowBatchQuickMatchModal(state, val) {
     state.showBatchQuickMatchModal = val
+    if (!val) {
+      state.batchQuickMatchTargetIds = null
+      state.batchQuickMatchTargetLabel = null
+    }
+  },
+  openBatchQuickMatchForItems(state, { libraryItemIds = null, label = null } = {}) {
+    state.batchQuickMatchTargetIds = libraryItemIds
+    state.batchQuickMatchTargetLabel = label
+    state.showBatchQuickMatchModal = true
+  },
+  setSelectiveMatchConfig(state, config) {
+    state.selectiveMatchConfig = config
   },
   resetSelectedMediaItems(state) {
     state.selectedMediaItems = []

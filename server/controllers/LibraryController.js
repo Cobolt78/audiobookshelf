@@ -1263,8 +1263,8 @@ class LibraryController {
   }
 
   /**
-   * GET: /api/libraries/:id/matchall
-   * Quick match all library items. Book libraries only.
+   * GET/POST: /api/libraries/:id/matchall
+   * Quick match all library items (optionally with selected fields & skip override). Book libraries only.
    *
    * @param {LibraryControllerRequest} req
    * @param {Response} res
@@ -1274,7 +1274,25 @@ class LibraryController {
       Logger.error(`[LibraryController] Non-root user "${req.user.username}" attempted to match library items`)
       return res.sendStatus(403)
     }
-    Scanner.matchLibraryItems(this, req.library)
+
+    const options = {}
+    const reqBody = req.body || {}
+    if (reqBody.provider && typeof reqBody.provider === 'string') {
+      options.provider = reqBody.provider
+    }
+    if (reqBody.selectedFields !== undefined) {
+      const sanitizedFields = Scanner.sanitizeSelectedFields(reqBody.selectedFields)
+      if (!sanitizedFields?.length) {
+        return res.status(400).send('At least one valid field must be selected')
+      }
+      options.selectedFields = sanitizedFields
+      options.overrideExisting = reqBody.overrideExisting !== false
+    }
+    if (reqBody.ignoreSkipAsinIsbn !== undefined) {
+      options.ignoreSkipAsinIsbn = !!reqBody.ignoreSkipAsinIsbn
+    }
+
+    Scanner.matchLibraryItems(this, req.library, options)
     res.sendStatus(200)
   }
 

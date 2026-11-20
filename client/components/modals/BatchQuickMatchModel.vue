@@ -75,13 +75,16 @@ export default {
       }
     },
     title() {
+      if (this.$store.state.globals.batchQuickMatchTargetLabel) {
+        return `${this.$store.state.globals.batchQuickMatchTargetLabel} (${this.selectedBookIds.length})`
+      }
       return this.$getString('MessageItemsSelected', [this.selectedBookIds.length])
     },
     showBatchQuickMatchModal() {
       return this.$store.state.globals.showBatchQuickMatchModal
     },
     selectedBookIds() {
-      return (this.$store.state.globals.selectedMediaItems || []).map((i) => i.id)
+      return this.$store.state.globals.batchQuickMatchTargetIds || (this.$store.state.globals.selectedMediaItems || []).map((i) => i.id)
     },
     currentLibraryId() {
       return this.$store.state.libraries.currentLibraryId

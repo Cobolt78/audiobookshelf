@@ -165,6 +165,10 @@ export default {
         {
           text: this.$strings.ButtonQuickMatch,
           action: 'quick-match'
+        },
+        {
+          text: this.$strings.ButtonMatchSelectFields || 'Match (Select Fields)',
+          action: 'selective-match'
         }
       ]
 
@@ -223,6 +227,8 @@ export default {
         this.requestBatchQuickEmbed()
       } else if (action === 'quick-match') {
         this.batchAutoMatchClick()
+      } else if (action === 'selective-match') {
+        this.batchSelectiveMatchClick()
       } else if (action === 'rescan') {
         this.batchRescan()
       } else if (action === 'download') {
@@ -376,6 +382,13 @@ export default {
     },
     batchAutoMatchClick() {
       this.$store.commit('globals/setShowBatchQuickMatchModal', true)
+    },
+    batchSelectiveMatchClick() {
+      const libraryItemIds = this.selectedMediaItems.map((i) => i.id)
+      this.$store.commit('globals/setSelectiveMatchConfig', {
+        mode: 'batch',
+        libraryItemIds
+      })
     }
   },
   mounted() {

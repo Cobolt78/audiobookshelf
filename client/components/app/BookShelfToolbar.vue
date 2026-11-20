@@ -250,6 +250,34 @@ export default {
       this.addSubtitlesMenuItem(items)
       this.addCollapseSubSeriesMenuItem(items)
 
+      if (this.userIsAdminOrUp && this.seriesLibraryItemIds.length) {
+        items.push(
+          {
+            text: this.$strings.ButtonQuickMatch,
+            action: 'quick-match'
+          },
+          {
+            text: this.$strings.ButtonMatchSelectFields || 'Match (Select Fields)',
+            action: 'selective-match'
+          },
+          {
+            text: this.$strings.ButtonQuickEmbedMetadata,
+            action: 'quick-embed'
+          },
+          {
+            text: this.$strings.ButtonReScan,
+            action: 'rescan'
+          }
+        )
+      }
+
+      if (this.userCanDownload && this.seriesLibraryItemIds.length && this.seriesLibraryItemIds.length <= 40) {
+        items.push({
+          text: this.$strings.LabelDownload,
+          action: 'download'
+        })
+      }
+
       return items
     },
     seriesSortItems() {
@@ -606,11 +634,89 @@ export default {
           return
         }
         this.markSeriesFinished()
+      } else if (action === 'quick-match') {
+        this.quickMatchSeries()
+      } else if (action === 'selective-match') {
+        this.selectiveMatchSeries()
+      } else if (action === 'quick-embed') {
+        this.quickEmbedSeries()
+      } else if (action === 'rescan') {
+        this.rescanSeries()
+      } else if (action === 'download') {
+        this.downloadSeries()
       } else if (this.handleSubtitlesAction(action)) {
         return
       } else if (this.handleCollapseSubSeriesAction(action)) {
         return
       }
+    },
+    quickMatchSeries() {
+      if (this.$store.state.processingBatch || !this.seriesLibraryItemIds.length) return
+      this.$store.commit('globals/openBatchQuickMatchForItems', {
+        libraryItemIds: [...this.seriesLibraryItemIds],
+        label: this.seriesName
+      })
+    },
+    selectiveMatchSeries() {
+      if (this.$store.state.processingBatch || !this.seriesLibraryItemIds.length) return
+      this.$store.commit('globals/setSelectiveMatchConfig', {
+        mode: 'batch',
+        libraryItemIds: [...this.seriesLibraryItemIds],
+        label: this.seriesName
+      })
+    },
+    quickEmbedSeries() {
+      if (this.$store.state.processingBatch || !this.seriesLibraryItemIds.length) return
+      const payload = {
+        message: this.$strings.MessageConfirmQuickEmbed,
+        allowHtml: true,
+        callback: (confirmed) => {
+          if (confirmed) {
+            this.$axios
+              .$post(`/api/tools/batch/embed-metadata`, {
+                libraryItemIds: this.seriesLibraryItemIds
+              })
+              .then(() => {
+                this.$toast.info('Audio metadata embed started')
+              })
+              .catch((error) => {
+                console.error('Series quick embed failed', error)
+                const errorMsg = error.response?.data || 'Failed to embed metadata'
+                this.$toast.error(errorMsg)
+              })
+          }
+        },
+        type: 'yesNo'
+      }
+      this.$store.commit('globals/setConfirmPrompt', payload)
+    },
+    rescanSeries() {
+      if (this.$store.state.processingBatch || !this.seriesLibraryItemIds.length) return
+      const payload = {
+        message: this.$getString('MessageConfirmReScanLibraryItems', [this.seriesLibraryItemIds.length]),
+        callback: (confirmed) => {
+          if (confirmed) {
+            this.$axios
+              .$post(`/api/items/batch/scan`, {
+                libraryItemIds: this.seriesLibraryItemIds
+              })
+              .then(() => {
+                this.$toast.info('Series Re-Scan started')
+              })
+              .catch((error) => {
+                console.error('Series re-scan failed', error)
+                const errorMsg = error.response?.data || 'Failed to batch re-scan'
+                this.$toast.error(errorMsg)
+              })
+          }
+        },
+        type: 'yesNo'
+      }
+      this.$store.commit('globals/setConfirmPrompt', payload)
+    },
+    downloadSeries() {
+      if (!this.seriesLibraryItemIds.length || this.seriesLibraryItemIds.length > 40) return
+      this.$downloadFile(`/api/libraries/${this.currentLibraryId}/download?token=${this.$store.getters['user/getToken']}&ids=${this.seriesLibraryItemIds.join(',')}`)
     },
     showOpenSeriesRSSFeed() {
       this.$store.commit('globals/setRSSFeedOpenCloseModal', {

@@ -548,6 +548,12 @@ class LibraryItemController {
     if (reqBody.overrideDetails !== undefined) {
       options.overrideDetails = !!reqBody.overrideDetails
     }
+    if (reqBody.selectedFields !== undefined) {
+      options.selectedFields = Scanner.sanitizeSelectedFields(reqBody.selectedFields)
+    }
+    if (reqBody.overrideExisting !== undefined) {
+      options.overrideExisting = !!reqBody.overrideExisting
+    }
 
     const matchResult = await Scanner.quickMatchLibraryItem(this, req.libraryItem, options)
     res.json(matchResult)
@@ -795,8 +801,6 @@ class LibraryItemController {
       return res.sendStatus(400)
     }
 
-    res.sendStatus(200)
-
     const reqBodyOptions = req.body.options || {}
     const options = {}
     if (reqBodyOptions.provider && typeof reqBodyOptions.provider === 'string') {
@@ -808,6 +812,16 @@ class LibraryItemController {
     if (reqBodyOptions.overrideDetails !== undefined) {
       options.overrideDetails = !!reqBodyOptions.overrideDetails
     }
+    if (reqBodyOptions.selectedFields !== undefined) {
+      const sanitizedFields = Scanner.sanitizeSelectedFields(reqBodyOptions.selectedFields)
+      if (!sanitizedFields?.length) {
+        return res.status(400).send('At least one valid field must be selected')
+      }
+      options.selectedFields = sanitizedFields
+      options.overrideExisting = reqBodyOptions.overrideExisting !== false
+    }
+
+    res.sendStatus(200)
 
     for (const libraryItem of libraryItems) {
       const matchResult = await Scanner.quickMatchLibraryItem(this, libraryItem, options)

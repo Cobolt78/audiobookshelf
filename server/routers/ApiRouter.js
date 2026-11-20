@@ -90,6 +90,7 @@ class ApiRouter {
     this.router.patch('/libraries/:id/narrators/:narratorId', LibraryController.middleware.bind(this), LibraryController.updateNarrator.bind(this))
     this.router.delete('/libraries/:id/narrators/:narratorId', LibraryController.middleware.bind(this), LibraryController.removeNarrator.bind(this))
     this.router.get('/libraries/:id/matchall', LibraryController.middleware.bind(this), LibraryController.matchAll.bind(this))
+    this.router.post('/libraries/:id/matchall', LibraryController.middleware.bind(this), LibraryController.matchAll.bind(this))
     this.router.post('/libraries/:id/scan', LibraryController.middleware.bind(this), LibraryController.scan.bind(this))
     this.router.get('/libraries/:id/recent-episodes', LibraryController.middleware.bind(this), LibraryController.getRecentEpisodes.bind(this))
     this.router.get('/libraries/:id/opml', LibraryController.middleware.bind(this), LibraryController.getOPMLFile.bind(this))

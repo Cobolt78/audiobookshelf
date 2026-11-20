@@ -14,6 +14,7 @@
     <div v-if="libraries.length && libraries.some((li) => li.mediaType === 'book')" class="text-xs mt-4 text-gray-200 space-y-1.5">
       <p>**<strong>{{ $strings.ButtonScan }}</strong> {{ $strings.MessageScanDescription }}</p>
       <p>**<strong>{{ $strings.ButtonMatchBooks }}</strong> {{ $strings.MessageMatchBooksDescription }}</p>
+      <p>**<strong>{{ $strings.ButtonMatchBooksSelectFields || 'Match Books (Select Fields)' }}</strong> {{ $strings.MessageMatchBooksSelectFieldsDescription }}</p>
       <p>**<strong>{{ $strings.ButtonAudibleQuickScan }}</strong> {{ $strings.MessageAudibleQuickScanDescription }}</p>
       <p>**<strong>{{ $strings.ButtonAudibleFullScan }}</strong> {{ $strings.MessageAudibleFullScanDescription }}</p>
     </div>
